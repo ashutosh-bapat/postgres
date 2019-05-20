@@ -672,7 +672,7 @@ GRANT SELECT ON column_udt_usage TO PUBLIC;
  * COLUMNS view
  */
 
-CREATE VIEW columns AS
+CREATE VIEW "columns" AS
     SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
            CAST(nc.nspname AS sql_identifier) AS table_schema,
            CAST(c.relname AS sql_identifier) AS table_name,
@@ -794,7 +794,7 @@ CREATE VIEW columns AS
                OR has_column_privilege(c.oid, a.attnum,
                                        'SELECT, INSERT, UPDATE, REFERENCES'));
 
-GRANT SELECT ON columns TO PUBLIC;
+GRANT SELECT ON "columns" TO PUBLIC;
 
 
 /*
@@ -2665,7 +2665,7 @@ CREATE VIEW data_type_privileges AS
       (
         SELECT udt_schema, udt_name, 'USER-DEFINED TYPE'::text, dtd_identifier FROM attributes
         UNION ALL
-        SELECT table_schema, table_name, 'TABLE'::text, dtd_identifier FROM columns
+        SELECT table_schema, table_name, 'TABLE'::text, dtd_identifier FROM "columns"
         UNION ALL
         SELECT domain_schema, domain_name, 'DOMAIN'::text, dtd_identifier FROM domains
         UNION ALL

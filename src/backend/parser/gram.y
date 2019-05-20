@@ -603,6 +603,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token <ival>	ICONST PARAM
 %token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
+%token			BRACKET_RIGHT_ARROW LEFT_ARROW_BRACKET MINUS_LEFT_BRACKET RIGHT_BRACKET_MINUS
 
 /*
  * If you want to make any keyword changes, update the keyword table in
@@ -640,7 +641,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
-	GENERATED GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING GROUPS
+	GENERATED GLOBAL GRANT GRANTED GRAPH_TABLE GREATEST GROUP_P GROUPING GROUPS
 
 	HANDLER HAVING HEADER_P HOLD HOUR_P
 
@@ -758,7 +759,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT GENERATED NULL_P PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
-%left		Op OPERATOR		/* multi-character ops and user-defined operators */
+%left		Op OPERATOR LEFT_ARROW RIGHT_ARROW	/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
 %left		'^'
@@ -11930,6 +11931,64 @@ table_ref:	relation_expr opt_alias_clause
 					$2->alias = $4;
 					$$ = (Node *) $2;
 				}
+			| qualified_name GRAPH_TABLE '(' MATCH path_pattern_list where_clause COLUMNS '(' xml_attribute_list ')' ')' alias_clause
+				{
+					$$ = NULL;
+				}
+		;
+
+path_pattern_list:
+			path_pattern
+			| path_pattern_list ',' path_pattern
+		;
+
+path_pattern:
+			path_pattern_expression
+			| ColId AS path_pattern_expression
+		;
+
+path_pattern_expression:
+			path_primary
+			| path_pattern_expression path_primary
+		;
+
+optional_element_pattern_filler:
+			opt_colid opt_is_label_expression where_clause
+		;
+
+mandatory_edge_pattern_filler:
+			ColId IS label_expression
+			| ColId ':' label_expression
+			| IS label_expression
+			| ':' label_expression
+		;
+
+path_primary:
+			'(' optional_element_pattern_filler ')'
+			| MINUS_LEFT_BRACKET optional_element_pattern_filler BRACKET_RIGHT_ARROW
+			| '-' mandatory_edge_pattern_filler RIGHT_ARROW
+			| LEFT_ARROW_BRACKET optional_element_pattern_filler RIGHT_BRACKET_MINUS
+			| LEFT_ARROW mandatory_edge_pattern_filler '-'
+			| MINUS_LEFT_BRACKET optional_element_pattern_filler RIGHT_BRACKET_MINUS
+			| '-' mandatory_edge_pattern_filler '-'
+			| RIGHT_ARROW
+			| LEFT_ARROW
+			| '-'
+		;
+
+opt_colid:
+			ColId
+			| /*EMPTY*/
+		;
+
+opt_is_label_expression:
+			IS label_expression
+			| ':' label_expression
+			| /*EMPTY*/
+		;
+
+label_expression:
+			ColId
 		;
 
 
@@ -13001,6 +13060,10 @@ a_expr:		c_expr									{ $$ = $1; }
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2); }
 			| a_expr NOT_EQUALS a_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2); }
+			| a_expr LEFT_ARROW a_expr
+				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<-", $1, $3, @2); }
+			| a_expr RIGHT_ARROW a_expr
+				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "->", $1, $3, @2); }
 
 			| a_expr qual_Op a_expr				%prec Op
 				{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
@@ -13401,6 +13464,10 @@ b_expr:		c_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2); }
 			| b_expr NOT_EQUALS b_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2); }
+			| b_expr LEFT_ARROW b_expr
+				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<-", $1, $3, @2); }
+			| b_expr RIGHT_ARROW b_expr
+				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "->", $1, $3, @2); }
 			| b_expr qual_Op b_expr				%prec Op
 				{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
 			| qual_Op b_expr					%prec Op
@@ -14294,6 +14361,8 @@ MathOp:		 '+'									{ $$ = "+"; }
 			| LESS_EQUALS							{ $$ = "<="; }
 			| GREATER_EQUALS						{ $$ = ">="; }
 			| NOT_EQUALS							{ $$ = "<>"; }
+			| LEFT_ARROW							{ $$ = "<-"; }
+			| RIGHT_ARROW							{ $$ = "->"; }
 		;
 
 qual_Op:	Op
@@ -15050,7 +15119,6 @@ unreserved_keyword:
 			| CLASS
 			| CLOSE
 			| CLUSTER
-			| COLUMNS
 			| COMMENT
 			| COMMENTS
 			| COMMIT
@@ -15433,6 +15501,7 @@ reserved_keyword:
 			| CHECK
 			| COLLATE
 			| COLUMN
+			| COLUMNS
 			| CONSTRAINT
 			| CREATE
 			| CURRENT_CATALOG
@@ -15455,6 +15524,7 @@ reserved_keyword:
 			| FOREIGN
 			| FROM
 			| GRANT
+			| GRAPH_TABLE
 			| GROUP_P
 			| HAVING
 			| IN_P
