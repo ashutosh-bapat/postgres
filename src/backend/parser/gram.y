@@ -11933,7 +11933,10 @@ table_ref:	relation_expr opt_alias_clause
 				}
 			| qualified_name GRAPH_TABLE '(' MATCH path_pattern_list where_clause COLUMNS '(' xml_attribute_list ')' ')' alias_clause
 				{
-					$$ = NULL;
+					RangeGraphTable *n = makeNode(RangeGraphTable);
+					n->alias = $12;
+					n->location = @2;
+					$$ = (Node *) n;
 				}
 		;
 

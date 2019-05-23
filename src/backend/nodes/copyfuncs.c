@@ -2784,6 +2784,17 @@ _copyRangeFunction(const RangeFunction *from)
 	return newnode;
 }
 
+static RangeGraphTable *
+_copyRangeGraphTable(const RangeGraphTable *from)
+{
+	RangeGraphTable *newnode = makeNode(RangeGraphTable);
+
+	COPY_NODE_FIELD(alias);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static RangeTableSample *
 _copyRangeTableSample(const RangeTableSample *from)
 {
@@ -5563,6 +5574,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_RangeFunction:
 			retval = _copyRangeFunction(from);
+			break;
+		case T_RangeGraphTable:
+			retval = _copyRangeGraphTable(from);
 			break;
 		case T_RangeTableSample:
 			retval = _copyRangeTableSample(from);

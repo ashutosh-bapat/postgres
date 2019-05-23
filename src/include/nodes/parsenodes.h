@@ -570,6 +570,16 @@ typedef struct RangeFunction
 } RangeFunction;
 
 /*
+ * RangeGraphTable - raw form of GRAPH_TABLE clause
+ */
+typedef struct RangeGraphTable
+{
+	NodeTag		type;
+	Alias	   *alias;			/* table alias & optional column aliases */
+	int			location;		/* token location, or -1 if unknown */
+} RangeGraphTable;
+
+/*
  * RangeTableFunc - raw form of "table functions" such as XMLTABLE
  */
 typedef struct RangeTableFunc

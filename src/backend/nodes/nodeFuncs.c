@@ -3632,6 +3632,14 @@ raw_expression_tree_walker(Node *node,
 					return true;
 			}
 			break;
+		case T_RangeGraphTable:
+			{
+				RangeGraphTable *rgt = (RangeGraphTable *) node;
+
+				if (walker(rgt->alias, context))
+					return true;
+			}
+			break;
 		case T_RangeTableSample:
 			{
 				RangeTableSample *rts = (RangeTableSample *) node;

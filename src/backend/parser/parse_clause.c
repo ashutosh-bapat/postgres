@@ -1127,6 +1127,13 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		rtr->rtindex = rtindex;
 		return (Node *) rtr;
 	}
+	else if (IsA(n, RangeGraphTable))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("GRAPH_TABLE is not implemented"),
+				 parser_errposition(pstate, castNode(RangeGraphTable, n)->location)));
+	}
 	else if (IsA(n, RangeTableFunc))
 	{
 		/* table function is like a plain relation */

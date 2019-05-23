@@ -3395,6 +3395,15 @@ _outRangeFunction(StringInfo str, const RangeFunction *node)
 }
 
 static void
+_outRangeGraphTable(StringInfo str, const RangeGraphTable *node)
+{
+	WRITE_NODE_TYPE("RANGEGRAPHTABLE");
+
+	WRITE_NODE_FIELD(alias);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outRangeTableSample(StringInfo str, const RangeTableSample *node)
 {
 	WRITE_NODE_TYPE("RANGETABLESAMPLE");
@@ -4228,6 +4237,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_RangeFunction:
 				_outRangeFunction(str, obj);
+				break;
+			case T_RangeGraphTable:
+				_outRangeGraphTable(str, obj);
 				break;
 			case T_RangeTableSample:
 				_outRangeTableSample(str, obj);

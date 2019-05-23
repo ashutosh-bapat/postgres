@@ -2498,6 +2498,15 @@ _equalRangeFunction(const RangeFunction *a, const RangeFunction *b)
 }
 
 static bool
+_equalRangeGraphTable(const RangeGraphTable *a, const RangeGraphTable *b)
+{
+	COMPARE_NODE_FIELD(alias);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
 _equalRangeTableSample(const RangeTableSample *a, const RangeTableSample *b)
 {
 	COMPARE_NODE_FIELD(relation);
@@ -3623,6 +3632,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_RangeFunction:
 			retval = _equalRangeFunction(a, b);
+			break;
+		case T_RangeGraphTable:
+			retval = _equalRangeGraphTable(a, b);
 			break;
 		case T_RangeTableSample:
 			retval = _equalRangeTableSample(a, b);

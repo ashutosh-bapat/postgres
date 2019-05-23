@@ -441,6 +441,7 @@ typedef enum NodeTag
 	T_WindowDef,
 	T_RangeSubselect,
 	T_RangeFunction,
+	T_RangeGraphTable,
 	T_RangeTableSample,
 	T_RangeTableFunc,
 	T_RangeTableFuncCol,
