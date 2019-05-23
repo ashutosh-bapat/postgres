@@ -118,5 +118,8 @@ test: event_trigger
 # this test also uses event triggers, so likewise run it by itself
 test: fast_default
 
+# XXX WIP
+test: graph_table
+
 # run stats by itself because its delay may be insufficient under heavy load
 test: stats
