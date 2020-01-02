@@ -4845,6 +4845,14 @@ EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
    </para>
  </sect1>
 
+ <sect1 id="ddl-property-graphs">
+  <title>Property Graphs</title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
  <sect1 id="ddl-others">
   <title>Other Database Objects</title>
 

@@ -1,0 +1,44 @@
+<!--
+doc/src/sgml/ref/drop_property_graph.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="sql-drop-property-graph">
+ <indexterm zone="sql-drop-property-graph">
+  <primary>DROP PROPERTY GRAPH</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>DROP PROPERTY GRAPH</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>DROP PROPERTY GRAPH</refname>
+  <refpurpose>destroy an SQL-property graph</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+TODO
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   TODO
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="sql-create-property-graph"/></member>
+   <member><xref linkend="sql-alter-property-graph"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>

@@ -1,0 +1,44 @@
+<!--
+doc/src/sgml/ref/create_property_graph.sgml
+PostgreSQL documentation
+-->
+
+<refentry id="sql-create-property-graph">
+ <indexterm zone="sql-create-property-graph">
+  <primary>CREATE PROPERTY GRAPH</primary>
+ </indexterm>
+
+ <refmeta>
+  <refentrytitle>CREATE PROPERTY GRAPH</refentrytitle>
+  <manvolnum>7</manvolnum>
+  <refmiscinfo>SQL - Language Statements</refmiscinfo>
+ </refmeta>
+
+ <refnamediv>
+  <refname>CREATE PROPERTY GRAPH</refname>
+  <refpurpose>define an SQL-property graph</refpurpose>
+ </refnamediv>
+
+ <refsynopsisdiv>
+<synopsis>
+TODO
+</synopsis>
+ </refsynopsisdiv>
+
+ <refsect1>
+  <title>Description</title>
+
+  <para>
+   TODO
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>See Also</title>
+
+  <simplelist type="inline">
+   <member><xref linkend="sql-alter-property-graph"/></member>
+   <member><xref linkend="sql-drop-property-graph"/></member>
+  </simplelist>
+ </refsect1>
+</refentry>
