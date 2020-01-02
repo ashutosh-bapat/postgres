@@ -3,7 +3,7 @@
  * pg_publication.c
  *		publication C API manipulation
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,15 +14,11 @@
 
 #include "postgres.h"
 
-#include "funcapi.h"
-#include "miscadmin.h"
-
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/index.h"
@@ -30,10 +26,11 @@
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
-#include "catalog/pg_type.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_rel.h"
-
+#include "catalog/pg_type.h"
+#include "funcapi.h"
+#include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -377,7 +374,6 @@ GetPublication(Oid pubid)
 	Form_pg_publication pubform;
 
 	tup = SearchSysCache1(PUBLICATIONOID, ObjectIdGetDatum(pubid));
-
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for publication %u", pubid);
 
@@ -406,19 +402,9 @@ GetPublicationByName(const char *pubname, bool missing_ok)
 {
 	Oid			oid;
 
-	oid = GetSysCacheOid1(PUBLICATIONNAME, Anum_pg_publication_oid,
-						  CStringGetDatum(pubname));
-	if (!OidIsValid(oid))
-	{
-		if (missing_ok)
-			return NULL;
+	oid = get_publication_oid(pubname, missing_ok);
 
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("publication \"%s\" does not exist", pubname)));
-	}
-
-	return GetPublication(oid);
+	return OidIsValid(oid) ? GetPublication(oid) : NULL;
 }
 
 /*
@@ -481,7 +467,6 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 	char	   *pubname = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	Publication *publication;
 	List	   *tables;
-	ListCell  **lcp;
 
 	/* stuff done only on the first call of the function */
 	if (SRF_IS_FIRSTCALL())
@@ -499,22 +484,19 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 			tables = GetAllTablesPublicationRelations();
 		else
 			tables = GetPublicationRelations(publication->oid);
-		lcp = (ListCell **) palloc(sizeof(ListCell *));
-		*lcp = list_head(tables);
-		funcctx->user_fctx = (void *) lcp;
+		funcctx->user_fctx = (void *) tables;
 
 		MemoryContextSwitchTo(oldcontext);
 	}
 
 	/* stuff done on every call of the function */
 	funcctx = SRF_PERCALL_SETUP();
-	lcp = (ListCell **) funcctx->user_fctx;
+	tables = (List *) funcctx->user_fctx;
 
-	while (*lcp != NULL)
+	if (funcctx->call_cntr < list_length(tables))
 	{
-		Oid			relid = lfirst_oid(*lcp);
+		Oid			relid = list_nth_oid(tables, funcctx->call_cntr);
 
-		*lcp = lnext(*lcp);
 		SRF_RETURN_NEXT(funcctx, ObjectIdGetDatum(relid));
 	}
 

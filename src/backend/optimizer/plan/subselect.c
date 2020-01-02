@@ -6,7 +6,7 @@
  * This module deals with SubLinks and CTEs, but not subquery RTEs (i.e.,
  * not sub-SELECT-in-FROM cases).
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -567,7 +567,7 @@ build_subplan(PlannerInfo *root, Plan *plan, PlannerInfo *subroot,
 		{
 			ptr += sprintf(ptr, "$%d%s",
 						   lfirst_int(lc),
-						   lnext(lc) ? "," : ")");
+						   lnext(splan->setParam, lc) ? "," : ")");
 		}
 	}
 

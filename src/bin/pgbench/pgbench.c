@@ -5,7 +5,7 @@
  * Originally written by Tatsuo Ishii and enhanced by many contributors.
  *
  * src/bin/pgbench/pgbench.c
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2020, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -32,12 +32,6 @@
 #endif
 
 #include "postgres_fe.h"
-#include "common/int.h"
-#include "common/logging.h"
-#include "fe_utils/conditional.h"
-#include "getopt_long.h"
-#include "libpq-fe.h"
-#include "portability/instr_time.h"
 
 #include <ctype.h>
 #include <float.h>
@@ -63,11 +57,19 @@
 #endif
 #endif
 
+#include "common/int.h"
+#include "common/logging.h"
+#include "fe_utils/cancel.h"
+#include "fe_utils/conditional.h"
+#include "getopt_long.h"
+#include "libpq-fe.h"
+#include "pgbench.h"
+#include "portability/instr_time.h"
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-#include "pgbench.h"
 
 #define ERRCODE_UNDEFINED_TABLE  "42P01"
 
@@ -131,6 +133,7 @@ static int	pthread_join(pthread_t th, void **thread_return);
  * some configurable parameters */
 
 #define DEFAULT_INIT_STEPS "dtgvp"	/* default -I setting */
+#define ALL_INIT_STEPS "dtgGvpf"	/* all possible steps */
 
 #define LOG_STEP_SECONDS	5	/* seconds between log messages */
 #define DEFAULT_NXACTS	10		/* default nxacts */
@@ -185,6 +188,23 @@ int64		latency_limit = 0;
  */
 char	   *tablespace = NULL;
 char	   *index_tablespace = NULL;
+
+/*
+ * Number of "pgbench_accounts" partitions.  0 is the default and means no
+ * partitioning.
+ */
+static int	partitions = 0;
+
+/* partitioning strategy for "pgbench_accounts" */
+typedef enum
+{
+	PART_NONE,					/* no partitioning */
+	PART_RANGE,					/* range partitioning */
+	PART_HASH					/* hash partitioning */
+}			partition_method_t;
+
+static partition_method_t partition_method = PART_NONE;
+static const char *PARTITION_METHOD[] = {"none", "range", "hash"};
 
 /* random seed used to initialize base_random_sequence */
 int64		random_seed = -1;
@@ -582,6 +602,7 @@ static void doLog(TState *thread, CState *st,
 				  StatsData *agg, bool skipped, double latency, double lag);
 static void processXactStats(TState *thread, CState *st, instr_time *now,
 							 bool skipped, StatsData *agg);
+static void append_fillfactor(char *opts, int len);
 static void addScript(ParsedScript script);
 static void *threadRun(void *arg);
 static void finishCon(CState *st);
@@ -608,7 +629,7 @@ usage(void)
 		   "  %s [OPTION]... [DBNAME]\n"
 		   "\nInitialization options:\n"
 		   "  -i, --initialize         invokes initialization mode\n"
-		   "  -I, --init-steps=[dtgvpf]+ (default \"dtgvp\")\n"
+		   "  -I, --init-steps=[" ALL_INIT_STEPS "]+ (default \"" DEFAULT_INIT_STEPS "\")\n"
 		   "                           run selected initialization steps\n"
 		   "  -F, --fillfactor=NUM     set fill factor\n"
 		   "  -n, --no-vacuum          do not run VACUUM during initialization\n"
@@ -617,6 +638,9 @@ usage(void)
 		   "  --foreign-keys           create foreign key constraints between tables\n"
 		   "  --index-tablespace=TABLESPACE\n"
 		   "                           create indexes in the specified tablespace\n"
+		   "  --partitions=NUM         partition pgbench_accounts in NUM parts (default: 0)\n"
+		   "  --partition-method=(range|hash)\n"
+		   "                           partition pgbench_accounts with this method (default: range)\n"
 		   "  --tablespace=TABLESPACE  create tables in the specified tablespace\n"
 		   "  --unlogged-tables        create tables as unlogged tables\n"
 		   "\nOptions to select what to run:\n"
@@ -651,6 +675,7 @@ usage(void)
 		   "  --progress-timestamp     use Unix epoch timestamps for progress\n"
 		   "  --random-seed=SEED       set random seed (\"time\", \"rand\", integer)\n"
 		   "  --sampling-rate=NUM      fraction of transactions to log (e.g., 0.01 for 1%%)\n"
+		   "  --show-script=NAME       show builtin script code, then exit\n"
 		   "\nCommon options:\n"
 		   "  -d, --debug              print debugging output\n"
 		   "  -h, --host=HOSTNAME      database server host or socket directory\n"
@@ -1651,9 +1676,9 @@ coerceToInt(PgBenchValue *pval, int64 *ival)
 	}
 	else if (pval->type == PGBT_DOUBLE)
 	{
-		double		dval = pval->u.dval;
+		double		dval = rint(pval->u.dval);
 
-		if (dval < PG_INT64_MIN || PG_INT64_MAX < dval)
+		if (isnan(dval) || !FLOAT8_FITS_IN_INT64(dval))
 		{
 			fprintf(stderr, "double to int overflow for %f\n", dval);
 			return false;
@@ -3601,6 +3626,77 @@ initDropTables(PGconn *con)
 }
 
 /*
+ * Create "pgbench_accounts" partitions if needed.
+ *
+ * This is the larger table of pgbench default tpc-b like schema
+ * with a known size, so we choose to partition it.
+ */
+static void
+createPartitions(PGconn *con)
+{
+	char		ff[64];
+
+	ff[0] = '\0';
+
+	/*
+	 * Per ddlinfo in initCreateTables, fillfactor is needed on table
+	 * pgbench_accounts.
+	 */
+	append_fillfactor(ff, sizeof(ff));
+
+	/* we must have to create some partitions */
+	Assert(partitions > 0);
+
+	fprintf(stderr, "creating %d partitions...\n", partitions);
+
+	for (int p = 1; p <= partitions; p++)
+	{
+		char		query[256];
+
+		if (partition_method == PART_RANGE)
+		{
+			int64		part_size = (naccounts * (int64) scale + partitions - 1) / partitions;
+			char		minvalue[32],
+						maxvalue[32];
+
+			/*
+			 * For RANGE, we use open-ended partitions at the beginning and
+			 * end to allow any valid value for the primary key.  Although the
+			 * actual minimum and maximum values can be derived from the
+			 * scale, it is more generic and the performance is better.
+			 */
+			if (p == 1)
+				sprintf(minvalue, "minvalue");
+			else
+				sprintf(minvalue, INT64_FORMAT, (p - 1) * part_size + 1);
+
+			if (p < partitions)
+				sprintf(maxvalue, INT64_FORMAT, p * part_size + 1);
+			else
+				sprintf(maxvalue, "maxvalue");
+
+			snprintf(query, sizeof(query),
+					 "create%s table pgbench_accounts_%d\n"
+					 "  partition of pgbench_accounts\n"
+					 "  for values from (%s) to (%s)%s\n",
+					 unlogged_tables ? " unlogged" : "", p,
+					 minvalue, maxvalue, ff);
+		}
+		else if (partition_method == PART_HASH)
+			snprintf(query, sizeof(query),
+					 "create%s table pgbench_accounts_%d\n"
+					 "  partition of pgbench_accounts\n"
+					 "  for values with (modulus %d, remainder %d)%s\n",
+					 unlogged_tables ? " unlogged" : "", p,
+					 partitions, p - 1, ff);
+		else					/* cannot get there */
+			Assert(0);
+
+		executeStatement(con, query);
+	}
+}
+
+/*
  * Create pgbench's standard tables
  */
 static void
@@ -3663,9 +3759,15 @@ initCreateTables(PGconn *con)
 
 		/* Construct new create table statement. */
 		opts[0] = '\0';
-		if (ddl->declare_fillfactor)
+
+		/* Partition pgbench_accounts table */
+		if (partition_method != PART_NONE && strcmp(ddl->table, "pgbench_accounts") == 0)
 			snprintf(opts + strlen(opts), sizeof(opts) - strlen(opts),
-					 " with (fillfactor=%d)", fillfactor);
+					 " partition by %s (aid)", PARTITION_METHOD[partition_method]);
+		else if (ddl->declare_fillfactor)
+			/* fillfactor is only expected on actual tables */
+			append_fillfactor(opts, sizeof(opts));
+
 		if (tablespace != NULL)
 		{
 			char	   *escape_tablespace;
@@ -3685,13 +3787,41 @@ initCreateTables(PGconn *con)
 
 		executeStatement(con, buffer);
 	}
+
+	if (partition_method != PART_NONE)
+		createPartitions(con);
 }
 
 /*
- * Fill the standard tables with some data
+ * add fillfactor percent option.
+ *
+ * XXX - As default is 100, it could be removed in this case.
  */
 static void
-initGenerateData(PGconn *con)
+append_fillfactor(char *opts, int len)
+{
+	snprintf(opts + strlen(opts), len - strlen(opts),
+			 " with (fillfactor=%d)", fillfactor);
+}
+
+/*
+ * Truncate away any old data, in one command in case there are foreign keys
+ */
+static void
+initTruncateTables(PGconn *con)
+{
+	executeStatement(con, "truncate table "
+					 "pgbench_accounts, "
+					 "pgbench_branches, "
+					 "pgbench_history, "
+					 "pgbench_tellers");
+}
+
+/*
+ * Fill the standard tables with some data generated and sent from the client
+ */
+static void
+initGenerateDataClientSide(PGconn *con)
 {
 	char		sql[256];
 	PGresult   *res;
@@ -3705,7 +3835,10 @@ initGenerateData(PGconn *con)
 				remaining_sec;
 	int			log_interval = 1;
 
-	fprintf(stderr, "generating data...\n");
+	/* Stay on the same line if reporting to a terminal */
+	char		eol = isatty(fileno(stderr)) ? '\r' : '\n';
+
+	fprintf(stderr, "generating data (client-side)...\n");
 
 	/*
 	 * we do all of this in one transaction to enable the backend's
@@ -3713,15 +3846,8 @@ initGenerateData(PGconn *con)
 	 */
 	executeStatement(con, "begin");
 
-	/*
-	 * truncate away any old data, in one command in case there are foreign
-	 * keys
-	 */
-	executeStatement(con, "truncate table "
-					 "pgbench_accounts, "
-					 "pgbench_branches, "
-					 "pgbench_history, "
-					 "pgbench_tellers");
+	/* truncate away any old data */
+	initTruncateTables(con);
 
 	/*
 	 * fill branches, tellers, accounts in that order in case foreign keys
@@ -3772,6 +3898,9 @@ initGenerateData(PGconn *con)
 			exit(1);
 		}
 
+		if (CancelRequested)
+			break;
+
 		/*
 		 * If we want to stick with the original logging, print a message each
 		 * 100k inserted rows.
@@ -3784,10 +3913,10 @@ initGenerateData(PGconn *con)
 			elapsed_sec = INSTR_TIME_GET_DOUBLE(diff);
 			remaining_sec = ((double) scale * naccounts - j) * elapsed_sec / j;
 
-			fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)\n",
+			fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)%c",
 					j, (int64) naccounts * scale,
 					(int) (((int64) j * 100) / (naccounts * (int64) scale)),
-					elapsed_sec, remaining_sec);
+					elapsed_sec, remaining_sec, eol);
 		}
 		/* let's not call the timing for each row, but only each 100 rows */
 		else if (use_quiet && (j % 100 == 0))
@@ -3801,16 +3930,19 @@ initGenerateData(PGconn *con)
 			/* have we reached the next interval (or end)? */
 			if ((j == scale * naccounts) || (elapsed_sec >= log_interval * LOG_STEP_SECONDS))
 			{
-				fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)\n",
+				fprintf(stderr, INT64_FORMAT " of " INT64_FORMAT " tuples (%d%%) done (elapsed %.2f s, remaining %.2f s)%c",
 						j, (int64) naccounts * scale,
-						(int) (((int64) j * 100) / (naccounts * (int64) scale)), elapsed_sec, remaining_sec);
+						(int) (((int64) j * 100) / (naccounts * (int64) scale)), elapsed_sec, remaining_sec, eol);
 
 				/* skip to the next interval */
 				log_interval = (int) ceil(elapsed_sec / LOG_STEP_SECONDS);
 			}
 		}
-
 	}
+
+	if (eol != '\n')
+		fputc('\n', stderr);	/* Need to move to next line */
+
 	if (PQputline(con, "\\.\n"))
 	{
 		fprintf(stderr, "very last PQputline failed\n");
@@ -3821,6 +3953,51 @@ initGenerateData(PGconn *con)
 		fprintf(stderr, "PQendcopy failed\n");
 		exit(1);
 	}
+
+	executeStatement(con, "commit");
+}
+
+/*
+ * Fill the standard tables with some data generated on the server
+ *
+ * As already the case with the client-side data generation, the filler
+ * column defaults to NULL in pgbench_branches and pgbench_tellers,
+ * and is a blank-padded string in pgbench_accounts.
+ */
+static void
+initGenerateDataServerSide(PGconn *con)
+{
+	char		sql[256];
+
+	fprintf(stderr, "generating data (server-side)...\n");
+
+	/*
+	 * we do all of this in one transaction to enable the backend's
+	 * data-loading optimizations
+	 */
+	executeStatement(con, "begin");
+
+	/* truncate away any old data */
+	initTruncateTables(con);
+
+	snprintf(sql, sizeof(sql),
+			 "insert into pgbench_branches(bid,bbalance) "
+			 "select bid, 0 "
+			 "from generate_series(1, %d) as bid", nbranches * scale);
+	executeStatement(con, sql);
+
+	snprintf(sql, sizeof(sql),
+			 "insert into pgbench_tellers(tid,bid,tbalance) "
+			 "select tid, (tid - 1) / %d + 1, 0 "
+			 "from generate_series(1, %d) as tid", ntellers, ntellers * scale);
+	executeStatement(con, sql);
+
+	snprintf(sql, sizeof(sql),
+			 "insert into pgbench_accounts(aid,bid,abalance,filler) "
+			 "select aid, (aid - 1) / %d + 1, 0, '' "
+			 "from generate_series(1, "INT64_FORMAT") as aid",
+			 naccounts, (int64) naccounts * scale);
+	executeStatement(con, sql);
 
 	executeStatement(con, "commit");
 }
@@ -3905,21 +4082,21 @@ initCreateFKeys(PGconn *con)
 static void
 checkInitSteps(const char *initialize_steps)
 {
-	const char *step;
-
 	if (initialize_steps[0] == '\0')
 	{
 		fprintf(stderr, "no initialization steps specified\n");
 		exit(1);
 	}
 
-	for (step = initialize_steps; *step != '\0'; step++)
+	for (const char *step = initialize_steps; *step != '\0'; step++)
 	{
-		if (strchr("dtgvpf ", *step) == NULL)
+		if (strchr(ALL_INIT_STEPS " ", *step) == NULL)
 		{
-			fprintf(stderr, "unrecognized initialization step \"%c\"\n",
+			fprintf(stderr,
+					"unrecognized initialization step \"%c\"\n",
 					*step);
-			fprintf(stderr, "allowed steps are: \"d\", \"t\", \"g\", \"v\", \"p\", \"f\"\n");
+			fprintf(stderr,
+					"Allowed step characters are: \"" ALL_INIT_STEPS "\".\n");
 			exit(1);
 		}
 	}
@@ -3931,32 +4108,55 @@ checkInitSteps(const char *initialize_steps)
 static void
 runInitSteps(const char *initialize_steps)
 {
+	PQExpBufferData stats;
 	PGconn	   *con;
 	const char *step;
+	double		run_time = 0.0;
+	bool		first = true;
+
+	initPQExpBuffer(&stats);
 
 	if ((con = doConnect()) == NULL)
 		exit(1);
 
+	setup_cancel_handler(NULL);
+	SetCancelConn(con);
+
 	for (step = initialize_steps; *step != '\0'; step++)
 	{
+		instr_time	start;
+		char	   *op = NULL;
+
+		INSTR_TIME_SET_CURRENT(start);
+
 		switch (*step)
 		{
 			case 'd':
+				op = "drop tables";
 				initDropTables(con);
 				break;
 			case 't':
+				op = "create tables";
 				initCreateTables(con);
 				break;
 			case 'g':
-				initGenerateData(con);
+				op = "client-side generate";
+				initGenerateDataClientSide(con);
+				break;
+			case 'G':
+				op = "server-side generate";
+				initGenerateDataServerSide(con);
 				break;
 			case 'v':
+				op = "vacuum";
 				initVacuum(con);
 				break;
 			case 'p':
+				op = "primary keys";
 				initCreatePKeys(con);
 				break;
 			case 'f':
+				op = "foreign keys";
 				initCreateFKeys(con);
 				break;
 			case ' ':
@@ -3967,10 +4167,146 @@ runInitSteps(const char *initialize_steps)
 				PQfinish(con);
 				exit(1);
 		}
+
+		if (op != NULL)
+		{
+			instr_time	diff;
+			double		elapsed_sec;
+
+			INSTR_TIME_SET_CURRENT(diff);
+			INSTR_TIME_SUBTRACT(diff, start);
+			elapsed_sec = INSTR_TIME_GET_DOUBLE(diff);
+
+			if (!first)
+				appendPQExpBufferStr(&stats, ", ");
+			else
+				first = false;
+
+			appendPQExpBuffer(&stats, "%s %.2f s", op, elapsed_sec);
+
+			run_time += elapsed_sec;
+		}
 	}
 
-	fprintf(stderr, "done.\n");
+	fprintf(stderr, "done in %.2f s (%s).\n", run_time, stats.data);
+	ResetCancelConn();
 	PQfinish(con);
+	termPQExpBuffer(&stats);
+}
+
+/*
+ * Extract pgbench table informations into global variables scale,
+ * partition_method and partitions.
+ */
+static void
+GetTableInfo(PGconn *con, bool scale_given)
+{
+	PGresult   *res;
+
+	/*
+	 * get the scaling factor that should be same as count(*) from
+	 * pgbench_branches if this is not a custom query
+	 */
+	res = PQexec(con, "select count(*) from pgbench_branches");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		char	   *sqlState = PQresultErrorField(res, PG_DIAG_SQLSTATE);
+
+		fprintf(stderr, "%s", PQerrorMessage(con));
+		if (sqlState && strcmp(sqlState, ERRCODE_UNDEFINED_TABLE) == 0)
+		{
+			fprintf(stderr, "Perhaps you need to do initialization (\"pgbench -i\") in database \"%s\"\n", PQdb(con));
+		}
+
+		exit(1);
+	}
+	scale = atoi(PQgetvalue(res, 0, 0));
+	if (scale < 0)
+	{
+		fprintf(stderr, "invalid count(*) from pgbench_branches: \"%s\"\n",
+				PQgetvalue(res, 0, 0));
+		exit(1);
+	}
+	PQclear(res);
+
+	/* warn if we override user-given -s switch */
+	if (scale_given)
+		fprintf(stderr,
+				"scale option ignored, using count from pgbench_branches table (%d)\n",
+				scale);
+
+	/*
+	 * Get the partition information for the first "pgbench_accounts" table
+	 * found in search_path.
+	 *
+	 * The result is empty if no "pgbench_accounts" is found.
+	 *
+	 * Otherwise, it always returns one row even if the table is not
+	 * partitioned (in which case the partition strategy is NULL).
+	 *
+	 * The number of partitions can be 0 even for partitioned tables, if no
+	 * partition is attached.
+	 *
+	 * We assume no partitioning on any failure, so as to avoid failing on an
+	 * old version without "pg_partitioned_table".
+	 */
+	res = PQexec(con,
+				 "select o.n, p.partstrat, pg_catalog.count(i.inhparent) "
+				 "from pg_catalog.pg_class as c "
+				 "join pg_catalog.pg_namespace as n on (n.oid = c.relnamespace) "
+				 "cross join lateral (select pg_catalog.array_position(pg_catalog.current_schemas(true), n.nspname)) as o(n) "
+				 "left join pg_catalog.pg_partitioned_table as p on (p.partrelid = c.oid) "
+				 "left join pg_catalog.pg_inherits as i on (c.oid = i.inhparent) "
+				 "where c.relname = 'pgbench_accounts' and o.n is not null "
+				 "group by 1, 2 "
+				 "order by 1 asc "
+				 "limit 1");
+
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		/* probably an older version, coldly assume no partitioning */
+		partition_method = PART_NONE;
+		partitions = 0;
+	}
+	else if (PQntuples(res) == 0)
+	{
+		/*
+		 * This case is unlikely as pgbench already found "pgbench_branches"
+		 * above to compute the scale.
+		 */
+		fprintf(stderr,
+				"no pgbench_accounts table found in search_path\n"
+				"Perhaps you need to do initialization (\"pgbench -i\") in database \"%s\".\n", PQdb(con));
+		exit(1);
+	}
+	else						/* PQntupes(res) == 1 */
+	{
+		/* normal case, extract partition information */
+		if (PQgetisnull(res, 0, 1))
+			partition_method = PART_NONE;
+		else
+		{
+			char	   *ps = PQgetvalue(res, 0, 1);
+
+			/* column must be there */
+			Assert(ps != NULL);
+
+			if (strcmp(ps, "r") == 0)
+				partition_method = PART_RANGE;
+			else if (strcmp(ps, "h") == 0)
+				partition_method = PART_HASH;
+			else
+			{
+				/* possibly a newer version with new partition method */
+				fprintf(stderr, "unexpected partition method: \"%s\"\n", ps);
+				exit(1);
+			}
+		}
+
+		partitions = atoi(PQgetvalue(res, 0, 2));
+	}
+
+	PQclear(res);
 }
 
 /*
@@ -4648,7 +4984,7 @@ listAvailableScripts(void)
 
 	fprintf(stderr, "Available builtin scripts:\n");
 	for (i = 0; i < lengthof(builtin_script); i++)
-		fprintf(stderr, "\t%s\n", builtin_script[i].name);
+		fprintf(stderr, "  %13s: %s\n", builtin_script[i].name, builtin_script[i].desc);
 	fprintf(stderr, "\n");
 }
 
@@ -4882,6 +5218,10 @@ printResults(StatsData *total, instr_time total_time,
 	printf("transaction type: %s\n",
 		   num_scripts == 1 ? sql_script[0].desc : "multiple scripts");
 	printf("scaling factor: %d\n", scale);
+	/* only print partitioning information if some partitioning was detected */
+	if (partition_method != PART_NONE)
+		printf("partition method: %s\npartitions: %d\n",
+			   PARTITION_METHOD[partition_method], partitions);
 	printf("query mode: %s\n", QUERYMODE[querymode]);
 	printf("number of clients: %d\n", nclients);
 	printf("number of threads: %d\n", nthreads);
@@ -5088,6 +5428,9 @@ main(int argc, char **argv)
 		{"log-prefix", required_argument, NULL, 7},
 		{"foreign-keys", no_argument, NULL, 8},
 		{"random-seed", required_argument, NULL, 9},
+		{"show-script", required_argument, NULL, 10},
+		{"partitions", required_argument, NULL, 11},
+		{"partition-method", required_argument, NULL, 12},
 		{NULL, 0, NULL, 0}
 	};
 
@@ -5122,7 +5465,6 @@ main(int argc, char **argv)
 #endif
 
 	PGconn	   *con;
-	PGresult   *res;
 	char	   *env;
 
 	int			exit_code = 0;
@@ -5440,6 +5782,37 @@ main(int argc, char **argv)
 					exit(1);
 				}
 				break;
+			case 10:			/* list */
+				{
+					const BuiltinScript *s = findBuiltin(optarg);
+
+					fprintf(stderr, "-- %s: %s\n%s\n", s->name, s->desc, s->script);
+					exit(0);
+				}
+				break;
+			case 11:			/* partitions */
+				initialization_option_set = true;
+				partitions = atoi(optarg);
+				if (partitions < 0)
+				{
+					fprintf(stderr, "invalid number of partitions: \"%s\"\n",
+							optarg);
+					exit(1);
+				}
+				break;
+			case 12:			/* partition-method */
+				initialization_option_set = true;
+				if (pg_strcasecmp(optarg, "range") == 0)
+					partition_method = PART_RANGE;
+				else if (pg_strcasecmp(optarg, "hash") == 0)
+					partition_method = PART_HASH;
+				else
+				{
+					fprintf(stderr, "invalid partition method, expecting \"range\" or \"hash\","
+							" got: \"%s\"\n", optarg);
+					exit(1);
+				}
+				break;
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 				exit(1);
@@ -5494,7 +5867,7 @@ main(int argc, char **argv)
 	throttle_delay *= nthreads;
 
 	if (argc > optind)
-		dbName = argv[optind];
+		dbName = argv[optind++];
 	else
 	{
 		if ((env = getenv("PGDATABASE")) != NULL && *env != '\0')
@@ -5505,6 +5878,14 @@ main(int argc, char **argv)
 			dbName = "";
 	}
 
+	if (optind < argc)
+	{
+		fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
+				progname, argv[optind]);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		exit(1);
+	}
+
 	if (is_init_mode)
 	{
 		if (benchmarking_option_set)
@@ -5512,6 +5893,16 @@ main(int argc, char **argv)
 			fprintf(stderr, "some of the specified options cannot be used in initialization (-i) mode\n");
 			exit(1);
 		}
+
+		if (partitions == 0 && partition_method != PART_NONE)
+		{
+			fprintf(stderr, "--partition-method requires greater than zero --partitions\n");
+			exit(1);
+		}
+
+		/* set default method */
+		if (partitions > 0 && partition_method == PART_NONE)
+			partition_method = PART_RANGE;
 
 		if (initialize_steps == NULL)
 			initialize_steps = pg_strdup(DEFAULT_INIT_STEPS);
@@ -5670,39 +6061,7 @@ main(int argc, char **argv)
 	}
 
 	if (internal_script_used)
-	{
-		/*
-		 * get the scaling factor that should be same as count(*) from
-		 * pgbench_branches if this is not a custom query
-		 */
-		res = PQexec(con, "select count(*) from pgbench_branches");
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-		{
-			char	   *sqlState = PQresultErrorField(res, PG_DIAG_SQLSTATE);
-
-			fprintf(stderr, "%s", PQerrorMessage(con));
-			if (sqlState && strcmp(sqlState, ERRCODE_UNDEFINED_TABLE) == 0)
-			{
-				fprintf(stderr, "Perhaps you need to do initialization (\"pgbench -i\") in database \"%s\"\n", PQdb(con));
-			}
-
-			exit(1);
-		}
-		scale = atoi(PQgetvalue(res, 0, 0));
-		if (scale < 0)
-		{
-			fprintf(stderr, "invalid count(*) from pgbench_branches: \"%s\"\n",
-					PQgetvalue(res, 0, 0));
-			exit(1);
-		}
-		PQclear(res);
-
-		/* warn if we override user-given -s switch */
-		if (scale_given)
-			fprintf(stderr,
-					"scale option ignored, using count from pgbench_branches table (%d)\n",
-					scale);
-	}
+		GetTableInfo(con, scale_given);
 
 	/*
 	 * :scale variables normally get -s or database scale, but don't override

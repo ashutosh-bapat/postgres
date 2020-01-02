@@ -3,7 +3,7 @@
  * pg_bitutils.c
  *	  Miscellaneous functions for bit-wise operations.
  *
- * Copyright (c) 2019, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/pg_bitutils.c
@@ -28,7 +28,7 @@
  * left-most the 7th bit.  The 0th entry of the array should not be used.
  *
  * Note: this is not used by the functions in pg_bitutils.h when
- * HAVE_BUILTIN_CLZ is defined, but we provide it anyway, so that
+ * HAVE__BUILTIN_CLZ is defined, but we provide it anyway, so that
  * extensions possibly compiled with a different compiler can use it.
  */
 const uint8 pg_leftmost_one_pos[256] = {
@@ -56,7 +56,7 @@ const uint8 pg_leftmost_one_pos[256] = {
  * left-most the 7th bit.  The 0th entry of the array should not be used.
  *
  * Note: this is not used by the functions in pg_bitutils.h when
- * HAVE_BUILTIN_CTZ is defined, but we provide it anyway, so that
+ * HAVE__BUILTIN_CTZ is defined, but we provide it anyway, so that
  * extensions possibly compiled with a different compiler can use it.
  */
 const uint8 pg_rightmost_one_pos[256] = {

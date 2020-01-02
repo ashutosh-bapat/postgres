@@ -4,7 +4,7 @@
  *	  Search code for postgres btrees.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -142,27 +142,20 @@ _bt_search(Relation rel, BTScanInsert key, Buffer *bufP, int access,
 		offnum = _bt_binsrch(rel, key, *bufP);
 		itemid = PageGetItemId(page, offnum);
 		itup = (IndexTuple) PageGetItem(page, itemid);
-		blkno = BTreeInnerTupleGetDownLink(itup);
+		blkno = BTreeTupleGetDownLink(itup);
 		par_blkno = BufferGetBlockNumber(*bufP);
 
 		/*
-		 * We need to save the location of the index entry we chose in the
-		 * parent page on a stack. In case we split the tree, we'll use the
-		 * stack to work back up to the parent page.  We also save the actual
-		 * downlink (block) to uniquely identify the index entry, in case it
-		 * moves right while we're working lower in the tree.  See the paper
-		 * by Lehman and Yao for how this is detected and handled. (We use the
-		 * child link during the second half of a page split -- if caller ends
-		 * up splitting the child it usually ends up inserting a new pivot
-		 * tuple for child's new right sibling immediately after the original
-		 * bts_offset offset recorded here.  The downlink block will be needed
-		 * to check if bts_offset remains the position of this same pivot
-		 * tuple.)
+		 * We need to save the location of the pivot tuple we chose in the
+		 * parent page on a stack.  If we need to split a page, we'll use
+		 * the stack to work back up to its parent page.  If caller ends up
+		 * splitting a page one level down, it usually ends up inserting a
+		 * new pivot tuple/downlink immediately after the location recorded
+		 * here.
 		 */
 		new_stack = (BTStack) palloc(sizeof(BTStackData));
 		new_stack->bts_blkno = par_blkno;
 		new_stack->bts_offset = offnum;
-		new_stack->bts_btentry = blkno;
 		new_stack->bts_parent = stack_in;
 
 		/*
@@ -354,11 +347,13 @@ _bt_binsrch(Relation rel,
 	int32		result,
 				cmpval;
 
-	/* Requesting nextkey semantics while using scantid seems nonsensical */
-	Assert(!key->nextkey || key->scantid == NULL);
-
 	page = BufferGetPage(buf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+
+	/* Requesting nextkey semantics while using scantid seems nonsensical */
+	Assert(!key->nextkey || key->scantid == NULL);
+	/* scantid-set callers must use _bt_binsrch_insert() on leaf pages */
+	Assert(!P_ISLEAF(opaque) || key->scantid == NULL);
 
 	low = P_FIRSTDATAKEY(opaque);
 	high = PageGetMaxOffsetNumber(page);
@@ -424,7 +419,7 @@ _bt_binsrch(Relation rel,
 
 /*
  *
- *	bt_binsrch_insert() -- Cacheable, incremental leaf page binary search.
+ *	_bt_binsrch_insert() -- Cacheable, incremental leaf page binary search.
  *
  * Like _bt_binsrch(), but with support for caching the binary search
  * bounds.  Only used during insertion, and only on the leaf page that it
@@ -2113,8 +2108,10 @@ _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 		if (opaque->btpo.level == level)
 			break;
 		if (opaque->btpo.level < level)
-			elog(ERROR, "btree level %u not found in index \"%s\"",
-				 level, RelationGetRelationName(rel));
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg_internal("btree level %u not found in index \"%s\"",
+									 level, RelationGetRelationName(rel))));
 
 		/* Descend to leftmost or rightmost child page */
 		if (rightmost)
@@ -2123,7 +2120,7 @@ _bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
 			offnum = P_FIRSTDATAKEY(opaque);
 
 		itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
-		blkno = BTreeInnerTupleGetDownLink(itup);
+		blkno = BTreeTupleGetDownLink(itup);
 
 		buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
 		page = BufferGetPage(buf);

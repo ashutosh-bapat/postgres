@@ -2,7 +2,7 @@
  * logical.c
  *	   PostgreSQL logical decoding coordination
  *
- * Copyright (c) 2012-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/logical.c
@@ -28,20 +28,17 @@
 
 #include "postgres.h"
 
-#include "miscadmin.h"
-
 #include "access/xact.h"
 #include "access/xlog_internal.h"
-
+#include "fmgr.h"
+#include "miscadmin.h"
 #include "replication/decode.h"
 #include "replication/logical.h"
-#include "replication/reorderbuffer.h"
 #include "replication/origin.h"
+#include "replication/reorderbuffer.h"
 #include "replication/snapbuild.h"
-
 #include "storage/proc.h"
 #include "storage/procarray.h"
-
 #include "utils/memutils.h"
 
 /* data for errcontext callback */
@@ -114,7 +111,7 @@ CheckLogicalDecodingRequirements(void)
 }
 
 /*
- * Helper function for CreateInitialDecodingContext() and
+ * Helper function for CreateInitDecodingContext() and
  * CreateDecodingContext() performing common tasks.
  */
 static LogicalDecodingContext *
@@ -172,7 +169,7 @@ StartupDecodingContext(List *output_plugin_options,
 
 	ctx->slot = slot;
 
-	ctx->reader = XLogReaderAllocate(wal_segment_size, read_page, ctx);
+	ctx->reader = XLogReaderAllocate(wal_segment_size, NULL, read_page, ctx);
 	if (!ctx->reader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),

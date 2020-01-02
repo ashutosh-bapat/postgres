@@ -23,7 +23,7 @@
  * for aborts (whether sync or async), since the post-crash assumption would
  * be that such transactions failed anyway.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/clog.c
@@ -39,8 +39,8 @@
 #include "access/xloginsert.h"
 #include "access/xlogutils.h"
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "pg_trace.h"
+#include "pgstat.h"
 #include "storage/proc.h"
 
 /*
@@ -92,7 +92,7 @@ static int	ZeroCLOGPage(int pageno, bool writeXlog);
 static bool CLOGPagePrecedes(int page1, int page2);
 static void WriteZeroPageXlogRec(int pageno);
 static void WriteTruncateXlogRec(int pageno, TransactionId oldestXact,
-								 Oid oldestXidDb);
+								 Oid oldestXactDb);
 static void TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 									   TransactionId *subxids, XidStatus status,
 									   XLogRecPtr lsn, int pageno,
@@ -155,7 +155,7 @@ static void TransactionIdSetPageStatusInternal(TransactionId xid, int nsubxids,
  * NB: this is a low-level routine and is NOT the preferred entry point
  * for most uses; functions in transam.c are the intended callers.
  *
- * XXX Think about issuing FADVISE_WILLNEED on pages that we will need,
+ * XXX Think about issuing POSIX_FADV_WILLNEED on pages that we will need,
  * but aren't yet in cache, as well as hinting pages not to fall out of
  * cache yet.
  */
@@ -299,13 +299,6 @@ TransactionIdSetPageStatus(TransactionId xid, int nsubxids,
 		memcmp(subxids, MyProc->subxids.xids,
 			   nsubxids * sizeof(TransactionId)) == 0)
 	{
-		/*
-		 * We don't try to do group update optimization if a process has
-		 * overflowed the subxids array in its PGPROC, since in that case we
-		 * don't have a complete list of XIDs for it.
-		 */
-		Assert(THRESHOLD_SUBTRANS_CLOG_OPT <= PGPROC_MAX_CACHED_SUBXIDS);
-
 		/*
 		 * If we can immediately acquire CLogControlLock, we update the status
 		 * of our own XID and release the lock.  If not, try use group XID
@@ -520,10 +513,10 @@ TransactionGroupUpdateXidStatus(TransactionId xid, XidStatus status,
 		PGXACT	   *pgxact = &ProcGlobal->allPgXact[nextidx];
 
 		/*
-		 * Overflowed transactions should not use group XID status update
-		 * mechanism.
+		 * Transactions with more than THRESHOLD_SUBTRANS_CLOG_OPT sub-XIDs
+		 * should not use group XID status update mechanism.
 		 */
-		Assert(!pgxact->overflowed);
+		Assert(pgxact->nxids <= THRESHOLD_SUBTRANS_CLOG_OPT);
 
 		TransactionIdSetPageStatusInternal(proc->clogGroupMemberXid,
 										   pgxact->nxids,
@@ -891,7 +884,7 @@ ExtendCLOG(TransactionId newestXact)
  * Remove all CLOG segments before the one holding the passed transaction ID
  *
  * Before removing any CLOG data, we must flush XLOG to disk, to ensure
- * that any recently-emitted HEAP_FREEZE records have reached disk; otherwise
+ * that any recently-emitted FREEZE_PAGE records have reached disk; otherwise
  * a crash and restart might leave us with some unfrozen tuples referencing
  * removed CLOG data.  We choose to emit a special TRUNCATE XLOG record too.
  * Replaying the deletion from XLOG is not critical, since the files could

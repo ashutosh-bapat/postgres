@@ -2,7 +2,7 @@
  *
  * pg_dumpall.c
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * pg_dumpall forces all pg_dump output to be text, since it also outputs
@@ -18,14 +18,13 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "getopt_long.h"
-
-#include "dumputils.h"
-#include "pg_backup.h"
 #include "common/file_utils.h"
 #include "common/logging.h"
+#include "dumputils.h"
 #include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
+#include "getopt_long.h"
+#include "pg_backup.h"
 
 /* version string we expect back from pg_dump */
 #define PGDUMP_VERSIONSTR "pg_dump (PostgreSQL) " PG_VERSION "\n"
@@ -146,6 +145,7 @@ main(int argc, char *argv[])
 		{"no-sync", no_argument, NULL, 4},
 		{"no-unlogged-table-data", no_argument, &no_unlogged_table_data, 1},
 		{"on-conflict-do-nothing", no_argument, &on_conflict_do_nothing, 1},
+		{"rows-per-insert", required_argument, NULL, 7},
 
 		{NULL, 0, NULL, 0}
 	};
@@ -329,6 +329,11 @@ main(int argc, char *argv[])
 				simple_string_list_append(&database_exclude_patterns, optarg);
 				break;
 
+			case 7:
+				appendPQExpBufferStr(pgdumpopts, " --rows-per-insert ");
+				appendShellString(pgdumpopts, optarg);
+				break;
+
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 				exit_nicely(1);
@@ -348,7 +353,7 @@ main(int argc, char *argv[])
 	if (database_exclude_patterns.head != NULL &&
 		(globals_only || roles_only || tablespaces_only))
 	{
-		pg_log_error("option --exclude-database cannot be used together with -g/--globals-only, -r/--roles-only or -t/--tablespaces-only");
+		pg_log_error("option --exclude-database cannot be used together with -g/--globals-only, -r/--roles-only, or -t/--tablespaces-only");
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
 		exit_nicely(1);
@@ -476,7 +481,7 @@ main(int argc, char *argv[])
 		OPF = fopen(filename, PG_BINARY_W);
 		if (!OPF)
 		{
-			pg_log_error("could not open the output file \"%s\": %m",
+			pg_log_error("could not open output file \"%s\": %m",
 						 filename);
 			exit_nicely(1);
 		}
@@ -648,6 +653,7 @@ help(void)
 	printf(_("  --no-unlogged-table-data     do not dump unlogged table data\n"));
 	printf(_("  --on-conflict-do-nothing     add ON CONFLICT DO NOTHING to INSERT commands\n"));
 	printf(_("  --quote-all-identifiers      quote all identifiers, even if not key words\n"));
+	printf(_("  --rows-per-insert=NROWS      number of rows per INSERT; implies --inserts\n"));
 	printf(_("  --use-set-session-authorization\n"
 			 "                               use SET SESSION AUTHORIZATION commands instead of\n"
 			 "                               ALTER OWNER commands to set ownership\n"));
@@ -1425,8 +1431,8 @@ expand_dbname_patterns(PGconn *conn,
 
 	for (SimpleStringListCell *cell = patterns->head; cell; cell = cell->next)
 	{
-		appendPQExpBuffer(query,
-						  "SELECT datname FROM pg_catalog.pg_database n\n");
+		appendPQExpBufferStr(query,
+							 "SELECT datname FROM pg_catalog.pg_database n\n");
 		processSQLNamePattern(conn, query, cell->val, false,
 							  false, NULL, "datname", NULL, NULL);
 
@@ -1485,11 +1491,11 @@ dumpDatabases(PGconn *conn)
 		/* Skip any explicitly excluded database */
 		if (simple_string_list_member(&database_exclude_names, dbname))
 		{
-			pg_log_info("excluding database \"%s\"...", dbname);
+			pg_log_info("excluding database \"%s\"", dbname);
 			continue;
 		}
 
-		pg_log_info("dumping database \"%s\"...", dbname);
+		pg_log_info("dumping database \"%s\"", dbname);
 
 		fprintf(OPF, "--\n-- Database \"%s\" dump\n--\n\n", dbname);
 

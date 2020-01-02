@@ -3,7 +3,7 @@
  * postgres_fdw.c
  *		  Foreign-data wrapper for remote PostgreSQL servers
  *
- * Portions Copyright (c) 2012-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/postgres_fdw.c
@@ -12,7 +12,7 @@
  */
 #include "postgres.h"
 
-#include "postgres_fdw.h"
+#include <limits.h>
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
@@ -26,8 +26,8 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/cost.h"
 #include "optimizer/clauses.h"
+#include "optimizer/cost.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
@@ -35,6 +35,7 @@
 #include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
 #include "parser/parsetree.h"
+#include "postgres_fdw.h"
 #include "utils/builtins.h"
 #include "utils/float.h"
 #include "utils/guc.h"
@@ -575,9 +576,6 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	PgFdwRelationInfo *fpinfo;
 	ListCell   *lc;
 	RangeTblEntry *rte = planner_rt_fetch(baserel->relid, root);
-	const char *namespace;
-	const char *relname;
-	const char *refname;
 
 	/*
 	 * We use PgFdwRelationInfo to pass various information to subsequent
@@ -661,10 +659,11 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	cost_qual_eval(&fpinfo->local_conds_cost, fpinfo->local_conds, root);
 
 	/*
-	 * Set cached relation costs to some negative value, so that we can detect
-	 * when they are set to some sensible costs during one (usually the first)
-	 * of the calls to estimate_path_cost_size().
+	 * Set # of retrieved rows and cached relation costs to some negative
+	 * value, so that we can detect when they are set to some sensible values,
+	 * during one (usually the first) of the calls to estimate_path_cost_size.
 	 */
+	fpinfo->retrieved_rows = -1;
 	fpinfo->rel_startup_cost = -1;
 	fpinfo->rel_total_cost = -1;
 
@@ -719,21 +718,11 @@ postgresGetForeignRelSize(PlannerInfo *root,
 	}
 
 	/*
-	 * Set the name of relation in fpinfo, while we are constructing it here.
-	 * It will be used to build the string describing the join relation in
-	 * EXPLAIN output. We can't know whether VERBOSE option is specified or
-	 * not, so always schema-qualify the foreign table name.
+	 * fpinfo->relation_name gets the numeric rangetable index of the foreign
+	 * table RTE.  (If this query gets EXPLAIN'd, we'll convert that to a
+	 * human-readable string at that time.)
 	 */
-	fpinfo->relation_name = makeStringInfo();
-	namespace = get_namespace_name(get_rel_namespace(foreigntableid));
-	relname = get_rel_name(foreigntableid);
-	refname = rte->eref->aliasname;
-	appendStringInfo(fpinfo->relation_name, "%s.%s",
-					 quote_identifier(namespace),
-					 quote_identifier(relname));
-	if (*refname && strcmp(refname, relname) != 0)
-		appendStringInfo(fpinfo->relation_name, " %s",
-						 quote_identifier(rte->eref->aliasname));
+	fpinfo->relation_name = psprintf("%u", baserel->relid);
 
 	/* No outer and inner relations. */
 	fpinfo->make_outerrel_subquery = false;
@@ -1376,7 +1365,7 @@ postgresGetForeignPlan(PlannerInfo *root,
 							 makeInteger(fpinfo->fetch_size));
 	if (IS_JOIN_REL(foreignrel) || IS_UPPER_REL(foreignrel))
 		fdw_private = lappend(fdw_private,
-							  makeString(fpinfo->relation_name->data));
+							  makeString(fpinfo->relation_name));
 
 	/*
 	 * Create the ForeignScan node for the given relation.
@@ -1686,12 +1675,19 @@ postgresPlanForeignModify(PlannerInfo *root,
 
 	/*
 	 * In an INSERT, we transmit all columns that are defined in the foreign
-	 * table.  In an UPDATE, we transmit only columns that were explicitly
-	 * targets of the UPDATE, so as to avoid unnecessary data transmission.
-	 * (We can't do that for INSERT since we would miss sending default values
-	 * for columns not listed in the source statement.)
+	 * table.  In an UPDATE, if there are BEFORE ROW UPDATE triggers on the
+	 * foreign table, we transmit all columns like INSERT; else we transmit
+	 * only columns that were explicitly targets of the UPDATE, so as to avoid
+	 * unnecessary data transmission.  (We can't do that for INSERT since we
+	 * would miss sending default values for columns not listed in the source
+	 * statement, and for UPDATE if there are BEFORE ROW UPDATE triggers since
+	 * those triggers might change values for non-target columns, in which
+	 * case we would miss sending changed values for those columns.)
 	 */
-	if (operation == CMD_INSERT)
+	if (operation == CMD_INSERT ||
+		(operation == CMD_UPDATE &&
+		 rel->trigdesc &&
+		 rel->trigdesc->trig_update_before_row))
 	{
 		TupleDesc	tupdesc = RelationGetDescr(rel);
 		int			attnum;
@@ -2521,20 +2517,92 @@ postgresEndDirectModify(ForeignScanState *node)
 static void
 postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
 {
-	List	   *fdw_private;
-	char	   *sql;
-	char	   *relations;
-
-	fdw_private = ((ForeignScan *) node->ss.ps.plan)->fdw_private;
+	ForeignScan *plan = castNode(ForeignScan, node->ss.ps.plan);
+	List	   *fdw_private = plan->fdw_private;
 
 	/*
-	 * Add names of relation handled by the foreign scan when the scan is a
-	 * join
+	 * Identify foreign scans that are really joins or upper relations.  The
+	 * input looks something like "(1) LEFT JOIN (2)", and we must replace the
+	 * digit string(s), which are RT indexes, with the correct relation names.
+	 * We do that here, not when the plan is created, because we can't know
+	 * what aliases ruleutils.c will assign at plan creation time.
 	 */
 	if (list_length(fdw_private) > FdwScanPrivateRelations)
 	{
-		relations = strVal(list_nth(fdw_private, FdwScanPrivateRelations));
-		ExplainPropertyText("Relations", relations, es);
+		StringInfo	relations;
+		char	   *rawrelations;
+		char	   *ptr;
+		int			minrti,
+					rtoffset;
+
+		rawrelations = strVal(list_nth(fdw_private, FdwScanPrivateRelations));
+
+		/*
+		 * A difficulty with using a string representation of RT indexes is
+		 * that setrefs.c won't update the string when flattening the
+		 * rangetable.  To find out what rtoffset was applied, identify the
+		 * minimum RT index appearing in the string and compare it to the
+		 * minimum member of plan->fs_relids.  (We expect all the relids in
+		 * the join will have been offset by the same amount; the Asserts
+		 * below should catch it if that ever changes.)
+		 */
+		minrti = INT_MAX;
+		ptr = rawrelations;
+		while (*ptr)
+		{
+			if (isdigit((unsigned char) *ptr))
+			{
+				int			rti = strtol(ptr, &ptr, 10);
+
+				if (rti < minrti)
+					minrti = rti;
+			}
+			else
+				ptr++;
+		}
+		rtoffset = bms_next_member(plan->fs_relids, -1) - minrti;
+
+		/* Now we can translate the string */
+		relations = makeStringInfo();
+		ptr = rawrelations;
+		while (*ptr)
+		{
+			if (isdigit((unsigned char) *ptr))
+			{
+				int			rti = strtol(ptr, &ptr, 10);
+				RangeTblEntry *rte;
+				char	   *relname;
+				char	   *refname;
+
+				rti += rtoffset;
+				Assert(bms_is_member(rti, plan->fs_relids));
+				rte = rt_fetch(rti, es->rtable);
+				Assert(rte->rtekind == RTE_RELATION);
+				/* This logic should agree with explain.c's ExplainTargetRel */
+				relname = get_rel_name(rte->relid);
+				if (es->verbose)
+				{
+					char	   *namespace;
+
+					namespace = get_namespace_name(get_rel_namespace(rte->relid));
+					appendStringInfo(relations, "%s.%s",
+									 quote_identifier(namespace),
+									 quote_identifier(relname));
+				}
+				else
+					appendStringInfo(relations, "%s",
+									 quote_identifier(relname));
+				refname = (char *) list_nth(es->rtable_names, rti - 1);
+				if (refname == NULL)
+					refname = rte->eref->aliasname;
+				if (strcmp(refname, relname) != 0)
+					appendStringInfo(relations, " %s",
+									 quote_identifier(refname));
+			}
+			else
+				appendStringInfoChar(relations, *ptr++);
+		}
+		ExplainPropertyText("Relations", relations->data, es);
 	}
 
 	/*
@@ -2542,6 +2610,8 @@ postgresExplainForeignScan(ForeignScanState *node, ExplainState *es)
 	 */
 	if (es->verbose)
 	{
+		char	   *sql;
+
 		sql = strVal(list_nth(fdw_private, FdwScanPrivateSelectSql));
 		ExplainPropertyText("Remote SQL", sql, es);
 	}
@@ -2616,7 +2686,6 @@ estimate_path_cost_size(PlannerInfo *root,
 	int			width;
 	Cost		startup_cost;
 	Cost		total_cost;
-	Cost		cpu_per_tuple;
 
 	/* Make sure the core code has set up the relation's reltarget */
 	Assert(foreignrel->reltarget);
@@ -2660,7 +2729,7 @@ estimate_path_cost_size(PlannerInfo *root,
 		 * baserestrictinfo plus any extra join_conds relevant to this
 		 * particular path.
 		 */
-		remote_conds = list_concat(list_copy(remote_param_join_conds),
+		remote_conds = list_concat(remote_param_join_conds,
 								   fpinfo->remote_conds);
 
 		/*
@@ -2730,25 +2799,19 @@ estimate_path_cost_size(PlannerInfo *root,
 		Assert(param_join_conds == NIL);
 
 		/*
-		 * Use rows/width estimates made by set_baserel_size_estimates() for
-		 * base foreign relations and set_joinrel_size_estimates() for join
-		 * between foreign relations.
-		 */
-		rows = foreignrel->rows;
-		width = foreignrel->reltarget->width;
-
-		/* Back into an estimate of the number of retrieved rows. */
-		retrieved_rows = clamp_row_est(rows / fpinfo->local_conds_sel);
-
-		/*
 		 * We will come here again and again with different set of pathkeys or
 		 * additional post-scan/join-processing steps that caller wants to
-		 * cost.  We don't need to calculate the costs of the underlying scan,
-		 * join, or grouping each time.  Instead, use the costs if we have
-		 * cached them already.
+		 * cost.  We don't need to calculate the cost/size estimates for the
+		 * underlying scan, join, or grouping each time.  Instead, use those
+		 * estimates if we have cached them already.
 		 */
 		if (fpinfo->rel_startup_cost >= 0 && fpinfo->rel_total_cost >= 0)
 		{
+			Assert(fpinfo->retrieved_rows >= 1);
+
+			rows = fpinfo->rows;
+			retrieved_rows = fpinfo->retrieved_rows;
+			width = fpinfo->width;
 			startup_cost = fpinfo->rel_startup_cost;
 			run_cost = fpinfo->rel_total_cost - fpinfo->rel_startup_cost;
 
@@ -2778,6 +2841,10 @@ estimate_path_cost_size(PlannerInfo *root,
 			QualCost	remote_conds_cost;
 			double		nrows;
 
+			/* Use rows/width estimates made by the core code. */
+			rows = foreignrel->rows;
+			width = foreignrel->reltarget->width;
+
 			/* For join we expect inner and outer relations set */
 			Assert(fpinfo->innerrel && fpinfo->outerrel);
 
@@ -2786,7 +2853,12 @@ estimate_path_cost_size(PlannerInfo *root,
 
 			/* Estimate of number of rows in cross product */
 			nrows = fpinfo_i->rows * fpinfo_o->rows;
-			/* Clamp retrieved rows estimate to at most size of cross product */
+
+			/*
+			 * Back into an estimate of the number of retrieved rows.  Just in
+			 * case this is nuts, clamp to at most nrows.
+			 */
+			retrieved_rows = clamp_row_est(rows / fpinfo->local_conds_sel);
 			retrieved_rows = Min(retrieved_rows, nrows);
 
 			/*
@@ -2864,9 +2936,8 @@ estimate_path_cost_size(PlannerInfo *root,
 
 			ofpinfo = (PgFdwRelationInfo *) outerrel->fdw_private;
 
-			/* Get rows and width from input rel */
+			/* Get rows from input rel */
 			input_rows = ofpinfo->rows;
-			width = ofpinfo->width;
 
 			/* Collect statistics about aggregates for estimating costs. */
 			MemSet(&aggcosts, 0, sizeof(AggClauseCosts));
@@ -2912,6 +2983,9 @@ estimate_path_cost_size(PlannerInfo *root,
 			{
 				rows = retrieved_rows = numGroups;
 			}
+
+			/* Use width estimate made by the core code. */
+			width = foreignrel->reltarget->width;
 
 			/*-----
 			 * Startup cost includes:
@@ -2959,7 +3033,17 @@ estimate_path_cost_size(PlannerInfo *root,
 		}
 		else
 		{
-			/* Clamp retrieved rows estimates to at most foreignrel->tuples. */
+			Cost		cpu_per_tuple;
+
+			/* Use rows/width estimates made by set_baserel_size_estimates. */
+			rows = foreignrel->rows;
+			width = foreignrel->reltarget->width;
+
+			/*
+			 * Back into an estimate of the number of retrieved rows.  Just in
+			 * case this is nuts, clamp to at most foreignrel->tuples.
+			 */
+			retrieved_rows = clamp_row_est(rows / fpinfo->local_conds_sel);
 			retrieved_rows = Min(retrieved_rows, foreignrel->tuples);
 
 			/*
@@ -3036,18 +3120,20 @@ estimate_path_cost_size(PlannerInfo *root,
 	}
 
 	/*
-	 * Cache the costs for scans, joins, or groupings without any
-	 * parameterization, pathkeys, or additional post-scan/join-processing
-	 * steps, before adding the costs for transferring data from the foreign
-	 * server.  These costs are useful for costing remote joins involving this
-	 * relation or costing other remote operations for this relation such as
-	 * remote sorts and remote LIMIT restrictions, when the costs can not be
-	 * obtained from the foreign server.  This function will be called at
-	 * least once for every foreign relation without any parameterization,
-	 * pathkeys, or additional post-scan/join-processing steps.
+	 * Cache the retrieved rows and cost estimates for scans, joins, or
+	 * groupings without any parameterization, pathkeys, or additional
+	 * post-scan/join-processing steps, before adding the costs for
+	 * transferring data from the foreign server.  These estimates are useful
+	 * for costing remote joins involving this relation or costing other
+	 * remote operations on this relation such as remote sorts and remote
+	 * LIMIT restrictions, when the costs can not be obtained from the foreign
+	 * server.  This function will be called at least once for every foreign
+	 * relation without any parameterization, pathkeys, or additional
+	 * post-scan/join-processing steps.
 	 */
 	if (pathkeys == NIL && param_join_conds == NIL && fpextra == NULL)
 	{
+		fpinfo->retrieved_rows = retrieved_rows;
 		fpinfo->rel_startup_cost = startup_cost;
 		fpinfo->rel_total_cost = total_cost;
 	}
@@ -3064,7 +3150,7 @@ estimate_path_cost_size(PlannerInfo *root,
 	total_cost += cpu_tuple_cost * retrieved_rows;
 
 	/*
-	 * If we have LIMIT, we should perfer performing the restriction remotely
+	 * If we have LIMIT, we should prefer performing the restriction remotely
 	 * rather than locally, as the former avoids extra row fetches from the
 	 * remote that the latter might cause.  But since the core code doesn't
 	 * account for such fetches when estimating the costs of the local
@@ -3132,15 +3218,11 @@ get_remote_estimate(const char *sql, PGconn *conn,
 				   startup_cost, total_cost, rows, width);
 		if (n != 4)
 			elog(ERROR, "could not interpret EXPLAIN output: \"%s\"", line);
-
-		PQclear(res);
-		res = NULL;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (res)
 			PQclear(res);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 }
@@ -3360,15 +3442,11 @@ fetch_more_data(ForeignScanState *node)
 
 		/* Must be EOF if we didn't get as many tuples as we asked for. */
 		fsstate->eof_reached = (numrows < fsstate->fetch_size);
-
-		PQclear(res);
-		res = NULL;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (res)
 			PQclear(res);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
@@ -4381,15 +4459,11 @@ postgresAnalyzeForeignTable(Relation relation,
 		if (PQntuples(res) != 1 || PQnfields(res) != 1)
 			elog(ERROR, "unexpected result from deparseAnalyzeSizeSql query");
 		*totalpages = strtoul(PQgetvalue(res, 0, 0), NULL, 10);
-
-		PQclear(res);
-		res = NULL;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (res)
 			PQclear(res);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
@@ -4466,20 +4540,51 @@ postgresAcquireSampleRowsFunc(Relation relation, int elevel,
 	/* In what follows, do not risk leaking any PGresults. */
 	PG_TRY();
 	{
+		char		fetch_sql[64];
+		int			fetch_size;
+		ListCell   *lc;
+
 		res = pgfdw_exec_query(conn, sql.data);
 		if (PQresultStatus(res) != PGRES_COMMAND_OK)
 			pgfdw_report_error(ERROR, res, conn, false, sql.data);
 		PQclear(res);
 		res = NULL;
 
+		/*
+		 * Determine the fetch size.  The default is arbitrary, but shouldn't
+		 * be enormous.
+		 */
+		fetch_size = 100;
+		foreach(lc, server->options)
+		{
+			DefElem    *def = (DefElem *) lfirst(lc);
+
+			if (strcmp(def->defname, "fetch_size") == 0)
+			{
+				fetch_size = strtol(defGetString(def), NULL, 10);
+				break;
+			}
+		}
+		foreach(lc, table->options)
+		{
+			DefElem    *def = (DefElem *) lfirst(lc);
+
+			if (strcmp(def->defname, "fetch_size") == 0)
+			{
+				fetch_size = strtol(defGetString(def), NULL, 10);
+				break;
+			}
+		}
+
+		/* Construct command to fetch rows from remote. */
+		snprintf(fetch_sql, sizeof(fetch_sql), "FETCH %d FROM c%u",
+				 fetch_size, cursor_number);
+
 		/* Retrieve and process rows a batch at a time. */
 		for (;;)
 		{
-			char		fetch_sql[64];
-			int			fetch_size;
 			int			numrows;
 			int			i;
-			ListCell   *lc;
 
 			/* Allow users to cancel long query */
 			CHECK_FOR_INTERRUPTS();
@@ -4490,33 +4595,7 @@ postgresAcquireSampleRowsFunc(Relation relation, int elevel,
 			 * then just adjust rowstoskip and samplerows appropriately.
 			 */
 
-			/* The fetch size is arbitrary, but shouldn't be enormous. */
-			fetch_size = 100;
-			foreach(lc, server->options)
-			{
-				DefElem    *def = (DefElem *) lfirst(lc);
-
-				if (strcmp(def->defname, "fetch_size") == 0)
-				{
-					fetch_size = strtol(defGetString(def), NULL, 10);
-					break;
-				}
-			}
-			foreach(lc, table->options)
-			{
-				DefElem    *def = (DefElem *) lfirst(lc);
-
-				if (strcmp(def->defname, "fetch_size") == 0)
-				{
-					fetch_size = strtol(defGetString(def), NULL, 10);
-					break;
-				}
-			}
-
 			/* Fetch some rows */
-			snprintf(fetch_sql, sizeof(fetch_sql), "FETCH %d FROM c%u",
-					 fetch_size, cursor_number);
-
 			res = pgfdw_exec_query(conn, fetch_sql);
 			/* On error, report the original query, not the FETCH. */
 			if (PQresultStatus(res) != PGRES_TUPLES_OK)
@@ -4897,16 +4976,11 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 
 			commands = lappend(commands, pstrdup(buf.data));
 		}
-
-		/* Clean up */
-		PQclear(res);
-		res = NULL;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (res)
 			PQclear(res);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
@@ -5073,23 +5147,23 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 	{
 		case JOIN_INNER:
 			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   list_copy(fpinfo_i->remote_conds));
+											   fpinfo_i->remote_conds);
 			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   list_copy(fpinfo_o->remote_conds));
+											   fpinfo_o->remote_conds);
 			break;
 
 		case JOIN_LEFT:
 			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
-											  list_copy(fpinfo_i->remote_conds));
+											  fpinfo_i->remote_conds);
 			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   list_copy(fpinfo_o->remote_conds));
+											   fpinfo_o->remote_conds);
 			break;
 
 		case JOIN_RIGHT:
 			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
-											  list_copy(fpinfo_o->remote_conds));
+											  fpinfo_o->remote_conds);
 			fpinfo->remote_conds = list_concat(fpinfo->remote_conds,
-											   list_copy(fpinfo_i->remote_conds));
+											   fpinfo_i->remote_conds);
 			break;
 
 		case JOIN_FULL:
@@ -5150,22 +5224,24 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 		fpinfo->user = NULL;
 
 	/*
-	 * Set cached relation costs to some negative value, so that we can detect
-	 * when they are set to some sensible costs, during one (usually the
-	 * first) of the calls to estimate_path_cost_size().
+	 * Set # of retrieved rows and cached relation costs to some negative
+	 * value, so that we can detect when they are set to some sensible values,
+	 * during one (usually the first) of the calls to estimate_path_cost_size.
 	 */
+	fpinfo->retrieved_rows = -1;
 	fpinfo->rel_startup_cost = -1;
 	fpinfo->rel_total_cost = -1;
 
 	/*
 	 * Set the string describing this join relation to be used in EXPLAIN
-	 * output of corresponding ForeignScan.
+	 * output of corresponding ForeignScan.  Note that the decoration we add
+	 * to the base relation names mustn't include any digits, or it'll confuse
+	 * postgresExplainForeignScan.
 	 */
-	fpinfo->relation_name = makeStringInfo();
-	appendStringInfo(fpinfo->relation_name, "(%s) %s JOIN (%s)",
-					 fpinfo_o->relation_name->data,
-					 get_jointype_name(fpinfo->jointype),
-					 fpinfo_i->relation_name->data);
+	fpinfo->relation_name = psprintf("(%s) %s JOIN (%s)",
+									 fpinfo_o->relation_name,
+									 get_jointype_name(fpinfo->jointype),
+									 fpinfo_i->relation_name);
 
 	/*
 	 * Set the relation index.  This is defined as the position of this
@@ -5701,20 +5777,22 @@ foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 	fpinfo->pushdown_safe = true;
 
 	/*
-	 * Set cached relation costs to some negative value, so that we can detect
-	 * when they are set to some sensible costs, during one (usually the
-	 * first) of the calls to estimate_path_cost_size().
+	 * Set # of retrieved rows and cached relation costs to some negative
+	 * value, so that we can detect when they are set to some sensible values,
+	 * during one (usually the first) of the calls to estimate_path_cost_size.
 	 */
+	fpinfo->retrieved_rows = -1;
 	fpinfo->rel_startup_cost = -1;
 	fpinfo->rel_total_cost = -1;
 
 	/*
 	 * Set the string describing this grouped relation to be used in EXPLAIN
-	 * output of corresponding ForeignScan.
+	 * output of corresponding ForeignScan.  Note that the decoration we add
+	 * to the base relation name mustn't include any digits, or it'll confuse
+	 * postgresExplainForeignScan.
 	 */
-	fpinfo->relation_name = makeStringInfo();
-	appendStringInfo(fpinfo->relation_name, "Aggregate on (%s)",
-					 ofpinfo->relation_name->data);
+	fpinfo->relation_name = psprintf("Aggregate on (%s)",
+									 ofpinfo->relation_name);
 
 	return true;
 }
@@ -5845,8 +5923,6 @@ add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	fpinfo->width = width;
 	fpinfo->startup_cost = startup_cost;
 	fpinfo->total_cost = total_cost;
-
-	grouped_rel->rows = fpinfo->rows;
 
 	/* Create and add foreign path to the grouping relation. */
 	grouppath = create_foreign_upper_path(root,

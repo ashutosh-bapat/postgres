@@ -2,7 +2,7 @@
  * tablesync.c
  *	  PostgreSQL logical replication
  *
- * Copyright (c) 2012-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/tablesync.c
@@ -85,30 +85,23 @@
 
 #include "postgres.h"
 
-#include "miscadmin.h"
-#include "pgstat.h"
-
 #include "access/table.h"
 #include "access/xact.h"
-
 #include "catalog/pg_subscription_rel.h"
 #include "catalog/pg_type.h"
-
 #include "commands/copy.h"
-
+#include "miscadmin.h"
 #include "parser/parse_relation.h"
-
+#include "pgstat.h"
 #include "replication/logicallauncher.h"
 #include "replication/logicalrelation.h"
 #include "replication/walreceiver.h"
 #include "replication/worker_internal.h"
-
-#include "utils/snapmgr.h"
 #include "storage/ipc.h"
-
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/snapmgr.h"
 
 static bool table_states_valid = false;
 

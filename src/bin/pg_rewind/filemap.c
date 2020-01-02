@@ -3,7 +3,7 @@
  * filemap.c
  *	  A data structure for keeping track of files that have changed.
  *
- * Copyright (c) 2013-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2020, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -13,12 +13,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "catalog/pg_tablespace_d.h"
+#include "common/string.h"
 #include "datapagemap.h"
 #include "filemap.h"
 #include "pg_rewind.h"
-
-#include "common/string.h"
-#include "catalog/pg_tablespace_d.h"
 #include "storage/fd.h"
 
 filemap_t  *filemap = NULL;

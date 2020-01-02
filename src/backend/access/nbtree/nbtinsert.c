@@ -3,7 +3,7 @@
  * nbtinsert.c
  *	  Item insertion in Lehman and Yao btrees for Postgres.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -663,7 +663,7 @@ _bt_check_unique(Relation rel, BTInsertState insertstate, Relation heapRel,
  *		(In a !heapkeyspace index, there can be multiple pages with the same
  *		high key, where the new tuple could legitimately be placed on.  In
  *		that case, the caller passes the first page containing duplicates,
- *		just like when checkinunique=true.  If that page doesn't have enough
+ *		just like when checkingunique=true.  If that page doesn't have enough
  *		room for the new tuple, this function moves right, trying to find a
  *		legal page that does.)
  *
@@ -1568,10 +1568,12 @@ _bt_split(Relation rel, BTScanInsert itup_key, Buffer buf, Buffer cbuf,
 		if (sopaque->btpo_prev != origpagenumber)
 		{
 			memset(rightpage, 0, BufferGetPageSize(rbuf));
-			elog(ERROR, "right sibling's left-link doesn't match: "
-				 "block %u links to %u instead of expected %u in index \"%s\"",
-				 oopaque->btpo_next, sopaque->btpo_prev, origpagenumber,
-				 RelationGetRelationName(rel));
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg_internal("right sibling's left-link doesn't match: "
+									 "block %u links to %u instead of expected %u in index \"%s\"",
+									 oopaque->btpo_next, sopaque->btpo_prev, origpagenumber,
+									 RelationGetRelationName(rel))));
 		}
 
 		/*
@@ -1795,7 +1797,6 @@ _bt_insert_parent(Relation rel,
 			stack = &fakestack;
 			stack->bts_blkno = BufferGetBlockNumber(pbuf);
 			stack->bts_offset = InvalidOffsetNumber;
-			stack->bts_btentry = InvalidBlockNumber;
 			stack->bts_parent = NULL;
 			_bt_relbuf(rel, pbuf);
 		}
@@ -1806,7 +1807,7 @@ _bt_insert_parent(Relation rel,
 
 		/* form an index tuple that points at the new right page */
 		new_item = CopyIndexTuple(ritem);
-		BTreeInnerTupleSetDownLink(new_item, rbknum);
+		BTreeTupleSetDownLink(new_item, rbknum);
 
 		/*
 		 * Re-find and write lock the parent of buf.
@@ -1817,8 +1818,7 @@ _bt_insert_parent(Relation rel,
 		 * new downlink will be inserted at the correct offset. Even buf's
 		 * parent may have changed.
 		 */
-		stack->bts_btentry = bknum;
-		pbuf = _bt_getstackbuf(rel, stack);
+		pbuf = _bt_getstackbuf(rel, stack, bknum);
 
 		/*
 		 * Now we can unlock the right child. The left child will be unlocked
@@ -1827,10 +1827,12 @@ _bt_insert_parent(Relation rel,
 		_bt_relbuf(rel, rbuf);
 
 		if (pbuf == InvalidBuffer)
-			elog(ERROR, "failed to re-find parent key in index \"%s\" for split pages %u/%u",
-				 RelationGetRelationName(rel), bknum, rbknum);
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg_internal("failed to re-find parent key in index \"%s\" for split pages %u/%u",
+									 RelationGetRelationName(rel), bknum, rbknum)));
 
-		/* Recursively update the parent */
+		/* Recursively insert into the parent */
 		_bt_insertonpg(rel, NULL, pbuf, buf, stack->bts_parent,
 					   new_item, stack->bts_offset + 1,
 					   is_only);
@@ -1897,21 +1899,37 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 }
 
 /*
- *	_bt_getstackbuf() -- Walk back up the tree one step, and find the item
- *						 we last looked at in the parent.
+ *	_bt_getstackbuf() -- Walk back up the tree one step, and find the pivot
+ *						 tuple whose downlink points to child page.
  *
- *		This is possible because we save the downlink from the parent item,
- *		which is enough to uniquely identify it.  Insertions into the parent
- *		level could cause the item to move right; deletions could cause it
- *		to move left, but not left of the page we previously found it in.
+ *		Caller passes child's block number, which is used to identify
+ *		associated pivot tuple in parent page using a linear search that
+ *		matches on pivot's downlink/block number.  The expected location of
+ *		the pivot tuple is taken from the stack one level above the child
+ *		page.  This is used as a starting point.  Insertions into the
+ *		parent level could cause the pivot tuple to move right; deletions
+ *		could cause it to move left, but not left of the page we previously
+ *		found it on.
  *
- *		Adjusts bts_blkno & bts_offset if changed.
+ *		Caller can use its stack to relocate the pivot tuple/downlink for
+ *		any same-level page to the right of the page found by its initial
+ *		descent.  This is necessary because of the possibility that caller
+ *		moved right to recover from a concurrent page split.  It's also
+ *		convenient for certain callers to be able to step right when there
+ *		wasn't a concurrent page split, while still using their original
+ *		stack.  For example, the checkingunique _bt_doinsert() case may
+ *		have to step right when there are many physical duplicates, and its
+ *		scantid forces an insertion to the right of the "first page the
+ *		value could be on".
  *
- *		Returns write-locked buffer, or InvalidBuffer if item not found
- *		(should not happen).
+ *		Returns write-locked parent page buffer, or InvalidBuffer if pivot
+ *		tuple not found (should not happen).  Adjusts bts_blkno &
+ *		bts_offset if changed.  Page split caller should insert its new
+ *		pivot tuple for its new right sibling page on parent page, at the
+ *		offset number bts_offset + 1.
  */
 Buffer
-_bt_getstackbuf(Relation rel, BTStack stack)
+_bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child)
 {
 	BlockNumber blkno;
 	OffsetNumber start;
@@ -1973,7 +1991,7 @@ _bt_getstackbuf(Relation rel, BTStack stack)
 				itemid = PageGetItemId(page, offnum);
 				item = (IndexTuple) PageGetItem(page, itemid);
 
-				if (BTreeInnerTupleGetDownLink(item) == stack->bts_btentry)
+				if (BTreeTupleGetDownLink(item) == child)
 				{
 					/* Return accurate pointer to where link is now */
 					stack->bts_blkno = blkno;
@@ -1989,7 +2007,7 @@ _bt_getstackbuf(Relation rel, BTStack stack)
 				itemid = PageGetItemId(page, offnum);
 				item = (IndexTuple) PageGetItem(page, itemid);
 
-				if (BTreeInnerTupleGetDownLink(item) == stack->bts_btentry)
+				if (BTreeTupleGetDownLink(item) == child)
 				{
 					/* Return accurate pointer to where link is now */
 					stack->bts_blkno = blkno;
@@ -2001,6 +2019,9 @@ _bt_getstackbuf(Relation rel, BTStack stack)
 
 		/*
 		 * The item we're looking for moved right at least one page.
+		 *
+		 * Lehman and Yao couple/chain locks when moving right here, which we
+		 * can avoid.  See nbtree/README.
 		 */
 		if (P_RIGHTMOST(opaque))
 		{
@@ -2075,7 +2096,7 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	left_item_sz = sizeof(IndexTupleData);
 	left_item = (IndexTuple) palloc(left_item_sz);
 	left_item->t_info = left_item_sz;
-	BTreeInnerTupleSetDownLink(left_item, lbkno);
+	BTreeTupleSetDownLink(left_item, lbkno);
 	BTreeTupleSetNAtts(left_item, 0);
 
 	/*
@@ -2086,7 +2107,7 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	right_item_sz = ItemIdGetLength(itemid);
 	item = (IndexTuple) PageGetItem(lpage, itemid);
 	right_item = CopyIndexTuple(item);
-	BTreeInnerTupleSetDownLink(right_item, rbkno);
+	BTreeTupleSetDownLink(right_item, rbkno);
 
 	/* NO EREPORT(ERROR) from here till newroot op is logged */
 	START_CRIT_SECTION();
@@ -2209,10 +2230,10 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
  *
  *		The main difference between this routine and a bare PageAddItem call
  *		is that this code knows that the leftmost index tuple on a non-leaf
- *		btree page doesn't need to have a key.  Therefore, it strips such
- *		tuples down to just the tuple header.  CAUTION: this works ONLY if
- *		we insert the tuples in order, so that the given itup_off does
- *		represent the final position of the tuple!
+ *		btree page has a key that must be treated as minus infinity.
+ *		Therefore, it truncates away all attributes.  CAUTION: this works
+ *		ONLY if we insert the tuples in order, so that the given itup_off
+ *		does represent the final position of the tuple!
  */
 static bool
 _bt_pgaddtup(Page page,
@@ -2227,7 +2248,6 @@ _bt_pgaddtup(Page page,
 	{
 		trunctuple = *itup;
 		trunctuple.t_info = sizeof(IndexTupleData);
-		/* Deliberately zero INDEX_ALT_TID_MASK bits */
 		BTreeTupleSetNAtts(&trunctuple, 0);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);

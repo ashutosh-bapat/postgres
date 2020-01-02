@@ -63,7 +63,7 @@
  * the standbys which are considered as synchronous at that moment
  * will release waiters from the queue.
  *
- * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/syncrep.c
@@ -148,6 +148,13 @@ SyncRepWaitForLSN(XLogRecPtr lsn, bool commit)
 	char	   *new_status = NULL;
 	const char *old_status;
 	int			mode;
+
+	/*
+	 * This should be called while holding interrupts during a transaction
+	 * commit to prevent the follow-up shared memory queue cleanups to be
+	 * influenced by external interruptions.
+	 */
+	Assert(InterruptHoldoffCount > 0);
 
 	/* Cap the level for anything other than commit to remote flush only. */
 	if (commit)
@@ -361,10 +368,18 @@ SyncRepCancelWait(void)
 void
 SyncRepCleanupAtProcExit(void)
 {
+	/*
+	 * First check if we are removed from the queue without the lock to not
+	 * slow down backend exit.
+	 */
 	if (!SHMQueueIsDetached(&(MyProc->syncRepLinks)))
 	{
 		LWLockAcquire(SyncRepLock, LW_EXCLUSIVE);
-		SHMQueueDelete(&(MyProc->syncRepLinks));
+
+		/* maybe we have just been removed, so recheck */
+		if (!SHMQueueIsDetached(&(MyProc->syncRepLinks)))
+			SHMQueueDelete(&(MyProc->syncRepLinks));
+
 		LWLockRelease(SyncRepLock);
 	}
 }
@@ -508,6 +523,8 @@ SyncRepReleaseWaiters(void)
 /*
  * Calculate the synced Write, Flush and Apply positions among sync standbys.
  *
+ * The caller must hold SyncRepLock.
+ *
  * Return false if the number of sync standbys is less than
  * synchronous_standby_names specifies. Otherwise return true and
  * store the positions into *writePtr, *flushPtr and *applyPtr.
@@ -520,6 +537,8 @@ SyncRepGetSyncRecPtr(XLogRecPtr *writePtr, XLogRecPtr *flushPtr,
 					 XLogRecPtr *applyPtr, bool *am_sync)
 {
 	List	   *sync_standbys;
+
+	Assert(LWLockHeldByMe(SyncRepLock));
 
 	*writePtr = InvalidXLogRecPtr;
 	*flushPtr = InvalidXLogRecPtr;
@@ -680,6 +699,8 @@ cmp_lsn(const void *a, const void *b)
 List *
 SyncRepGetSyncStandbys(bool *am_sync)
 {
+	Assert(LWLockHeldByMe(SyncRepLock));
+
 	/* Set default result */
 	if (am_sync != NULL)
 		*am_sync = false;
@@ -865,8 +886,6 @@ SyncRepGetSyncStandbysPriority(bool *am_sync)
 	 */
 	if (list_length(result) + list_length(pending) <= SyncRepConfig->num_sync)
 	{
-		bool		needfree = (result != NIL && pending != NIL);
-
 		/*
 		 * Set *am_sync to true if this walsender is in the pending list
 		 * because all pending standbys are considered as sync.
@@ -875,8 +894,7 @@ SyncRepGetSyncStandbysPriority(bool *am_sync)
 			*am_sync = am_in_pending;
 
 		result = list_concat(result, pending);
-		if (needfree)
-			pfree(pending);
+		list_free(pending);
 		return result;
 	}
 
@@ -887,17 +905,13 @@ SyncRepGetSyncStandbysPriority(bool *am_sync)
 	while (priority <= lowest_priority)
 	{
 		ListCell   *cell;
-		ListCell   *prev = NULL;
-		ListCell   *next;
 
 		next_highest_priority = lowest_priority + 1;
 
-		for (cell = list_head(pending); cell != NULL; cell = next)
+		foreach(cell, pending)
 		{
 			i = lfirst_int(cell);
 			walsnd = &WalSndCtl->walsnds[i];
-
-			next = lnext(cell);
 
 			this_priority = walsnd->sync_standby_priority;
 			if (this_priority == priority)
@@ -921,15 +935,13 @@ SyncRepGetSyncStandbysPriority(bool *am_sync)
 				 * Remove the entry for this sync standby from the list to
 				 * prevent us from looking at the same entry again.
 				 */
-				pending = list_delete_cell(pending, cell, prev);
+				pending = foreach_delete_current(pending, cell);
 
-				continue;
+				continue;		/* don't adjust next_highest_priority */
 			}
 
 			if (this_priority < next_highest_priority)
 				next_highest_priority = this_priority;
-
-			prev = cell;
 		}
 
 		priority = next_highest_priority;
@@ -993,7 +1005,7 @@ SyncRepGetStandbyPriority(void)
  * Pass all = true to wake whole queue; otherwise, just wake up to
  * the walsender's LSN.
  *
- * Must hold SyncRepLock.
+ * The caller must hold SyncRepLock in exclusive mode.
  */
 static int
 SyncRepWakeQueue(bool all, int mode)
@@ -1004,6 +1016,7 @@ SyncRepWakeQueue(bool all, int mode)
 	int			numprocs = 0;
 
 	Assert(mode >= 0 && mode < NUM_SYNC_REP_WAIT_MODE);
+	Assert(LWLockHeldByMeInMode(SyncRepLock, LW_EXCLUSIVE));
 	Assert(SyncRepQueueIsOrderedByLSN(mode));
 
 	proc = (PGPROC *) SHMQueueNext(&(WalSndCtl->SyncRepQueue[mode]),
@@ -1074,8 +1087,8 @@ SyncRepUpdateSyncStandbysDefined(void)
 
 		/*
 		 * If synchronous_standby_names has been reset to empty, it's futile
-		 * for backends to continue to waiting.  Since the user no longer
-		 * wants synchronous replication, we'd better wake them up.
+		 * for backends to continue waiting.  Since the user no longer wants
+		 * synchronous replication, we'd better wake them up.
 		 */
 		if (!sync_standbys_defined)
 		{

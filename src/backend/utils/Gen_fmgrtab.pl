@@ -5,7 +5,7 @@
 #    Perl script that generates fmgroids.h, fmgrprotos.h, and fmgrtab.c
 #    from pg_proc.dat
 #
-# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 #
@@ -104,7 +104,7 @@ print $ofh <<OFH;
  * These macros can be used to avoid a catalog lookup when a specific
  * fmgr-callable function needs to be referenced.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -138,7 +138,7 @@ print $pfh <<PFH;
  * fmgrprotos.h
  *    Prototypes for built-in functions.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -164,7 +164,7 @@ print $tfh <<TFH;
  * fmgrtab.c
  *    The function manager's table of internal functions.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -230,7 +230,7 @@ const Oid fmgr_last_builtin_oid = %u;
 |, $last_builtin_oid;
 
 
-# Create fmgr_builtins_oid_index table.
+# Create fmgr_builtin_oid_index table.
 printf $tfh qq|
 const uint16 fmgr_builtin_oid_index[%u] = {
 |, $last_builtin_oid + 1;

@@ -3,7 +3,7 @@
  * copy.c
  *		Implements the COPY utility command
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,8 +39,8 @@
 #include "libpq/pqformat.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
-#include "optimizer/optimizer.h"
 #include "nodes/makefuncs.h"
+#include "optimizer/optimizer.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
@@ -57,7 +57,6 @@
 #include "utils/rel.h"
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
-
 
 #define ISOCTAL(c) (((c) >= '0') && ((c) <= '7'))
 #define OCTVALUE(c) ((c) - '0')
@@ -90,7 +89,7 @@ typedef enum EolType
  */
 typedef enum CopyInsertMethod
 {
-	CIM_SINGLE,					/* use table_insert or fdw routine */
+	CIM_SINGLE,					/* use table_tuple_insert or fdw routine */
 	CIM_MULTI,					/* always use table_multi_insert */
 	CIM_MULTI_CONDITIONAL		/* use table_multi_insert only if valid */
 } CopyInsertMethod;
@@ -176,8 +175,6 @@ typedef struct CopyStateData
 	 * Working state for COPY FROM
 	 */
 	AttrNumber	num_defaults;
-	FmgrInfo	oid_in_function;
-	Oid			oid_typioparam;
 	FmgrInfo   *in_functions;	/* array of input functions for each attrs */
 	Oid		   *typioparams;	/* array of element types for in_functions */
 	int		   *defmap;			/* array of default att numbers */
@@ -830,8 +827,8 @@ CopyLoadRawBuf(CopyState cstate)
  * input/output stream. The latter could be either stdin/stdout or a
  * socket, depending on whether we're running under Postmaster control.
  *
- * Do not allow a Postgres user without the 'pg_access_server_files' role to
- * read from or write to a file.
+ * Do not allow a Postgres user without the 'pg_read_server_files' or
+ * 'pg_write_server_files' role to read from or write to a file.
  *
  * Do not allow the copy if user doesn't have proper permission to access
  * the table or the specifically requested columns.
@@ -1918,13 +1915,11 @@ BeginCopyTo(ParseState *pstate,
 			{
 				cstate->copy_file = AllocateFile(cstate->filename, PG_BINARY_W);
 			}
-			PG_CATCH();
+			PG_FINALLY();
 			{
 				umask(oumask);
-				PG_RE_THROW();
 			}
 			PG_END_TRY();
-			umask(oumask);
 			if (cstate->copy_file == NULL)
 			{
 				/* copy errno because ereport subfunctions might change it */
@@ -2446,6 +2441,9 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 	ResultRelInfo *resultRelInfo = buffer->resultRelInfo;
 	TupleTableSlot **slots = buffer->slots;
 
+	/* Set es_result_relation_info to the ResultRelInfo we're flushing. */
+	estate->es_result_relation_info = resultRelInfo;
+
 	/*
 	 * Print error context information correctly, if one of the operations
 	 * below fail.
@@ -2516,7 +2514,8 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
  * The buffer must be flushed before cleanup.
  */
 static inline void
-CopyMultiInsertBufferCleanup(CopyMultiInsertBuffer *buffer)
+CopyMultiInsertBufferCleanup(CopyMultiInsertInfo *miinfo,
+							 CopyMultiInsertBuffer *buffer)
 {
 	int			i;
 
@@ -2531,6 +2530,9 @@ CopyMultiInsertBufferCleanup(CopyMultiInsertBuffer *buffer)
 	/* Since we only create slots on demand, just drop the non-null ones. */
 	for (i = 0; i < MAX_BUFFERED_TUPLES && buffer->slots[i] != NULL; i++)
 		ExecDropSingleTupleTableSlot(buffer->slots[i]);
+
+	table_finish_bulk_insert(buffer->resultRelInfo->ri_RelationDesc,
+							 miinfo->ti_options);
 
 	pfree(buffer);
 }
@@ -2583,7 +2585,7 @@ CopyMultiInsertInfoFlush(CopyMultiInsertInfo *miinfo, ResultRelInfo *curr_rri)
 			buffer = (CopyMultiInsertBuffer *) linitial(miinfo->multiInsertBuffers);
 		}
 
-		CopyMultiInsertBufferCleanup(buffer);
+		CopyMultiInsertBufferCleanup(miinfo, buffer);
 		miinfo->multiInsertBuffers = list_delete_first(miinfo->multiInsertBuffers);
 	}
 }
@@ -2597,7 +2599,7 @@ CopyMultiInsertInfoCleanup(CopyMultiInsertInfo *miinfo)
 	ListCell   *lc;
 
 	foreach(lc, miinfo->multiInsertBuffers)
-		CopyMultiInsertBufferCleanup(lfirst(lc));
+		CopyMultiInsertBufferCleanup(miinfo, lfirst(lc));
 
 	list_free(miinfo->multiInsertBuffers);
 }
@@ -2624,7 +2626,7 @@ CopyMultiInsertInfoNextFreeSlot(CopyMultiInsertInfo *miinfo,
 
 /*
  * Record the previously reserved TupleTableSlot that was reserved by
- * MultiInsertInfoNextFreeSlot as being consumed.
+ * CopyMultiInsertInfoNextFreeSlot as being consumed.
  */
 static inline void
 CopyMultiInsertInfoStore(CopyMultiInsertInfo *miinfo, ResultRelInfo *rri,
@@ -2664,7 +2666,7 @@ CopyFrom(CopyState cstate)
 	PartitionTupleRouting *proute = NULL;
 	ErrorContextCallback errcallback;
 	CommandId	mycid = GetCurrentCommandId(true);
-	int			ti_options = 0; /* start with default table_insert options */
+	int			ti_options = 0; /* start with default options for insert */
 	BulkInsertState bistate = NULL;
 	CopyInsertMethod insertMethod;
 	CopyMultiInsertInfo multiInsertInfo = {0};	/* pacify compiler */
@@ -2737,11 +2739,11 @@ CopyFrom(CopyState cstate)
 	 * FSM for free space is a waste of time, even if we must use WAL because
 	 * of archiving.  This could possibly be wrong, but it's unlikely.
 	 *
-	 * The comments for table_insert and RelationGetBufferForTuple specify that
-	 * skipping WAL logging is only safe if we ensure that our tuples do not
-	 * go into pages containing tuples from any other transactions --- but this
-	 * must be the case if we have a new table or new relfilenode, so we need
-	 * no additional work to enforce that.
+	 * The comments for table_tuple_insert and RelationGetBufferForTuple
+	 * specify that skipping WAL logging is only safe if we ensure that our
+	 * tuples do not go into pages containing tuples from any other
+	 * transactions --- but this must be the case if we have a new table or
+	 * new relfilenode, so we need no additional work to enforce that.
 	 *
 	 * We currently don't support this optimization if the COPY target is a
 	 * partitioned table as we currently only lazily initialize partition
@@ -2888,9 +2890,9 @@ CopyFrom(CopyState cstate)
 	/*
 	 * It's generally more efficient to prepare a bunch of tuples for
 	 * insertion, and insert them in one table_multi_insert() call, than call
-	 * table_insert() separately for every tuple. However, there are a number
-	 * of reasons why we might not be able to do this.  These are explained
-	 * below.
+	 * table_tuple_insert() separately for every tuple. However, there are a
+	 * number of reasons why we might not be able to do this.  These are
+	 * explained below.
 	 */
 	if (resultRelInfo->ri_TrigDesc != NULL &&
 		(resultRelInfo->ri_TrigDesc->trig_insert_before_row ||
@@ -2934,7 +2936,7 @@ CopyFrom(CopyState cstate)
 	else if (contain_volatile_functions(cstate->whereClause))
 	{
 		/*
-		 * Can't support multi-inserts if there are any volatile funcation
+		 * Can't support multi-inserts if there are any volatile function
 		 * expressions in WHERE clause.  Similarly to the trigger case above,
 		 * such expressions may query the table we're inserting into.
 		 */
@@ -3286,8 +3288,8 @@ CopyFrom(CopyState cstate)
 					else
 					{
 						/* OK, store the tuple and create index entries for it */
-						table_insert(resultRelInfo->ri_RelationDesc, myslot,
-									 mycid, ti_options, bistate);
+						table_tuple_insert(resultRelInfo->ri_RelationDesc,
+										   myslot, mycid, ti_options, bistate);
 
 						if (resultRelInfo->ri_NumIndices > 0)
 							recheckIndexes = ExecInsertIndexTuples(myslot,
@@ -3319,9 +3321,6 @@ CopyFrom(CopyState cstate)
 	{
 		if (!CopyMultiInsertInfoIsEmpty(&multiInsertInfo))
 			CopyMultiInsertInfoFlush(&multiInsertInfo, NULL);
-
-		/* Tear down the multi-insert buffer data */
-		CopyMultiInsertInfoCleanup(&multiInsertInfo);
 	}
 
 	/* Done, clean up */
@@ -3353,6 +3352,10 @@ CopyFrom(CopyState cstate)
 		target_resultRelInfo->ri_FdwRoutine->EndForeignInsert(estate,
 															  target_resultRelInfo);
 
+	/* Tear down the multi-insert buffer data */
+	if (insertMethod != CIM_SINGLE)
+		CopyMultiInsertInfoCleanup(&multiInsertInfo);
+
 	ExecCloseIndices(target_resultRelInfo);
 
 	/* Close all the partitioned tables, leaf partitions, and their indices */
@@ -3363,8 +3366,6 @@ CopyFrom(CopyState cstate)
 	ExecCleanUpTriggerState(estate);
 
 	FreeExecutorState(estate);
-
-	table_finish_bulk_insert(cstate->rel, ti_options);
 
 	return processed;
 }

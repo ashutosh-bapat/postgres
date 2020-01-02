@@ -3,7 +3,7 @@
  *
  * PostgreSQL write-ahead log manager
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlog.h
@@ -132,7 +132,7 @@ extern char *PrimarySlotName;
 
 /* indirectly set via GUC system */
 extern TransactionId recoveryTargetXid;
-extern TimestampTz recoveryTargetTime;
+extern char *recovery_target_time_string;
 extern const char *recoveryTargetName;
 extern XLogRecPtr recoveryTargetLSN;
 extern RecoveryTargetType recoveryTarget;
@@ -288,7 +288,6 @@ extern bool RecoveryIsPaused(void);
 extern void SetRecoveryPause(bool recoveryPause);
 extern TimestampTz GetLatestXTime(void);
 extern TimestampTz GetCurrentChunkReplayStartTime(void);
-extern char *XLogFileNameP(TimeLineID tli, XLogSegNo segno);
 
 extern void UpdateControlFile(void);
 extern uint64 GetSystemIdentifier(void);
@@ -350,7 +349,8 @@ extern XLogRecPtr do_pg_start_backup(const char *backupidstr, bool fast,
 									 bool needtblspcmapfile);
 extern XLogRecPtr do_pg_stop_backup(char *labelfile, bool waitforarchive,
 									TimeLineID *stoptli_p);
-extern void do_pg_abort_backup(void);
+extern void do_pg_abort_backup(int code, Datum arg);
+extern void register_persistent_abort_backup_handler(void);
 extern SessionBackupState get_backup_status(void);
 
 /* File path names (all relative to $PGDATA) */

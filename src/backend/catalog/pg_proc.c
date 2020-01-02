@@ -3,7 +3,7 @@
  * pg_proc.c
  *	  routines to support manipulation of the pg_proc relation
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -425,7 +425,7 @@ ProcedureCreate(const char *procedureName,
 					 : errmsg("cannot change return type of existing function"),
 
 			/*
-			 * translator: first %s is DROP FUNCTION, DROP PROCEDURE or DROP
+			 * translator: first %s is DROP FUNCTION, DROP PROCEDURE, or DROP
 			 * AGGREGATE
 			 */
 					 errhint("Use %s %s first.",
@@ -538,11 +538,9 @@ ProcedureCreate(const char *procedureName,
 			Assert(list_length(oldDefaults) == oldproc->pronargdefaults);
 
 			/* new list can have more defaults than old, advance over 'em */
-			newlc = list_head(parameterDefaults);
-			for (i = list_length(parameterDefaults) - oldproc->pronargdefaults;
-				 i > 0;
-				 i--)
-				newlc = lnext(newlc);
+			newlc = list_nth_cell(parameterDefaults,
+								  list_length(parameterDefaults) -
+								  oldproc->pronargdefaults);
 
 			foreach(oldlc, oldDefaults)
 			{
@@ -557,7 +555,7 @@ ProcedureCreate(const char *procedureName,
 							 errhint("Use %s %s first.",
 									 dropcmd,
 									 format_procedure(oldproc->oid))));
-				newlc = lnext(newlc);
+				newlc = lnext(parameterDefaults, newlc);
 			}
 		}
 

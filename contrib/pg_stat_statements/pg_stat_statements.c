@@ -48,7 +48,7 @@
  * in the file to be read or written while holding only shared lock.
  *
  *
- * Copyright (c) 2008-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2008-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pg_stat_statements/pg_stat_statements.c
@@ -333,6 +333,7 @@ static void AppendJumble(pgssJumbleState *jstate,
 						 const unsigned char *item, Size size);
 static void JumbleQuery(pgssJumbleState *jstate, Query *query);
 static void JumbleRangeTable(pgssJumbleState *jstate, List *rtable);
+static void JumbleRowMarks(pgssJumbleState *jstate, List *rowMarks);
 static void JumbleExpr(pgssJumbleState *jstate, Node *node);
 static void RecordConstLocation(pgssJumbleState *jstate, int location);
 static char *generate_normalized_query(pgssJumbleState *jstate, const char *query,
@@ -625,7 +626,7 @@ pgss_shmem_startup(void)
 
 	/*
 	 * Remove the persisted stats file so it's not included in
-	 * backups/replication slaves, etc.  A new file will be written on next
+	 * backups/replication standbys, etc.  A new file will be written on next
 	 * shutdown.
 	 *
 	 * Note: it's okay if the PGSS_TEXT_FILE is included in a basebackup,
@@ -787,7 +788,7 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 	Assert(query->queryId == UINT64CONST(0));
 
 	/* Safety check... */
-	if (!pgss || !pgss_hash)
+	if (!pgss || !pgss_hash || !pgss_enabled())
 		return;
 
 	/*
@@ -891,12 +892,10 @@ pgss_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
 			prev_ExecutorRun(queryDesc, direction, count, execute_once);
 		else
 			standard_ExecutorRun(queryDesc, direction, count, execute_once);
-		nested_level--;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		nested_level--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 }
@@ -914,12 +913,10 @@ pgss_ExecutorFinish(QueryDesc *queryDesc)
 			prev_ExecutorFinish(queryDesc);
 		else
 			standard_ExecutorFinish(queryDesc);
-		nested_level--;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		nested_level--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 }
@@ -1006,12 +1003,10 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 				standard_ProcessUtility(pstmt, queryString,
 										context, params, queryEnv,
 										dest, completionTag);
-			nested_level--;
 		}
-		PG_CATCH();
+		PG_FINALLY();
 		{
 			nested_level--;
-			PG_RE_THROW();
 		}
 		PG_END_TRY();
 
@@ -1420,8 +1415,7 @@ pg_stat_statements_internal(FunctionCallInfo fcinfo,
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Switch into long-lived context to construct returned data structures */
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
@@ -1992,7 +1986,7 @@ qtext_load_file(Size *buffer_size)
 		return NULL;
 	}
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(LOG,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m", PGSS_TEXT_FILE)));
@@ -2430,7 +2424,7 @@ JumbleQuery(pgssJumbleState *jstate, Query *query)
 	JumbleExpr(jstate, (Node *) query->sortClause);
 	JumbleExpr(jstate, query->limitOffset);
 	JumbleExpr(jstate, query->limitCount);
-	/* we ignore rowMarks */
+	JumbleRowMarks(jstate, query->rowMarks);
 	JumbleExpr(jstate, query->setOperations);
 }
 
@@ -2485,6 +2479,26 @@ JumbleRangeTable(pgssJumbleState *jstate, List *rtable)
 			default:
 				elog(ERROR, "unrecognized RTE kind: %d", (int) rte->rtekind);
 				break;
+		}
+	}
+}
+
+/*
+ * Jumble a rowMarks list
+ */
+static void
+JumbleRowMarks(pgssJumbleState *jstate, List *rowMarks)
+{
+	ListCell   *lc;
+
+	foreach(lc, rowMarks)
+	{
+		RowMarkClause *rowmark = lfirst_node(RowMarkClause, lc);
+		if (!rowmark->pushedDown)
+		{
+			APP_JUMB(rowmark->rti);
+			APP_JUMB(rowmark->strength);
+			APP_JUMB(rowmark->waitPolicy);
 		}
 	}
 }

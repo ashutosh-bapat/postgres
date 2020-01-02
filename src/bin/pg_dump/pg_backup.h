@@ -11,7 +11,7 @@
  *		as this notice is not removed.
  *
  *	The author is not responsible for loss or damages that may
- *	result from it's use.
+ *	result from its use.
  *
  *
  * IDENTIFICATION
@@ -153,7 +153,6 @@ typedef struct _dumpOptions
 	int			no_synchronized_snapshots;
 	int			no_unlogged_table_data;
 	int			serializable_deferrable;
-	int			quote_all_identifiers;
 	int			disable_triggers;
 	int			outputNoTablespaces;
 	int			use_setsessauth;

@@ -19,7 +19,7 @@
  *		as this notice is not removed.
  *
  *	The author is not responsible for loss or damages that may
- *	result from it's use.
+ *	result from its use.
  *
  *
  * IDENTIFICATION
@@ -29,17 +29,17 @@
  */
 #include "postgres_fe.h"
 
-#include "pg_backup_archiver.h"
-#include "pg_backup_tar.h"
-#include "pg_backup_utils.h"
-#include "pgtar.h"
-#include "common/file_utils.h"
-#include "fe_utils/string_utils.h"
-
 #include <sys/stat.h>
 #include <ctype.h>
 #include <limits.h>
 #include <unistd.h>
+
+#include "common/file_utils.h"
+#include "fe_utils/string_utils.h"
+#include "pg_backup_archiver.h"
+#include "pg_backup_tar.h"
+#include "pg_backup_utils.h"
+#include "pgtar.h"
 
 static void _ArchiveEntry(ArchiveHandle *AH, TocEntry *te);
 static void _StartData(ArchiveHandle *AH, TocEntry *te);
@@ -568,7 +568,7 @@ _tarReadRaw(ArchiveHandle *AH, void *buf, size_t len, TAR_MEMBER *th, FILE *fh)
 			}
 		}
 		else
-			fatal("internal error -- neither th nor fh specified in tarReadRaw()\n");
+			fatal("internal error -- neither th nor fh specified in _tarReadRaw()");
 	}
 
 	ctx->tarFHpos += res + used;
@@ -615,8 +615,6 @@ _WriteData(ArchiveHandle *AH, const void *data, size_t dLen)
 
 	if (tarWrite(data, dLen, tctx->TH) != dLen)
 		WRITE_ERROR_EXIT;
-
-	return;
 }
 
 static void
@@ -818,7 +816,6 @@ _ReadBuf(ArchiveHandle *AH, void *buf, size_t len)
 		fatal("could not read from input file: end of file");
 
 	ctx->filePos += len;
-	return;
 }
 
 static void

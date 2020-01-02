@@ -2,7 +2,7 @@
  * hashfuncs.c
  *		Functions to investigate the content of HASH indexes
  *
- * Copyright (c) 2017-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2017-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/hashfuncs.c
@@ -10,14 +10,14 @@
 
 #include "postgres.h"
 
-#include "pageinspect.h"
-
 #include "access/hash.h"
 #include "access/htup_details.h"
-#include "catalog/pg_type.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "pageinspect.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
 

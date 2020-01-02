@@ -4,7 +4,7 @@
  *	  Standard POSTGRES buffer page definitions.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/bufpage.h
@@ -306,7 +306,7 @@ typedef PageHeaderData *PageHeader;
  * This is intended to catch use of the pointer before page initialization.
  * It is implemented as a function due to the limitations of the MSVC
  * compiler, which choked on doing all these tests within another macro.  We
- * return true so that MacroAssert() can be used while still getting the
+ * return true so that AssertMacro() can be used while still getting the
  * specifics from the macro failure within this function.
  */
 static inline bool

@@ -4,7 +4,7 @@
  *	  Post-processing of a completed plan tree: fix references to subplan
  *	  vars, compute regproc values for operators, etc
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -107,6 +107,8 @@ static Plan *set_append_references(PlannerInfo *root,
 static Plan *set_mergeappend_references(PlannerInfo *root,
 										MergeAppend *mplan,
 										int rtoffset);
+static void set_hash_references(PlannerInfo *root, Plan *plan, int rtoffset);
+static Relids offset_relid_set(Relids relids, int rtoffset);
 static Node *fix_scan_expr(PlannerInfo *root, Node *node, int rtoffset);
 static Node *fix_scan_expr_mutator(Node *node, fix_scan_expr_context *context);
 static bool fix_scan_expr_walker(Node *node, fix_scan_expr_context *context);
@@ -207,7 +209,8 @@ static List *set_returning_clause_references(PlannerInfo *root,
  *
  * The flattened rangetable entries are appended to root->glob->finalrtable.
  * Also, rowmarks entries are appended to root->glob->finalrowmarks, and the
- * RT indexes of ModifyTable result relations to root->glob->resultRelations.
+ * RT indexes of ModifyTable result relations to root->glob->resultRelations,
+ * and flattened AppendRelInfos are appended to root->glob->appendRelations.
  * Plan dependencies are appended to root->glob->relationOids (for relations)
  * and root->glob->invalItems (for everything else).
  *
@@ -247,6 +250,28 @@ set_plan_references(PlannerInfo *root, Plan *plan)
 		newrc->prti += rtoffset;
 
 		glob->finalrowmarks = lappend(glob->finalrowmarks, newrc);
+	}
+
+	/*
+	 * Adjust RT indexes of AppendRelInfos and add to final appendrels list.
+	 * We assume the AppendRelInfos were built during planning and don't need
+	 * to be copied.
+	 */
+	foreach(lc, root->append_rel_list)
+	{
+		AppendRelInfo *appinfo = lfirst_node(AppendRelInfo, lc);
+
+		/* adjust RT indexes */
+		appinfo->parent_relid += rtoffset;
+		appinfo->child_relid += rtoffset;
+
+		/*
+		 * Rather than adjust the translated_vars entries, just drop 'em.
+		 * Neither the executor nor EXPLAIN currently need that data.
+		 */
+		appinfo->translated_vars = NIL;
+
+		glob->appendRelations = lappend(glob->appendRelations, appinfo);
 	}
 
 	/* Now fix the Plan tree */
@@ -646,6 +671,9 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 			break;
 
 		case T_Hash:
+			set_hash_references(root, plan, rtoffset);
+			break;
+
 		case T_Material:
 		case T_Sort:
 		case T_Unique:
@@ -889,7 +917,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				splan->resultRelIndex = list_length(root->glob->resultRelations);
 				root->glob->resultRelations =
 					list_concat(root->glob->resultRelations,
-								list_copy(splan->resultRelations));
+								splan->resultRelations);
 
 				/*
 				 * If the main target relation is a partitioned table, also
@@ -1211,16 +1239,7 @@ set_foreignscan_references(PlannerInfo *root,
 			fix_scan_list(root, fscan->fdw_recheck_quals, rtoffset);
 	}
 
-	/* Adjust fs_relids if needed */
-	if (rtoffset > 0)
-	{
-		Bitmapset  *tempset = NULL;
-		int			x = -1;
-
-		while ((x = bms_next_member(fscan->fs_relids, x)) >= 0)
-			tempset = bms_add_member(tempset, x + rtoffset);
-		fscan->fs_relids = tempset;
-	}
+	fscan->fs_relids = offset_relid_set(fscan->fs_relids, rtoffset);
 }
 
 /*
@@ -1283,16 +1302,7 @@ set_customscan_references(PlannerInfo *root,
 		lfirst(lc) = set_plan_refs(root, (Plan *) lfirst(lc), rtoffset);
 	}
 
-	/* Adjust custom_relids if needed */
-	if (rtoffset > 0)
-	{
-		Bitmapset  *tempset = NULL;
-		int			x = -1;
-
-		while ((x = bms_next_member(cscan->custom_relids, x)) >= 0)
-			tempset = bms_add_member(tempset, x + rtoffset);
-		cscan->custom_relids = tempset;
-	}
+	cscan->custom_relids = offset_relid_set(cscan->custom_relids, rtoffset);
 }
 
 /*
@@ -1333,6 +1343,8 @@ set_append_references(PlannerInfo *root,
 	 * look at those.
 	 */
 	set_dummy_tlist_references((Plan *) aplan, rtoffset);
+
+	aplan->apprelids = offset_relid_set(aplan->apprelids, rtoffset);
 
 	if (aplan->part_prune_info)
 	{
@@ -1396,6 +1408,8 @@ set_mergeappend_references(PlannerInfo *root,
 	 */
 	set_dummy_tlist_references((Plan *) mplan, rtoffset);
 
+	mplan->apprelids = offset_relid_set(mplan->apprelids, rtoffset);
+
 	if (mplan->part_prune_info)
 	{
 		foreach(l, mplan->part_prune_info->prune_infos)
@@ -1419,6 +1433,55 @@ set_mergeappend_references(PlannerInfo *root,
 	return (Plan *) mplan;
 }
 
+/*
+ * set_hash_references
+ *	   Do set_plan_references processing on a Hash node
+ */
+static void
+set_hash_references(PlannerInfo *root, Plan *plan, int rtoffset)
+{
+	Hash	   *hplan = (Hash *) plan;
+	Plan	   *outer_plan = plan->lefttree;
+	indexed_tlist *outer_itlist;
+
+	/*
+	 * Hash's hashkeys are used when feeding tuples into the hashtable,
+	 * therefore have them reference Hash's outer plan (which itself is the
+	 * inner plan of the HashJoin).
+	 */
+	outer_itlist = build_tlist_index(outer_plan->targetlist);
+	hplan->hashkeys = (List *)
+		fix_upper_expr(root,
+					   (Node *) hplan->hashkeys,
+					   outer_itlist,
+					   OUTER_VAR,
+					   rtoffset);
+
+	/* Hash doesn't project */
+	set_dummy_tlist_references(plan, rtoffset);
+
+	/* Hash nodes don't have their own quals */
+	Assert(plan->qual == NIL);
+}
+
+/*
+ * offset_relid_set
+ *		Apply rtoffset to the members of a Relids set.
+ */
+static Relids
+offset_relid_set(Relids relids, int rtoffset)
+{
+	Relids		result = NULL;
+	int			rtindex;
+
+	/* If there's no offset to apply, we needn't recompute the value */
+	if (rtoffset == 0)
+		return relids;
+	rtindex = -1;
+	while ((rtindex = bms_next_member(relids, rtindex)) >= 0)
+		result = bms_add_member(result, rtindex + rtoffset);
+	return result;
+}
 
 /*
  * copyVar
@@ -1754,6 +1817,16 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 										inner_itlist,
 										(Index) 0,
 										rtoffset);
+
+		/*
+		 * HashJoin's hashkeys are used to look for matching tuples from its
+		 * outer plan (not the Hash node!) in the hashtable.
+		 */
+		hj->hashkeys = (List *) fix_upper_expr(root,
+											   (Node *) hj->hashkeys,
+											   outer_itlist,
+											   OUTER_VAR,
+											   rtoffset);
 	}
 
 	/*

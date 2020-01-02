@@ -227,6 +227,29 @@ INSERT INTO upsert_test VALUES (1, 'Bat') ON CONFLICT(a)
  1 | Foo, Correlated, Excluded
 (1 row)
 
+-- ON CONFLICT using system attributes in RETURNING, testing both the
+-- inserting and updating paths. See bug report at:
+-- https://www.postgresql.org/message-id/73436355-6432-49B1-92ED-1FE4F7E7E100%40finefun.com.au
+CREATE FUNCTION xid_current() RETURNS xid LANGUAGE SQL AS $$SELECT (txid_current() % ((1::int8<<32)))::text::xid;$$;
+INSERT INTO upsert_test VALUES (2, 'Beeble') ON CONFLICT(a)
+  DO UPDATE SET (b, a) = (SELECT b || ', Excluded', a from upsert_test i WHERE i.a = excluded.a)
+  RETURNING tableoid::regclass, xmin = xid_current() AS xmin_correct, xmax = 0 AS xmax_correct;
+  tableoid   | xmin_correct | xmax_correct 
+-------------+--------------+--------------
+ upsert_test | t            | t
+(1 row)
+
+-- currently xmax is set after a conflict - that's probably not good,
+-- but it seems worthwhile to have to be explicit if that changes.
+INSERT INTO upsert_test VALUES (2, 'Brox') ON CONFLICT(a)
+  DO UPDATE SET (b, a) = (SELECT b || ', Excluded', a from upsert_test i WHERE i.a = excluded.a)
+  RETURNING tableoid::regclass, xmin = xid_current() AS xmin_correct, xmax = xid_current() AS xmax_correct;
+  tableoid   | xmin_correct | xmax_correct 
+-------------+--------------+--------------
+ upsert_test | t            | t
+(1 row)
+
+DROP FUNCTION xid_current();
 DROP TABLE update_test;
 DROP TABLE upsert_test;
 ---------------------------
@@ -287,29 +310,29 @@ ALTER TABLE part_b_10_b_20 ATTACH PARTITION part_c_1_100 FOR VALUES FROM (1) TO 
 
 -- The order of subplans should be in bound order
 EXPLAIN (costs off) UPDATE range_parted set c = c - 50 WHERE c > 97;
-             QUERY PLAN              
--------------------------------------
+                   QUERY PLAN                    
+-------------------------------------------------
  Update on range_parted
-   Update on part_a_1_a_10
-   Update on part_a_10_a_20
-   Update on part_b_1_b_10
-   Update on part_c_1_100
-   Update on part_d_1_15
-   Update on part_d_15_20
-   Update on part_b_20_b_30
-   ->  Seq Scan on part_a_1_a_10
+   Update on part_a_1_a_10 range_parted_1
+   Update on part_a_10_a_20 range_parted_2
+   Update on part_b_1_b_10 range_parted_3
+   Update on part_c_1_100 range_parted_4
+   Update on part_d_1_15 range_parted_5
+   Update on part_d_15_20 range_parted_6
+   Update on part_b_20_b_30 range_parted_7
+   ->  Seq Scan on part_a_1_a_10 range_parted_1
          Filter: (c > '97'::numeric)
-   ->  Seq Scan on part_a_10_a_20
+   ->  Seq Scan on part_a_10_a_20 range_parted_2
          Filter: (c > '97'::numeric)
-   ->  Seq Scan on part_b_1_b_10
+   ->  Seq Scan on part_b_1_b_10 range_parted_3
          Filter: (c > '97'::numeric)
-   ->  Seq Scan on part_c_1_100
+   ->  Seq Scan on part_c_1_100 range_parted_4
          Filter: (c > '97'::numeric)
-   ->  Seq Scan on part_d_1_15
+   ->  Seq Scan on part_d_1_15 range_parted_5
          Filter: (c > '97'::numeric)
-   ->  Seq Scan on part_d_15_20
+   ->  Seq Scan on part_d_15_20 range_parted_6
          Filter: (c > '97'::numeric)
-   ->  Seq Scan on part_b_20_b_30
+   ->  Seq Scan on part_b_20_b_30 range_parted_7
          Filter: (c > '97'::numeric)
 (22 rows)
 

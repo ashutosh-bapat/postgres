@@ -4,7 +4,7 @@
  *	  Definitions for planner's internal data structures, especially Paths.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/pathnodes.h
@@ -15,7 +15,6 @@
 #define PATHNODES_H
 
 #include "access/sdir.h"
-#include "fmgr.h"
 #include "lib/stringinfo.h"
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
@@ -123,6 +122,8 @@ typedef struct PlannerGlobal
 
 	List	   *rootResultRelations;	/* "flat" list of integer RT indexes */
 
+	List	   *appendRelations;	/* "flat" list of AppendRelInfos */
+
 	List	   *relationOids;	/* OIDs of relations the plan depends on */
 
 	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
@@ -204,17 +205,16 @@ struct PlannerInfo
 
 	/*
 	 * simple_rte_array is the same length as simple_rel_array and holds
-	 * pointers to the associated rangetable entries.  This lets us avoid
-	 * rt_fetch(), which can be a bit slow once large inheritance sets have
-	 * been expanded.
+	 * pointers to the associated rangetable entries.  Using this is a shade
+	 * faster than using rt_fetch(), mostly due to fewer indirections.
 	 */
 	RangeTblEntry **simple_rte_array;	/* rangetable as an array */
 
 	/*
 	 * append_rel_array is the same length as the above arrays, and holds
 	 * pointers to the corresponding AppendRelInfo entry indexed by
-	 * child_relid, or NULL if none.  The array itself is not allocated if
-	 * append_rel_list is empty.
+	 * child_relid, or NULL if the rel is not an appendrel child.  The array
+	 * itself is not allocated if append_rel_list is empty.
 	 */
 	struct AppendRelInfo **append_rel_array;
 
@@ -264,6 +264,8 @@ struct PlannerInfo
 									 * subquery outputs */
 
 	List	   *eq_classes;		/* list of active EquivalenceClasses */
+
+	bool		ec_merging_done;	/* set true once ECs are canonical */
 
 	List	   *canon_pathkeys; /* list of "canonical" PathKeys */
 
@@ -399,7 +401,7 @@ typedef struct PartitionSchemeData
 	bool	   *parttypbyval;
 
 	/* Cached information about partition comparison functions. */
-	FmgrInfo   *partsupfunc;
+	struct FmgrInfo *partsupfunc;
 }			PartitionSchemeData;
 
 typedef struct PartitionSchemeData *PartitionScheme;
@@ -505,6 +507,8 @@ typedef struct PartitionSchemeData *PartitionScheme;
  *		pages - number of disk pages in relation (zero if not a table)
  *		tuples - number of tuples in relation (not considering restrictions)
  *		allvisfrac - fraction of disk pages that are marked all-visible
+ *		eclass_indexes - EquivalenceClasses that mention this rel (filled
+ *						 only after EC merging is complete)
  *		subroot - PlannerInfo for subquery (NULL if it's not a subquery)
  *		subplan_params - list of PlannerParamItems to be passed to subquery
  *
@@ -678,6 +682,8 @@ typedef struct RelOptInfo
 	BlockNumber pages;			/* size estimates derived from pg_class */
 	double		tuples;
 	double		allvisfrac;
+	Bitmapset  *eclass_indexes; /* Indexes in PlannerInfo's eq_classes list of
+								 * ECs that mention this rel */
 	PlannerInfo *subroot;		/* if subquery */
 	List	   *subplan_params; /* if subquery */
 	int			rel_parallel_workers;	/* wanted number of parallel workers */
@@ -1465,8 +1471,7 @@ typedef struct GatherPath
 
 /*
  * GatherMergePath runs several copies of a plan in parallel and collects
- * the results, preserving their common sort order.  For gather merge, the
- * parallel leader always executes the plan too, so we don't need single_copy.
+ * the results, preserving their common sort order.
  */
 typedef struct GatherMergePath
 {
@@ -2148,17 +2153,13 @@ struct SpecialJoinInfo
  * "append relation" (essentially, a list of child RTEs), we build an
  * AppendRelInfo for each child RTE.  The list of AppendRelInfos indicates
  * which child RTEs must be included when expanding the parent, and each node
- * carries information needed to translate Vars referencing the parent into
- * Vars referencing that child.
+ * carries information needed to translate between columns of the parent and
+ * columns of the child.
  *
- * These structs are kept in the PlannerInfo node's append_rel_list.
- * Note that we just throw all the structs into one list, and scan the
- * whole list when desiring to expand any one parent.  We could have used
- * a more complex data structure (eg, one list per parent), but this would
- * be harder to update during operations such as pulling up subqueries,
- * and not really any easier to scan.  Considering that typical queries
- * will not have many different append parents, it doesn't seem worthwhile
- * to complicate things.
+ * These structs are kept in the PlannerInfo node's append_rel_list, with
+ * append_rel_array[] providing a convenient lookup method for the struct
+ * associated with a particular child relid (there can be only one, though
+ * parent rels may have many entries in append_rel_list).
  *
  * Note: after completion of the planner prep phase, any given RTE is an
  * append parent having entries in append_rel_list if and only if its
@@ -2214,6 +2215,15 @@ typedef struct AppendRelInfo
 	 * when copying into a subquery.
 	 */
 	List	   *translated_vars;	/* Expressions in the child's Vars */
+
+	/*
+	 * This array simplifies translations in the reverse direction, from
+	 * child's column numbers to parent's.  The entry at [ccolno - 1] is the
+	 * 1-based parent column number for child column ccolno, or zero if that
+	 * child column is dropped or doesn't exist in the parent.
+	 */
+	int			num_child_cols; /* length of array */
+	AttrNumber *parent_colnos;	/* array of parent attnos, or zeroes */
 
 	/*
 	 * We store the parent table's OID here for inheritance, or InvalidOid for

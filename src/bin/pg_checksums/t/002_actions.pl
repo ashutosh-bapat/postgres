@@ -43,7 +43,7 @@ sub check_relation_corruption
 		[
 			'pg_checksums', '--check',
 			'-D',           $pgdata,
-			'-r',           $relfilenode_corrupted
+			'--filenode',   $relfilenode_corrupted
 		],
 		"succeeds for single relfilenode on tablespace $tablespace with offline cluster"
 	);
@@ -59,7 +59,7 @@ sub check_relation_corruption
 		[
 			'pg_checksums', '--check',
 			'-D',           $pgdata,
-			'-r',           $relfilenode_corrupted
+			'--filenode',   $relfilenode_corrupted
 		],
 		1,
 		[qr/Bad checksums:.*1/],
@@ -165,10 +165,10 @@ command_ok(
 # Specific relation files cannot be requested when action is --disable
 # or --enable.
 command_fails(
-	[ 'pg_checksums', '--disable', '-r', '1234', '-D', $pgdata ],
+	[ 'pg_checksums', '--disable', '--filenode', '1234', '-D', $pgdata ],
 	"fails when relfilenodes are requested and action is --disable");
 command_fails(
-	[ 'pg_checksums', '--enable', '-r', '1234', '-D', $pgdata ],
+	[ 'pg_checksums', '--enable', '--filenode', '1234', '-D', $pgdata ],
 	"fails when relfilenodes are requested and action is --enable");
 
 # Checks cannot happen with an online cluster
@@ -183,7 +183,7 @@ check_relation_corruption($node, 'corrupt1', 'pg_default');
 my $basedir        = $node->basedir;
 my $tablespace_dir = "$basedir/ts_corrupt_dir";
 mkdir($tablespace_dir);
-$tablespace_dir = TestLib::real_dir($tablespace_dir);
+$tablespace_dir = TestLib::perl2host($tablespace_dir);
 $node->safe_psql('postgres',
 	"CREATE TABLESPACE ts_corrupt LOCATION '$tablespace_dir';");
 check_relation_corruption($node, 'corrupt2', 'ts_corrupt');

@@ -3,7 +3,7 @@
  * walreceiver.h
  *	  Exports from replication/walreceiverfuncs.c.
  *
- * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  * src/include/replication/walreceiver.h
  *
@@ -14,13 +14,12 @@
 
 #include "access/xlog.h"
 #include "access/xlogdefs.h"
-#include "fmgr.h"
 #include "getaddrinfo.h"		/* for NI_MAXHOST */
+#include "pgtime.h"
 #include "replication/logicalproto.h"
 #include "replication/walsender.h"
 #include "storage/latch.h"
 #include "storage/spin.h"
-#include "pgtime.h"
 #include "utils/tuplestore.h"
 
 /* user-settable parameters */
@@ -188,7 +187,7 @@ typedef enum
 } WalRcvExecStatus;
 
 /*
- * Return value for walrcv_query, returns the status of the execution and
+ * Return value for walrcv_exec, returns the status of the execution and
  * tuples if any.
  */
 typedef struct WalRcvExecResult

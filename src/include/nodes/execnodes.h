@@ -4,7 +4,7 @@
  *	  definitions for executor state nodes
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/execnodes.h
@@ -16,21 +16,21 @@
 
 #include "access/tupconvert.h"
 #include "executor/instrument.h"
+#include "fmgr.h"
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
+#include "nodes/tidbitmap.h"
 #include "partitioning/partdefs.h"
+#include "storage/condition_variable.h"
 #include "utils/hsearch.h"
 #include "utils/queryenvironment.h"
 #include "utils/reltrigger.h"
 #include "utils/sharedtuplestore.h"
 #include "utils/snapshot.h"
 #include "utils/sortsupport.h"
-#include "utils/tuplestore.h"
 #include "utils/tuplesort.h"
-#include "nodes/tidbitmap.h"
-#include "storage/condition_variable.h"
-
+#include "utils/tuplestore.h"
 
 struct PlanState;				/* forward references in this file */
 struct PartitionRoutingInfo;
@@ -60,7 +60,7 @@ typedef Datum (*ExprStateEvalFunc) (struct ExprState *expression,
 
 typedef struct ExprState
 {
-	Node		tag;
+	NodeTag		tag;
 
 	uint8		flags;			/* bitmask of EEO_FLAG_* bits, see above */
 
@@ -134,7 +134,7 @@ typedef struct ExprState
  *		ExclusionOps		Per-column exclusion operators, or NULL if none
  *		ExclusionProcs		Underlying function OIDs for ExclusionOps
  *		ExclusionStrats		Opclass strategy numbers for ExclusionOps
- *		UniqueOps			Theses are like Exclusion*, but for unique indexes
+ *		UniqueOps			These are like Exclusion*, but for unique indexes
  *		UniqueProcs
  *		UniqueStrats
  *		Unique				is it a unique index?
@@ -502,7 +502,6 @@ typedef struct EState
 	Snapshot	es_snapshot;	/* time qual to use */
 	Snapshot	es_crosscheck_snapshot; /* crosscheck time qual for RI */
 	List	   *es_range_table; /* List of RangeTblEntry */
-	struct RangeTblEntry **es_range_table_array;	/* equivalent array */
 	Index		es_range_table_size;	/* size of the range table arrays */
 	Relation   *es_relations;	/* Array of per-range-table-entry Relation
 								 * pointers, or NULL if not yet opened */
@@ -571,17 +570,12 @@ typedef struct EState
 	ExprContext *es_per_tuple_exprcontext;
 
 	/*
-	 * These fields are for re-evaluating plan quals when an updated tuple is
-	 * substituted in READ COMMITTED mode.  es_epqTupleSlot[] contains test
-	 * tuples that scan plan nodes should return instead of whatever they'd
-	 * normally return, or an empty slot if there is nothing to return; if
-	 * es_epqTupleSlot[] is not NULL if a particular array entry is valid; and
-	 * es_epqScanDone[] is state to remember if the tuple has been returned
-	 * already.  Arrays are of size es_range_table_size and are indexed by
-	 * scan node scanrelid - 1.
+	 * If not NULL, this is an EPQState's EState. This is a field in EState
+	 * both to allow EvalPlanQual aware executor nodes to detect that they
+	 * need to perform EPQ related work, and to provide necessary information
+	 * to do so.
 	 */
-	TupleTableSlot **es_epqTupleSlot;	/* array of EPQ substitute tuples */
-	bool	   *es_epqScanDone; /* true if EPQ tuple has been fetched */
+	struct EPQState *es_epq_active;
 
 	bool		es_use_parallel_mode;	/* can we use parallel workers? */
 
@@ -593,7 +587,7 @@ typedef struct EState
 	 * and with which options.  es_jit is created on-demand when JITing is
 	 * performed.
 	 *
-	 * es_jit_combined_instr is the combined, on demand allocated,
+	 * es_jit_worker_instr is the combined, on demand allocated,
 	 * instrumentation from all workers. The leader's instrumentation is kept
 	 * separate, and is combined on demand by ExplainPrintJITSummary().
 	 */
@@ -1057,17 +1051,73 @@ typedef struct PlanState
 
 /*
  * EPQState is state for executing an EvalPlanQual recheck on a candidate
- * tuple in ModifyTable or LockRows.  The estate and planstate fields are
- * NULL if inactive.
+ * tuples e.g. in ModifyTable or LockRows.
+ *
+ * To execute EPQ a separate EState is created (stored in ->recheckestate),
+ * which shares some resources, like the rangetable, with the main query's
+ * EState (stored in ->parentestate). The (sub-)tree of the plan that needs to
+ * be rechecked (in ->plan), is separately initialized (into
+ * ->recheckplanstate), but shares plan nodes with the corresponding nodes in
+ * the main query. The scan nodes in that separate executor tree are changed
+ * to return only the current tuple of interest for the respective
+ * table. Those tuples are either provided by the caller (using
+ * EvalPlanQualSlot), and/or found using the rowmark mechanism (non-locking
+ * rowmarks by the EPQ machinery itself, locking ones by the caller).
+ *
+ * While the plan to be checked may be changed using EvalPlanQualSetPlan() -
+ * e.g. so all source plans for a ModifyTable node can be processed - all such
+ * plans need to share the same EState.
  */
 typedef struct EPQState
 {
-	EState	   *estate;			/* subsidiary EState */
-	PlanState  *planstate;		/* plan state tree ready to be executed */
-	TupleTableSlot *origslot;	/* original output tuple to be rechecked */
+	/* Initialized at EvalPlanQualInit() time: */
+
+	EState	   *parentestate;	/* main query's EState */
+	int			epqParam;		/* ID of Param to force scan node re-eval */
+
+	/*
+	 * Tuples to be substituted by scan nodes. They need to set up, before
+	 * calling EvalPlanQual()/EvalPlanQualNext(), into the slot returned by
+	 * EvalPlanQualSlot(scanrelid). The array is indexed by scanrelid - 1.
+	 */
+	List	   *tuple_table;	/* tuple table for relsubs_slot */
+	TupleTableSlot **relsubs_slot;
+
+	/*
+	 * Initialized by EvalPlanQualInit(), may be changed later with
+	 * EvalPlanQualSetPlan():
+	 */
+
 	Plan	   *plan;			/* plan tree to be executed */
 	List	   *arowMarks;		/* ExecAuxRowMarks (non-locking only) */
-	int			epqParam;		/* ID of Param to force scan node re-eval */
+
+
+	/*
+	 * The original output tuple to be rechecked.  Set by
+	 * EvalPlanQualSetSlot(), before EvalPlanQualNext() or EvalPlanQual() may
+	 * be called.
+	 */
+	TupleTableSlot *origslot;
+
+
+	/* Initialized or reset by EvalPlanQualBegin(): */
+
+	EState	   *recheckestate;	/* EState for EPQ execution, see above */
+
+	/*
+	 * Rowmarks that can be fetched on-demand using
+	 * EvalPlanQualFetchRowMark(), indexed by scanrelid - 1. Only non-locking
+	 * rowmarks.
+	 */
+	ExecAuxRowMark **relsubs_rowmark;
+
+	/*
+	 * True if a relation's EPQ tuple has been fetched for relation, indexed
+	 * by scanrelid - 1.
+	 */
+	bool	   *relsubs_done;
+
+	PlanState  *recheckplanstate;	/* EPQ specific exec nodes, for ->plan */
 } EPQState;
 
 
@@ -1121,7 +1171,6 @@ typedef struct ModifyTableState
 	List	  **mt_arowmarks;	/* per-subplan ExecAuxRowMark lists */
 	EPQState	mt_epqstate;	/* for evaluating EvalPlanQual rechecks */
 	bool		fireBSTriggers; /* do we need to fire stmt triggers? */
-	List	   *mt_excludedtlist;	/* the excluded pseudo relation's tlist  */
 
 	/*
 	 * Slot for storing tuples in the root partitioned table's rowtype during
@@ -1185,8 +1234,6 @@ struct AppendState
  *		slots			current output tuple of each subplan
  *		heap			heap of active tuples
  *		initialized		true if we have fetched first tuple from each subplan
- *		noopscan		true if partition pruning proved that none of the
- *						mergeplans can contain a record to satisfy this query.
  *		prune_state		details required to allow partitions to be
  *						eliminated from the scan, or NULL if not possible.
  *		valid_subplans	for runtime pruning, valid mergeplans indexes to
@@ -1203,7 +1250,6 @@ typedef struct MergeAppendState
 	TupleTableSlot **ms_slots;	/* array of length ms_nplans */
 	struct binaryheap *ms_heap; /* binary heap of slot indices */
 	bool		ms_initialized; /* are subplans started? */
-	bool		ms_noopscan;
 	struct PartitionPruneState *ms_prune_state;
 	Bitmapset  *ms_valid_subplans;
 } MergeAppendState;
@@ -1359,7 +1405,7 @@ typedef struct
  *		SortSupport		   for reordering ORDER BY exprs
  *		OrderByTypByVals   is the datatype of order by expression pass-by-value?
  *		OrderByTypLens	   typlens of the datatypes of order by expressions
- *		pscan_len		   size of parallel index scan descriptor
+ *		PscanLen		   size of parallel index scan descriptor
  * ----------------
  */
 typedef struct IndexScanState
@@ -1403,8 +1449,9 @@ typedef struct IndexScanState
  *		RuntimeContext	   expr context for evaling runtime Skeys
  *		RelationDesc	   index relation descriptor
  *		ScanDesc		   index scan descriptor
+ *		TableSlot		   slot for holding tuples fetched from the table
  *		VMBuffer		   buffer in use for visibility map testing, if any
- *		ioss_PscanLen	   Size of parallel index-only scan descriptor
+ *		PscanLen		   size of parallel index-only scan descriptor
  * ----------------
  */
 typedef struct IndexOnlyScanState
@@ -1421,6 +1468,7 @@ typedef struct IndexOnlyScanState
 	ExprContext *ioss_RuntimeContext;
 	Relation	ioss_RelationDesc;
 	struct IndexScanDescData *ioss_ScanDesc;
+	TupleTableSlot *ioss_TableSlot;
 	Buffer		ioss_VMBuffer;
 	Size		ioss_PscanLen;
 } IndexOnlyScanState;
@@ -1850,7 +1898,6 @@ typedef struct MergeJoinState
  *
  *		hashclauses				original form of the hashjoin condition
  *		hj_OuterHashKeys		the outer hash keys in the hashjoin condition
- *		hj_InnerHashKeys		the inner hash keys in the hashjoin condition
  *		hj_HashOperators		the join operators in the hashjoin condition
  *		hj_HashTable			hash table for the hashjoin
  *								(NULL if table not built yet)
@@ -1881,7 +1928,6 @@ typedef struct HashJoinState
 	JoinState	js;				/* its first field is NodeTag */
 	ExprState  *hashclauses;
 	List	   *hj_OuterHashKeys;	/* list of ExprState nodes */
-	List	   *hj_InnerHashKeys;	/* list of ExprState nodes */
 	List	   *hj_HashOperators;	/* list of operator OIDs */
 	List	   *hj_Collations;
 	HashJoinTable hj_HashTable;
@@ -2198,7 +2244,7 @@ typedef struct HashInstrumentation
 	int			nbuckets_original;	/* planned number of buckets */
 	int			nbatch;			/* number of batches at end of execution */
 	int			nbatch_original;	/* planned number of batches */
-	size_t		space_peak;		/* speak memory usage in bytes */
+	size_t		space_peak;		/* peak memory usage in bytes */
 } HashInstrumentation;
 
 /* ----------------
@@ -2220,7 +2266,6 @@ typedef struct HashState
 	PlanState	ps;				/* its first field is NodeTag */
 	HashJoinTable hashtable;	/* hash table for the hashjoin */
 	List	   *hashkeys;		/* list of ExprState nodes */
-	/* hashkeys is same as parent's hj_InnerHashKeys */
 
 	SharedHashInfo *shared_info;	/* one entry per worker */
 	HashInstrumentation *hinstrument;	/* this worker's entry */

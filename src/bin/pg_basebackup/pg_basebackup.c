@@ -4,7 +4,7 @@
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/pg_basebackup.c
@@ -31,12 +31,13 @@
 #include "common/file_utils.h"
 #include "common/logging.h"
 #include "common/string.h"
+#include "fe_utils/recovery_gen.h"
 #include "fe_utils/string_utils.h"
 #include "getopt_long.h"
 #include "libpq-fe.h"
-#include "pqexpbuffer.h"
 #include "pgtar.h"
 #include "pgtime.h"
+#include "pqexpbuffer.h"
 #include "receivelog.h"
 #include "replication/basebackup.h"
 #include "streamutil.h"
@@ -56,6 +57,40 @@ typedef struct TablespaceList
 	TablespaceListCell *tail;
 } TablespaceList;
 
+typedef struct WriteTarState
+{
+	int			tablespacenum;
+	char		filename[MAXPGPATH];
+	FILE	   *tarfile;
+	char		tarhdr[512];
+	bool		basetablespace;
+	bool		in_tarhdr;
+	bool		skip_file;
+	bool		is_recovery_guc_supported;
+	bool		is_postgresql_auto_conf;
+	bool		found_postgresql_auto_conf;
+	int			file_padding_len;
+	size_t		tarhdrsz;
+	pgoff_t		filesz;
+#ifdef HAVE_LIBZ
+	gzFile		ztarfile;
+#endif
+} WriteTarState;
+
+typedef struct UnpackTarState
+{
+	int			tablespacenum;
+	char		current_path[MAXPGPATH];
+	char		filename[MAXPGPATH];
+	const char *mapped_tblspc_path;
+	pgoff_t		current_len_left;
+	int			current_padding;
+	FILE	   *file;
+} UnpackTarState;
+
+typedef void (*WriteDataCallback) (size_t nbytes, char *buf,
+								   void *callback_data);
+
 /*
  * pg_xlog has been renamed to pg_wal in version 10.  This version number
  * should be compared with PQserverVersion().
@@ -66,11 +101,6 @@ typedef struct TablespaceList
  * Temporary replication slots are supported from version 10.
  */
 #define MINIMUM_VERSION_FOR_TEMP_SLOTS 100000
-
-/*
- * recovery.conf is integrated into postgresql.conf from version 12.
- */
-#define MINIMUM_VERSION_FOR_RECOVERY_GUC 120000
 
 /*
  * Different ways to include WAL
@@ -115,7 +145,7 @@ static bool made_tablespace_dirs = false;
 static bool found_tablespace_dirs = false;
 
 /* Progress counters */
-static uint64 totalsize;
+static uint64 totalsize_kb;
 static uint64 totaldone;
 static int	tablespacecount;
 
@@ -146,9 +176,10 @@ static void verify_dir_is_empty_or_create(char *dirname, bool *created, bool *fo
 static void progress_report(int tablespacenum, const char *filename, bool force);
 
 static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
+static void ReceiveTarCopyChunk(size_t r, char *copybuf, void *callback_data);
 static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
-static void GenerateRecoveryConf(PGconn *conn);
-static void WriteRecoveryConf(void);
+static void ReceiveTarAndUnpackCopyChunk(size_t r, char *copybuf,
+										 void *callback_data);
 static void BaseBackup(void);
 
 static bool reached_end_position(XLogRecPtr segendpos, uint32 timeline,
@@ -486,15 +517,18 @@ LogStreamerMain(logstreamer_param *param)
 #endif
 	stream.standby_message_timeout = standby_message_timeout;
 	stream.synchronous = false;
-	stream.do_sync = do_sync;
+	/* fsync happens at the end of pg_basebackup for all data */
+	stream.do_sync = false;
 	stream.mark_done = true;
 	stream.partial_suffix = NULL;
 	stream.replication_slot = replication_slot;
 
 	if (format == 'p')
-		stream.walmethod = CreateWalDirectoryMethod(param->xlog, 0, do_sync);
+		stream.walmethod = CreateWalDirectoryMethod(param->xlog, 0,
+													stream.do_sync);
 	else
-		stream.walmethod = CreateWalTarMethod(param->xlog, compresslevel, do_sync);
+		stream.walmethod = CreateWalTarMethod(param->xlog, compresslevel,
+											  stream.do_sync);
 
 	if (!ReceiveXlogStream(param->bgconn, &stream))
 
@@ -722,7 +756,7 @@ progress_report(int tablespacenum, const char *filename, bool force)
 		return;					/* Max once per second */
 
 	last_progress_report = now;
-	percent = totalsize ? (int) ((totaldone / 1024) * 100 / totalsize) : 0;
+	percent = totalsize_kb ? (int) ((totaldone / 1024) * 100 / totalsize_kb) : 0;
 
 	/*
 	 * Avoid overflowing past 100% or the full size. This may make the total
@@ -732,8 +766,8 @@ progress_report(int tablespacenum, const char *filename, bool force)
 	 */
 	if (percent > 100)
 		percent = 100;
-	if (totaldone / 1024 > totalsize)
-		totalsize = totaldone / 1024;
+	if (totaldone / 1024 > totalsize_kb)
+		totalsize_kb = totaldone / 1024;
 
 	/*
 	 * Separate step to keep platform-dependent format code out of
@@ -742,7 +776,7 @@ progress_report(int tablespacenum, const char *filename, bool force)
 	 */
 	snprintf(totaldone_str, sizeof(totaldone_str), INT64_FORMAT,
 			 totaldone / 1024);
-	snprintf(totalsize_str, sizeof(totalsize_str), INT64_FORMAT, totalsize);
+	snprintf(totalsize_str, sizeof(totalsize_str), INT64_FORMAT, totalsize_kb);
 
 #define VERBOSE_FILENAME_LENGTH 35
 	if (verbose)
@@ -877,41 +911,77 @@ parse_max_rate(char *src)
 }
 
 /*
+ * Read a stream of COPY data and invoke the provided callback for each
+ * chunk.
+ */
+static void
+ReceiveCopyData(PGconn *conn, WriteDataCallback callback,
+				void *callback_data)
+{
+	PGresult   *res;
+
+	/* Get the COPY data stream. */
+	res = PQgetResult(conn);
+	if (PQresultStatus(res) != PGRES_COPY_OUT)
+	{
+		pg_log_error("could not get COPY data stream: %s",
+					 PQerrorMessage(conn));
+		exit(1);
+	}
+	PQclear(res);
+
+	/* Loop over chunks until done. */
+	while (1)
+	{
+		int			r;
+		char	   *copybuf;
+
+		r = PQgetCopyData(conn, &copybuf, 0);
+		if (r == -1)
+		{
+			/* End of chunk. */
+			break;
+		}
+		else if (r == -2)
+		{
+			pg_log_error("could not read COPY data: %s",
+						 PQerrorMessage(conn));
+			exit(1);
+		}
+
+		(*callback) (r, copybuf, callback_data);
+
+		PQfreemem(copybuf);
+	}
+}
+
+/*
  * Write a piece of tar data
  */
 static void
-writeTarData(
-#ifdef HAVE_LIBZ
-			 gzFile ztarfile,
-#endif
-			 FILE *tarfile, char *buf, int r, char *current_file)
+writeTarData(WriteTarState *state, char *buf, int r)
 {
 #ifdef HAVE_LIBZ
-	if (ztarfile != NULL)
+	if (state->ztarfile != NULL)
 	{
-		if (gzwrite(ztarfile, buf, r) != r)
+		if (gzwrite(state->ztarfile, buf, r) != r)
 		{
 			pg_log_error("could not write to compressed file \"%s\": %s",
-						 current_file, get_gz_error(ztarfile));
+						 state->filename, get_gz_error(state->ztarfile));
 			exit(1);
 		}
 	}
 	else
 #endif
 	{
-		if (fwrite(buf, r, 1, tarfile) != 1)
+		if (fwrite(buf, r, 1, state->tarfile) != 1)
 		{
-			pg_log_error("could not write to file \"%s\": %m", current_file);
+			pg_log_error("could not write to file \"%s\": %m",
+						 state->filename);
 			exit(1);
 		}
 	}
 }
-
-#ifdef HAVE_LIBZ
-#define WRITE_TAR_DATA(buf, sz) writeTarData(ztarfile, tarfile, buf, sz, filename)
-#else
-#define WRITE_TAR_DATA(buf, sz) writeTarData(tarfile, buf, sz, filename)
-#endif
 
 /*
  * Receive a tar format file from the connection to the server, and write
@@ -926,29 +996,19 @@ writeTarData(
 static void
 ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 {
-	char		filename[MAXPGPATH];
-	char	   *copybuf = NULL;
-	FILE	   *tarfile = NULL;
-	char		tarhdr[512];
-	bool		basetablespace = PQgetisnull(res, rownum, 0);
-	bool		in_tarhdr = true;
-	bool		skip_file = false;
-	bool		is_recovery_guc_supported = true;
-	bool		is_postgresql_auto_conf = false;
-	bool		found_postgresql_auto_conf = false;
-	int			file_padding_len = 0;
-	size_t		tarhdrsz = 0;
-	pgoff_t		filesz = 0;
+	char		zerobuf[1024];
+	WriteTarState state;
 
-#ifdef HAVE_LIBZ
-	gzFile		ztarfile = NULL;
-#endif
+	memset(&state, 0, sizeof(state));
+	state.tablespacenum = rownum;
+	state.basetablespace = PQgetisnull(res, rownum, 0);
+	state.in_tarhdr = true;
 
 	/* recovery.conf is integrated into postgresql.conf in 12 and newer */
-	if (PQserverVersion(conn) < MINIMUM_VERSION_FOR_RECOVERY_GUC)
-		is_recovery_guc_supported = false;
+	if (PQserverVersion(conn) >= MINIMUM_VERSION_FOR_RECOVERY_GUC)
+		state.is_recovery_guc_supported = true;
 
-	if (basetablespace)
+	if (state.basetablespace)
 	{
 		/*
 		 * Base tablespaces
@@ -962,40 +1022,42 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 #ifdef HAVE_LIBZ
 			if (compresslevel != 0)
 			{
-				ztarfile = gzdopen(dup(fileno(stdout)), "wb");
-				if (gzsetparams(ztarfile, compresslevel,
+				state.ztarfile = gzdopen(dup(fileno(stdout)), "wb");
+				if (gzsetparams(state.ztarfile, compresslevel,
 								Z_DEFAULT_STRATEGY) != Z_OK)
 				{
 					pg_log_error("could not set compression level %d: %s",
-								 compresslevel, get_gz_error(ztarfile));
+								 compresslevel, get_gz_error(state.ztarfile));
 					exit(1);
 				}
 			}
 			else
 #endif
-				tarfile = stdout;
-			strcpy(filename, "-");
+				state.tarfile = stdout;
+			strcpy(state.filename, "-");
 		}
 		else
 		{
 #ifdef HAVE_LIBZ
 			if (compresslevel != 0)
 			{
-				snprintf(filename, sizeof(filename), "%s/base.tar.gz", basedir);
-				ztarfile = gzopen(filename, "wb");
-				if (gzsetparams(ztarfile, compresslevel,
+				snprintf(state.filename, sizeof(state.filename),
+						 "%s/base.tar.gz", basedir);
+				state.ztarfile = gzopen(state.filename, "wb");
+				if (gzsetparams(state.ztarfile, compresslevel,
 								Z_DEFAULT_STRATEGY) != Z_OK)
 				{
 					pg_log_error("could not set compression level %d: %s",
-								 compresslevel, get_gz_error(ztarfile));
+								 compresslevel, get_gz_error(state.ztarfile));
 					exit(1);
 				}
 			}
 			else
 #endif
 			{
-				snprintf(filename, sizeof(filename), "%s/base.tar", basedir);
-				tarfile = fopen(filename, "wb");
+				snprintf(state.filename, sizeof(state.filename),
+						 "%s/base.tar", basedir);
+				state.tarfile = fopen(state.filename, "wb");
 			}
 		}
 	}
@@ -1007,34 +1069,35 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 #ifdef HAVE_LIBZ
 		if (compresslevel != 0)
 		{
-			snprintf(filename, sizeof(filename), "%s/%s.tar.gz", basedir,
-					 PQgetvalue(res, rownum, 0));
-			ztarfile = gzopen(filename, "wb");
-			if (gzsetparams(ztarfile, compresslevel,
+			snprintf(state.filename, sizeof(state.filename),
+					 "%s/%s.tar.gz",
+					 basedir, PQgetvalue(res, rownum, 0));
+			state.ztarfile = gzopen(state.filename, "wb");
+			if (gzsetparams(state.ztarfile, compresslevel,
 							Z_DEFAULT_STRATEGY) != Z_OK)
 			{
 				pg_log_error("could not set compression level %d: %s",
-							 compresslevel, get_gz_error(ztarfile));
+							 compresslevel, get_gz_error(state.ztarfile));
 				exit(1);
 			}
 		}
 		else
 #endif
 		{
-			snprintf(filename, sizeof(filename), "%s/%s.tar", basedir,
-					 PQgetvalue(res, rownum, 0));
-			tarfile = fopen(filename, "wb");
+			snprintf(state.filename, sizeof(state.filename), "%s/%s.tar",
+					 basedir, PQgetvalue(res, rownum, 0));
+			state.tarfile = fopen(state.filename, "wb");
 		}
 	}
 
 #ifdef HAVE_LIBZ
 	if (compresslevel != 0)
 	{
-		if (!ztarfile)
+		if (!state.ztarfile)
 		{
 			/* Compression is in use */
 			pg_log_error("could not create compressed file \"%s\": %s",
-						 filename, get_gz_error(ztarfile));
+						 state.filename, get_gz_error(state.ztarfile));
 			exit(1);
 		}
 	}
@@ -1042,313 +1105,292 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 #endif
 	{
 		/* Either no zlib support, or zlib support but compresslevel = 0 */
-		if (!tarfile)
+		if (!state.tarfile)
 		{
-			pg_log_error("could not create file \"%s\": %m", filename);
+			pg_log_error("could not create file \"%s\": %m", state.filename);
 			exit(1);
 		}
 	}
+
+	ReceiveCopyData(conn, ReceiveTarCopyChunk, &state);
 
 	/*
-	 * Get the COPY data stream
+	 * End of copy data. If requested, and this is the base tablespace, write
+	 * configuration file into the tarfile. When done, close the file (but not
+	 * stdout).
+	 *
+	 * Also, write two completely empty blocks at the end of the tar file, as
+	 * required by some tar programs.
 	 */
-	res = PQgetResult(conn);
-	if (PQresultStatus(res) != PGRES_COPY_OUT)
+
+	MemSet(zerobuf, 0, sizeof(zerobuf));
+
+	if (state.basetablespace && writerecoveryconf)
 	{
-		pg_log_error("could not get COPY data stream: %s",
-					 PQerrorMessage(conn));
-		exit(1);
+		char		header[512];
+
+		/*
+		 * If postgresql.auto.conf has not been found in the streamed data,
+		 * add recovery configuration to postgresql.auto.conf if recovery
+		 * parameters are GUCs.  If the instance connected to is older than
+		 * 12, create recovery.conf with this data otherwise.
+		 */
+		if (!state.found_postgresql_auto_conf || !state.is_recovery_guc_supported)
+		{
+			int			padding;
+
+			tarCreateHeader(header,
+							state.is_recovery_guc_supported ? "postgresql.auto.conf" : "recovery.conf",
+							NULL,
+							recoveryconfcontents->len,
+							pg_file_create_mode, 04000, 02000,
+							time(NULL));
+
+			padding = ((recoveryconfcontents->len + 511) & ~511) - recoveryconfcontents->len;
+
+			writeTarData(&state, header, sizeof(header));
+			writeTarData(&state, recoveryconfcontents->data,
+						 recoveryconfcontents->len);
+			if (padding)
+				writeTarData(&state, zerobuf, padding);
+		}
+
+		/*
+		 * standby.signal is supported only if recovery parameters are GUCs.
+		 */
+		if (state.is_recovery_guc_supported)
+		{
+			tarCreateHeader(header, "standby.signal", NULL,
+							0,	/* zero-length file */
+							pg_file_create_mode, 04000, 02000,
+							time(NULL));
+
+			writeTarData(&state, header, sizeof(header));
+			writeTarData(&state, zerobuf, 511);
+		}
 	}
 
-	while (1)
-	{
-		int			r;
-
-		if (copybuf != NULL)
-		{
-			PQfreemem(copybuf);
-			copybuf = NULL;
-		}
-
-		r = PQgetCopyData(conn, &copybuf, 0);
-		if (r == -1)
-		{
-			/*
-			 * End of chunk. If requested, and this is the base tablespace,
-			 * write configuration file into the tarfile. When done, close the
-			 * file (but not stdout).
-			 *
-			 * Also, write two completely empty blocks at the end of the tar
-			 * file, as required by some tar programs.
-			 */
-			char		zerobuf[1024];
-
-			MemSet(zerobuf, 0, sizeof(zerobuf));
-
-			if (basetablespace && writerecoveryconf)
-			{
-				char		header[512];
-
-				/*
-				 * If postgresql.auto.conf has not been found in the streamed
-				 * data, add recovery configuration to postgresql.auto.conf if
-				 * recovery parameters are GUCs.  If the instance connected to
-				 * is older than 12, create recovery.conf with this data
-				 * otherwise.
-				 */
-				if (!found_postgresql_auto_conf || !is_recovery_guc_supported)
-				{
-					int			padding;
-
-					tarCreateHeader(header,
-									is_recovery_guc_supported ? "postgresql.auto.conf" : "recovery.conf",
-									NULL,
-									recoveryconfcontents->len,
-									pg_file_create_mode, 04000, 02000,
-									time(NULL));
-
-					padding = ((recoveryconfcontents->len + 511) & ~511) - recoveryconfcontents->len;
-
-					WRITE_TAR_DATA(header, sizeof(header));
-					WRITE_TAR_DATA(recoveryconfcontents->data,
-								   recoveryconfcontents->len);
-					if (padding)
-						WRITE_TAR_DATA(zerobuf, padding);
-				}
-
-				/*
-				 * standby.signal is supported only if recovery parameters are
-				 * GUCs.
-				 */
-				if (is_recovery_guc_supported)
-				{
-					tarCreateHeader(header, "standby.signal", NULL,
-									0,	/* zero-length file */
-									pg_file_create_mode, 04000, 02000,
-									time(NULL));
-
-					WRITE_TAR_DATA(header, sizeof(header));
-					WRITE_TAR_DATA(zerobuf, 511);
-				}
-			}
-
-			/* 2 * 512 bytes empty data at end of file */
-			WRITE_TAR_DATA(zerobuf, sizeof(zerobuf));
+	/* 2 * 512 bytes empty data at end of file */
+	writeTarData(&state, zerobuf, sizeof(zerobuf));
 
 #ifdef HAVE_LIBZ
-			if (ztarfile != NULL)
-			{
-				if (gzclose(ztarfile) != 0)
-				{
-					pg_log_error("could not close compressed file \"%s\": %s",
-								 filename, get_gz_error(ztarfile));
-					exit(1);
-				}
-			}
-			else
-#endif
-			{
-				if (strcmp(basedir, "-") != 0)
-				{
-					if (fclose(tarfile) != 0)
-					{
-						pg_log_error("could not close file \"%s\": %m",
-									 filename);
-						exit(1);
-					}
-				}
-			}
-
-			break;
-		}
-		else if (r == -2)
+	if (state.ztarfile != NULL)
+	{
+		if (gzclose(state.ztarfile) != 0)
 		{
-			pg_log_error("could not read COPY data: %s",
-						 PQerrorMessage(conn));
+			pg_log_error("could not close compressed file \"%s\": %s",
+						 state.filename, get_gz_error(state.ztarfile));
 			exit(1);
 		}
-
-		if (!writerecoveryconf || !basetablespace)
+	}
+	else
+#endif
+	{
+		if (strcmp(basedir, "-") != 0)
 		{
-			/*
-			 * When not writing config file, or when not working on the base
-			 * tablespace, we never have to look for an existing configuration
-			 * file in the stream.
-			 */
-			WRITE_TAR_DATA(copybuf, r);
-		}
-		else
-		{
-			/*
-			 * Look for a config file in the existing tar stream. If it's
-			 * there, we must skip it so we can later overwrite it with our
-			 * own version of the file.
-			 *
-			 * To do this, we have to process the individual files inside the
-			 * TAR stream. The stream consists of a header and zero or more
-			 * chunks, all 512 bytes long. The stream from the server is
-			 * broken up into smaller pieces, so we have to track the size of
-			 * the files to find the next header structure.
-			 */
-			int			rr = r;
-			int			pos = 0;
-
-			while (rr > 0)
+			if (fclose(state.tarfile) != 0)
 			{
-				if (in_tarhdr)
+				pg_log_error("could not close file \"%s\": %m",
+							 state.filename);
+				exit(1);
+			}
+		}
+	}
+
+	progress_report(rownum, state.filename, true);
+
+	/*
+	 * Do not sync the resulting tar file yet, all files are synced once at
+	 * the end.
+	 */
+}
+
+/*
+ * Receive one chunk of tar-format data from the server.
+ */
+static void
+ReceiveTarCopyChunk(size_t r, char *copybuf, void *callback_data)
+{
+	WriteTarState *state = callback_data;
+
+	if (!writerecoveryconf || !state->basetablespace)
+	{
+		/*
+		 * When not writing config file, or when not working on the base
+		 * tablespace, we never have to look for an existing configuration
+		 * file in the stream.
+		 */
+		writeTarData(state, copybuf, r);
+	}
+	else
+	{
+		/*
+		 * Look for a config file in the existing tar stream. If it's there,
+		 * we must skip it so we can later overwrite it with our own version
+		 * of the file.
+		 *
+		 * To do this, we have to process the individual files inside the TAR
+		 * stream. The stream consists of a header and zero or more chunks,
+		 * all 512 bytes long. The stream from the server is broken up into
+		 * smaller pieces, so we have to track the size of the files to find
+		 * the next header structure.
+		 */
+		int			rr = r;
+		int			pos = 0;
+
+		while (rr > 0)
+		{
+			if (state->in_tarhdr)
+			{
+				/*
+				 * We're currently reading a header structure inside the TAR
+				 * stream, i.e. the file metadata.
+				 */
+				if (state->tarhdrsz < 512)
 				{
 					/*
-					 * We're currently reading a header structure inside the
-					 * TAR stream, i.e. the file metadata.
+					 * Copy the header structure into tarhdr in case the
+					 * header is not aligned to 512 bytes or it's not returned
+					 * in whole by the last PQgetCopyData call.
 					 */
-					if (tarhdrsz < 512)
-					{
-						/*
-						 * Copy the header structure into tarhdr in case the
-						 * header is not aligned to 512 bytes or it's not
-						 * returned in whole by the last PQgetCopyData call.
-						 */
-						int			hdrleft;
-						int			bytes2copy;
+					int			hdrleft;
+					int			bytes2copy;
 
-						hdrleft = 512 - tarhdrsz;
-						bytes2copy = (rr > hdrleft ? hdrleft : rr);
+					hdrleft = 512 - state->tarhdrsz;
+					bytes2copy = (rr > hdrleft ? hdrleft : rr);
 
-						memcpy(&tarhdr[tarhdrsz], copybuf + pos, bytes2copy);
+					memcpy(&state->tarhdr[state->tarhdrsz], copybuf + pos,
+						   bytes2copy);
 
-						rr -= bytes2copy;
-						pos += bytes2copy;
-						tarhdrsz += bytes2copy;
-					}
-					else
-					{
-						/*
-						 * We have the complete header structure in tarhdr,
-						 * look at the file metadata: we may want append
-						 * recovery info into postgresql.auto.conf and skip
-						 * standby.signal file if recovery parameters are
-						 * integrated as GUCs, and recovery.conf otherwise. In
-						 * both cases we must calculate tar padding.
-						 */
-						if (is_recovery_guc_supported)
-						{
-							skip_file = (strcmp(&tarhdr[0], "standby.signal") == 0);
-							is_postgresql_auto_conf = (strcmp(&tarhdr[0], "postgresql.auto.conf") == 0);
-						}
-						else
-							skip_file = (strcmp(&tarhdr[0], "recovery.conf") == 0);
-
-						filesz = read_tar_number(&tarhdr[124], 12);
-						file_padding_len = ((filesz + 511) & ~511) - filesz;
-
-						if (is_recovery_guc_supported &&
-							is_postgresql_auto_conf &&
-							writerecoveryconf)
-						{
-							/* replace tar header */
-							char		header[512];
-
-							tarCreateHeader(header, "postgresql.auto.conf", NULL,
-											filesz + recoveryconfcontents->len,
-											pg_file_create_mode, 04000, 02000,
-											time(NULL));
-
-							WRITE_TAR_DATA(header, sizeof(header));
-						}
-						else
-						{
-							/* copy stream with padding */
-							filesz += file_padding_len;
-
-							if (!skip_file)
-							{
-								/*
-								 * If we're not skipping the file, write the
-								 * tar header unmodified.
-								 */
-								WRITE_TAR_DATA(tarhdr, 512);
-							}
-						}
-
-						/* Next part is the file, not the header */
-						in_tarhdr = false;
-					}
+					rr -= bytes2copy;
+					pos += bytes2copy;
+					state->tarhdrsz += bytes2copy;
 				}
 				else
 				{
 					/*
-					 * We're processing a file's contents.
+					 * We have the complete header structure in tarhdr, look
+					 * at the file metadata: we may want append recovery info
+					 * into postgresql.auto.conf and skip standby.signal file
+					 * if recovery parameters are integrated as GUCs, and
+					 * recovery.conf otherwise. In both cases we must
+					 * calculate tar padding.
 					 */
-					if (filesz > 0)
+					if (state->is_recovery_guc_supported)
 					{
-						/*
-						 * We still have data to read (and possibly write).
-						 */
-						int			bytes2write;
-
-						bytes2write = (filesz > rr ? rr : filesz);
-
-						if (!skip_file)
-							WRITE_TAR_DATA(copybuf + pos, bytes2write);
-
-						rr -= bytes2write;
-						pos += bytes2write;
-						filesz -= bytes2write;
+						state->skip_file =
+							(strcmp(&state->tarhdr[0], "standby.signal") == 0);
+						state->is_postgresql_auto_conf =
+							(strcmp(&state->tarhdr[0], "postgresql.auto.conf") == 0);
 					}
-					else if (is_recovery_guc_supported &&
-							 is_postgresql_auto_conf &&
-							 writerecoveryconf)
+					else
+						state->skip_file =
+							(strcmp(&state->tarhdr[0], "recovery.conf") == 0);
+
+					state->filesz = read_tar_number(&state->tarhdr[124], 12);
+					state->file_padding_len =
+						((state->filesz + 511) & ~511) - state->filesz;
+
+					if (state->is_recovery_guc_supported &&
+						state->is_postgresql_auto_conf &&
+						writerecoveryconf)
 					{
-						/* append recovery config to postgresql.auto.conf */
-						int			padding;
-						int			tailsize;
+						/* replace tar header */
+						char		header[512];
 
-						tailsize = (512 - file_padding_len) + recoveryconfcontents->len;
-						padding = ((tailsize + 511) & ~511) - tailsize;
+						tarCreateHeader(header, "postgresql.auto.conf", NULL,
+										state->filesz + recoveryconfcontents->len,
+										pg_file_create_mode, 04000, 02000,
+										time(NULL));
 
-						WRITE_TAR_DATA(recoveryconfcontents->data, recoveryconfcontents->len);
-
-						if (padding)
-						{
-							char		zerobuf[512];
-
-							MemSet(zerobuf, 0, sizeof(zerobuf));
-							WRITE_TAR_DATA(zerobuf, padding);
-						}
-
-						/* skip original file padding */
-						is_postgresql_auto_conf = false;
-						skip_file = true;
-						filesz += file_padding_len;
-
-						found_postgresql_auto_conf = true;
+						writeTarData(state, header, sizeof(header));
 					}
 					else
 					{
-						/*
-						 * No more data in the current file, the next piece of
-						 * data (if any) will be a new file header structure.
-						 */
-						in_tarhdr = true;
-						skip_file = false;
-						is_postgresql_auto_conf = false;
-						tarhdrsz = 0;
-						filesz = 0;
+						/* copy stream with padding */
+						state->filesz += state->file_padding_len;
+
+						if (!state->skip_file)
+						{
+							/*
+							 * If we're not skipping the file, write the tar
+							 * header unmodified.
+							 */
+							writeTarData(state, state->tarhdr, 512);
+						}
 					}
+
+					/* Next part is the file, not the header */
+					state->in_tarhdr = false;
+				}
+			}
+			else
+			{
+				/*
+				 * We're processing a file's contents.
+				 */
+				if (state->filesz > 0)
+				{
+					/*
+					 * We still have data to read (and possibly write).
+					 */
+					int			bytes2write;
+
+					bytes2write = (state->filesz > rr ? rr : state->filesz);
+
+					if (!state->skip_file)
+						writeTarData(state, copybuf + pos, bytes2write);
+
+					rr -= bytes2write;
+					pos += bytes2write;
+					state->filesz -= bytes2write;
+				}
+				else if (state->is_recovery_guc_supported &&
+						 state->is_postgresql_auto_conf &&
+						 writerecoveryconf)
+				{
+					/* append recovery config to postgresql.auto.conf */
+					int			padding;
+					int			tailsize;
+
+					tailsize = (512 - state->file_padding_len) + recoveryconfcontents->len;
+					padding = ((tailsize + 511) & ~511) - tailsize;
+
+					writeTarData(state, recoveryconfcontents->data,
+								 recoveryconfcontents->len);
+
+					if (padding)
+					{
+						char		zerobuf[512];
+
+						MemSet(zerobuf, 0, sizeof(zerobuf));
+						writeTarData(state, zerobuf, padding);
+					}
+
+					/* skip original file padding */
+					state->is_postgresql_auto_conf = false;
+					state->skip_file = true;
+					state->filesz += state->file_padding_len;
+
+					state->found_postgresql_auto_conf = true;
+				}
+				else
+				{
+					/*
+					 * No more data in the current file, the next piece of
+					 * data (if any) will be a new file header structure.
+					 */
+					state->in_tarhdr = true;
+					state->skip_file = false;
+					state->is_postgresql_auto_conf = false;
+					state->tarhdrsz = 0;
+					state->filesz = 0;
 				}
 			}
 		}
-		totaldone += r;
-		progress_report(rownum, filename, false);
-	}							/* while (1) */
-	progress_report(rownum, filename, true);
-
-	if (copybuf != NULL)
-		PQfreemem(copybuf);
-
-	/* sync the resulting tar file, errors are not considered fatal */
-	if (do_sync && strcmp(basedir, "-") != 0)
-		(void) fsync_fname(filename, false);
+	}
+	totaldone += r;
+	progress_report(state->tablespacenum, state->filename, false);
 }
 
 
@@ -1386,242 +1428,36 @@ get_tablespace_mapping(const char *dir)
 static void
 ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 {
-	char		current_path[MAXPGPATH];
-	char		filename[MAXPGPATH];
-	const char *mapped_tblspc_path;
-	pgoff_t		current_len_left = 0;
-	int			current_padding = 0;
+	UnpackTarState state;
 	bool		basetablespace;
-	char	   *copybuf = NULL;
-	FILE	   *file = NULL;
+
+	memset(&state, 0, sizeof(state));
+	state.tablespacenum = rownum;
 
 	basetablespace = PQgetisnull(res, rownum, 0);
 	if (basetablespace)
-		strlcpy(current_path, basedir, sizeof(current_path));
+		strlcpy(state.current_path, basedir, sizeof(state.current_path));
 	else
-		strlcpy(current_path,
+		strlcpy(state.current_path,
 				get_tablespace_mapping(PQgetvalue(res, rownum, 1)),
-				sizeof(current_path));
+				sizeof(state.current_path));
 
-	/*
-	 * Get the COPY data
-	 */
-	res = PQgetResult(conn);
-	if (PQresultStatus(res) != PGRES_COPY_OUT)
-	{
-		pg_log_error("could not get COPY data stream: %s",
-					 PQerrorMessage(conn));
-		exit(1);
-	}
+	ReceiveCopyData(conn, ReceiveTarAndUnpackCopyChunk, &state);
 
-	while (1)
-	{
-		int			r;
 
-		if (copybuf != NULL)
-		{
-			PQfreemem(copybuf);
-			copybuf = NULL;
-		}
+	if (state.file)
+		fclose(state.file);
 
-		r = PQgetCopyData(conn, &copybuf, 0);
+	progress_report(rownum, state.filename, true);
 
-		if (r == -1)
-		{
-			/*
-			 * End of chunk
-			 */
-			if (file)
-				fclose(file);
-
-			break;
-		}
-		else if (r == -2)
-		{
-			pg_log_error("could not read COPY data: %s",
-						 PQerrorMessage(conn));
-			exit(1);
-		}
-
-		if (file == NULL)
-		{
-			int			filemode;
-
-			/*
-			 * No current file, so this must be the header for a new file
-			 */
-			if (r != 512)
-			{
-				pg_log_error("invalid tar block header size: %d", r);
-				exit(1);
-			}
-			totaldone += 512;
-
-			current_len_left = read_tar_number(&copybuf[124], 12);
-
-			/* Set permissions on the file */
-			filemode = read_tar_number(&copybuf[100], 8);
-
-			/*
-			 * All files are padded up to 512 bytes
-			 */
-			current_padding =
-				((current_len_left + 511) & ~511) - current_len_left;
-
-			/*
-			 * First part of header is zero terminated filename
-			 */
-			snprintf(filename, sizeof(filename), "%s/%s", current_path,
-					 copybuf);
-			if (filename[strlen(filename) - 1] == '/')
-			{
-				/*
-				 * Ends in a slash means directory or symlink to directory
-				 */
-				if (copybuf[156] == '5')
-				{
-					/*
-					 * Directory
-					 */
-					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
-					if (mkdir(filename, pg_dir_create_mode) != 0)
-					{
-						/*
-						 * When streaming WAL, pg_wal (or pg_xlog for pre-9.6
-						 * clusters) will have been created by the wal
-						 * receiver process. Also, when the WAL directory
-						 * location was specified, pg_wal (or pg_xlog) has
-						 * already been created as a symbolic link before
-						 * starting the actual backup. So just ignore creation
-						 * failures on related directories.
-						 */
-						if (!((pg_str_endswith(filename, "/pg_wal") ||
-							   pg_str_endswith(filename, "/pg_xlog") ||
-							   pg_str_endswith(filename, "/archive_status")) &&
-							  errno == EEXIST))
-						{
-							pg_log_error("could not create directory \"%s\": %m",
-										 filename);
-							exit(1);
-						}
-					}
-#ifndef WIN32
-					if (chmod(filename, (mode_t) filemode))
-						pg_log_error("could not set permissions on directory \"%s\": %m",
-									 filename);
-#endif
-				}
-				else if (copybuf[156] == '2')
-				{
-					/*
-					 * Symbolic link
-					 *
-					 * It's most likely a link in pg_tblspc directory, to the
-					 * location of a tablespace. Apply any tablespace mapping
-					 * given on the command line (--tablespace-mapping). (We
-					 * blindly apply the mapping without checking that the
-					 * link really is inside pg_tblspc. We don't expect there
-					 * to be other symlinks in a data directory, but if there
-					 * are, you can call it an undocumented feature that you
-					 * can map them too.)
-					 */
-					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
-
-					mapped_tblspc_path = get_tablespace_mapping(&copybuf[157]);
-					if (symlink(mapped_tblspc_path, filename) != 0)
-					{
-						pg_log_error("could not create symbolic link from \"%s\" to \"%s\": %m",
-									 filename, mapped_tblspc_path);
-						exit(1);
-					}
-				}
-				else
-				{
-					pg_log_error("unrecognized link indicator \"%c\"",
-								 copybuf[156]);
-					exit(1);
-				}
-				continue;		/* directory or link handled */
-			}
-
-			/*
-			 * regular file
-			 */
-			file = fopen(filename, "wb");
-			if (!file)
-			{
-				pg_log_error("could not create file \"%s\": %m", filename);
-				exit(1);
-			}
-
-#ifndef WIN32
-			if (chmod(filename, (mode_t) filemode))
-				pg_log_error("could not set permissions on file \"%s\": %m",
-							 filename);
-#endif
-
-			if (current_len_left == 0)
-			{
-				/*
-				 * Done with this file, next one will be a new tar header
-				 */
-				fclose(file);
-				file = NULL;
-				continue;
-			}
-		}						/* new file */
-		else
-		{
-			/*
-			 * Continuing blocks in existing file
-			 */
-			if (current_len_left == 0 && r == current_padding)
-			{
-				/*
-				 * Received the padding block for this file, ignore it and
-				 * close the file, then move on to the next tar header.
-				 */
-				fclose(file);
-				file = NULL;
-				totaldone += r;
-				continue;
-			}
-
-			if (fwrite(copybuf, r, 1, file) != 1)
-			{
-				pg_log_error("could not write to file \"%s\": %m", filename);
-				exit(1);
-			}
-			totaldone += r;
-			progress_report(rownum, filename, false);
-
-			current_len_left -= r;
-			if (current_len_left == 0 && current_padding == 0)
-			{
-				/*
-				 * Received the last block, and there is no padding to be
-				 * expected. Close the file and move on to the next tar
-				 * header.
-				 */
-				fclose(file);
-				file = NULL;
-				continue;
-			}
-		}						/* continuing data in existing file */
-	}							/* loop over all data blocks */
-	progress_report(rownum, filename, true);
-
-	if (file != NULL)
+	if (state.file != NULL)
 	{
 		pg_log_error("COPY stream ended before last file was finished");
 		exit(1);
 	}
 
-	if (copybuf != NULL)
-		PQfreemem(copybuf);
-
 	if (basetablespace && writerecoveryconf)
-		WriteRecoveryConf();
+		WriteRecoveryConfig(conn, basedir, recoveryconfcontents);
 
 	/*
 	 * No data is synced here, everything is done for all tablespaces at the
@@ -1629,161 +1465,181 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 	 */
 }
 
-/*
- * Escape a string so that it can be used as a value in a key-value pair
- * a configuration file.
- */
-static char *
-escape_quotes(const char *src)
-{
-	char	   *result = escape_single_quotes_ascii(src);
-
-	if (!result)
-	{
-		pg_log_error("out of memory");
-		exit(1);
-	}
-	return result;
-}
-
-/*
- * Create a configuration file in memory using a PQExpBuffer
- */
 static void
-GenerateRecoveryConf(PGconn *conn)
+ReceiveTarAndUnpackCopyChunk(size_t r, char *copybuf, void *callback_data)
 {
-	PQconninfoOption *connOptions;
-	PQconninfoOption *option;
-	PQExpBufferData conninfo_buf;
-	char	   *escaped;
+	UnpackTarState *state = callback_data;
 
-	recoveryconfcontents = createPQExpBuffer();
-	if (!recoveryconfcontents)
+	if (state->file == NULL)
 	{
-		pg_log_error("out of memory");
-		exit(1);
-	}
-
-	/*
-	 * In PostgreSQL 12 and newer versions, standby_mode is gone, replaced by
-	 * standby.signal to trigger a standby state at recovery.
-	 */
-	if (PQserverVersion(conn) < MINIMUM_VERSION_FOR_RECOVERY_GUC)
-		appendPQExpBufferStr(recoveryconfcontents, "standby_mode = 'on'\n");
-
-	connOptions = PQconninfo(conn);
-	if (connOptions == NULL)
-	{
-		pg_log_error("out of memory");
-		exit(1);
-	}
-
-	initPQExpBuffer(&conninfo_buf);
-	for (option = connOptions; option && option->keyword; option++)
-	{
-		/*
-		 * Do not emit this setting if: - the setting is "replication",
-		 * "dbname" or "fallback_application_name", since these would be
-		 * overridden by the libpqwalreceiver module anyway. - not set or
-		 * empty.
-		 */
-		if (strcmp(option->keyword, "replication") == 0 ||
-			strcmp(option->keyword, "dbname") == 0 ||
-			strcmp(option->keyword, "fallback_application_name") == 0 ||
-			(option->val == NULL) ||
-			(option->val != NULL && option->val[0] == '\0'))
-			continue;
-
-		/* Separate key-value pairs with spaces */
-		if (conninfo_buf.len != 0)
-			appendPQExpBufferChar(&conninfo_buf, ' ');
+#ifndef WIN32
+		int			filemode;
+#endif
 
 		/*
-		 * Write "keyword=value" pieces, the value string is escaped and/or
-		 * quoted if necessary.
+		 * No current file, so this must be the header for a new file
 		 */
-		appendPQExpBuffer(&conninfo_buf, "%s=", option->keyword);
-		appendConnStrVal(&conninfo_buf, option->val);
-	}
-
-	/*
-	 * Escape the connection string, so that it can be put in the config file.
-	 * Note that this is different from the escaping of individual connection
-	 * options above!
-	 */
-	escaped = escape_quotes(conninfo_buf.data);
-	appendPQExpBuffer(recoveryconfcontents, "primary_conninfo = '%s'\n", escaped);
-	free(escaped);
-
-	if (replication_slot)
-	{
-		escaped = escape_quotes(replication_slot);
-		appendPQExpBuffer(recoveryconfcontents, "primary_slot_name = '%s'\n", replication_slot);
-		free(escaped);
-	}
-
-	if (PQExpBufferBroken(recoveryconfcontents) ||
-		PQExpBufferDataBroken(conninfo_buf))
-	{
-		pg_log_error("out of memory");
-		exit(1);
-	}
-
-	termPQExpBuffer(&conninfo_buf);
-
-	PQconninfoFree(connOptions);
-}
-
-
-/*
- * Write the configuration file into the directory specified in basedir,
- * with the contents already collected in memory appended.  Then write
- * the signal file into the basedir.  If the server does not support
- * recovery parameters as GUCs, the signal file is not necessary, and
- * configuration is written to recovery.conf.
- */
-static void
-WriteRecoveryConf(void)
-{
-	char		filename[MAXPGPATH];
-	FILE	   *cf;
-	bool		is_recovery_guc_supported = true;
-
-	if (PQserverVersion(conn) < MINIMUM_VERSION_FOR_RECOVERY_GUC)
-		is_recovery_guc_supported = false;
-
-	snprintf(filename, MAXPGPATH, "%s/%s", basedir,
-			 is_recovery_guc_supported ? "postgresql.auto.conf" : "recovery.conf");
-
-	cf = fopen(filename, is_recovery_guc_supported ? "a" : "w");
-	if (cf == NULL)
-	{
-		pg_log_error("could not open file \"%s\": %m", filename);
-		exit(1);
-	}
-
-	if (fwrite(recoveryconfcontents->data, recoveryconfcontents->len, 1, cf) != 1)
-	{
-		pg_log_error("could not write to file \"%s\": %m", filename);
-		exit(1);
-	}
-
-	fclose(cf);
-
-	if (is_recovery_guc_supported)
-	{
-		snprintf(filename, MAXPGPATH, "%s/%s", basedir, "standby.signal");
-		cf = fopen(filename, "w");
-		if (cf == NULL)
+		if (r != 512)
 		{
-			pg_log_error("could not create file \"%s\": %m", filename);
+			pg_log_error("invalid tar block header size: %zu", r);
+			exit(1);
+		}
+		totaldone += 512;
+
+		state->current_len_left = read_tar_number(&copybuf[124], 12);
+
+#ifndef WIN32
+		/* Set permissions on the file */
+		filemode = read_tar_number(&copybuf[100], 8);
+#endif
+
+		/*
+		 * All files are padded up to 512 bytes
+		 */
+		state->current_padding =
+			((state->current_len_left + 511) & ~511) - state->current_len_left;
+
+		/*
+		 * First part of header is zero terminated filename
+		 */
+		snprintf(state->filename, sizeof(state->filename),
+				 "%s/%s", state->current_path, copybuf);
+		if (state->filename[strlen(state->filename) - 1] == '/')
+		{
+			/*
+			 * Ends in a slash means directory or symlink to directory
+			 */
+			if (copybuf[156] == '5')
+			{
+				/*
+				 * Directory. Remove trailing slash first.
+				 */
+				state->filename[strlen(state->filename) - 1] = '\0';
+				if (mkdir(state->filename, pg_dir_create_mode) != 0)
+				{
+					/*
+					 * When streaming WAL, pg_wal (or pg_xlog for pre-9.6
+					 * clusters) will have been created by the wal receiver
+					 * process. Also, when the WAL directory location was
+					 * specified, pg_wal (or pg_xlog) has already been created
+					 * as a symbolic link before starting the actual backup.
+					 * So just ignore creation failures on related
+					 * directories.
+					 */
+					if (!((pg_str_endswith(state->filename, "/pg_wal") ||
+						   pg_str_endswith(state->filename, "/pg_xlog") ||
+						   pg_str_endswith(state->filename, "/archive_status")) &&
+						  errno == EEXIST))
+					{
+						pg_log_error("could not create directory \"%s\": %m",
+									 state->filename);
+						exit(1);
+					}
+				}
+#ifndef WIN32
+				if (chmod(state->filename, (mode_t) filemode))
+					pg_log_error("could not set permissions on directory \"%s\": %m",
+								 state->filename);
+#endif
+			}
+			else if (copybuf[156] == '2')
+			{
+				/*
+				 * Symbolic link
+				 *
+				 * It's most likely a link in pg_tblspc directory, to the
+				 * location of a tablespace. Apply any tablespace mapping
+				 * given on the command line (--tablespace-mapping). (We
+				 * blindly apply the mapping without checking that the link
+				 * really is inside pg_tblspc. We don't expect there to be
+				 * other symlinks in a data directory, but if there are, you
+				 * can call it an undocumented feature that you can map them
+				 * too.)
+				 */
+				state->filename[strlen(state->filename) - 1] = '\0';	/* Remove trailing slash */
+
+				state->mapped_tblspc_path =
+					get_tablespace_mapping(&copybuf[157]);
+				if (symlink(state->mapped_tblspc_path, state->filename) != 0)
+				{
+					pg_log_error("could not create symbolic link from \"%s\" to \"%s\": %m",
+								 state->filename, state->mapped_tblspc_path);
+					exit(1);
+				}
+			}
+			else
+			{
+				pg_log_error("unrecognized link indicator \"%c\"",
+							 copybuf[156]);
+				exit(1);
+			}
+			return;				/* directory or link handled */
+		}
+
+		/*
+		 * regular file
+		 */
+		state->file = fopen(state->filename, "wb");
+		if (!state->file)
+		{
+			pg_log_error("could not create file \"%s\": %m", state->filename);
 			exit(1);
 		}
 
-		fclose(cf);
-	}
-}
+#ifndef WIN32
+		if (chmod(state->filename, (mode_t) filemode))
+			pg_log_error("could not set permissions on file \"%s\": %m",
+						 state->filename);
+#endif
 
+		if (state->current_len_left == 0)
+		{
+			/*
+			 * Done with this file, next one will be a new tar header
+			 */
+			fclose(state->file);
+			state->file = NULL;
+			return;
+		}
+	}							/* new file */
+	else
+	{
+		/*
+		 * Continuing blocks in existing file
+		 */
+		if (state->current_len_left == 0 && r == state->current_padding)
+		{
+			/*
+			 * Received the padding block for this file, ignore it and close
+			 * the file, then move on to the next tar header.
+			 */
+			fclose(state->file);
+			state->file = NULL;
+			totaldone += r;
+			return;
+		}
+
+		if (fwrite(copybuf, r, 1, state->file) != 1)
+		{
+			pg_log_error("could not write to file \"%s\": %m", state->filename);
+			exit(1);
+		}
+		totaldone += r;
+		progress_report(state->tablespacenum, state->filename, false);
+
+		state->current_len_left -= r;
+		if (state->current_len_left == 0 && state->current_padding == 0)
+		{
+			/*
+			 * Received the last block, and there is no padding to be
+			 * expected. Close the file and move on to the next tar header.
+			 */
+			fclose(state->file);
+			state->file = NULL;
+			return;
+		}
+	}							/* continuing data in existing file */
+}
 
 static void
 BaseBackup(void)
@@ -1840,7 +1696,7 @@ BaseBackup(void)
 	 * Build contents of configuration file if requested
 	 */
 	if (writerecoveryconf)
-		GenerateRecoveryConf(conn);
+		recoveryconfcontents = GenerateRecoveryConfig(conn, replication_slot);
 
 	/*
 	 * Run IDENTIFY_SYSTEM so we can get the timeline
@@ -1943,11 +1799,11 @@ BaseBackup(void)
 	/*
 	 * Sum up the total size, for progress reporting
 	 */
-	totalsize = totaldone = 0;
+	totalsize_kb = totaldone = 0;
 	tablespacecount = PQntuples(res);
 	for (i = 0; i < PQntuples(res); i++)
 	{
-		totalsize += atol(PQgetvalue(res, i, 2));
+		totalsize_kb += atol(PQgetvalue(res, i, 2));
 
 		/*
 		 * Verify tablespace directories are empty. Don't bother with the
@@ -2139,9 +1995,9 @@ BaseBackup(void)
 
 	/*
 	 * Make data persistent on disk once backup is completed. For tar format
-	 * once syncing the parent directory is fine, each tar file created per
-	 * tablespace has been already synced. In plain format, all the data of
-	 * the base directory is synced, taking into account all the tablespaces.
+	 * sync the parent directory and all its contents as each tar file was not
+	 * synced after being completed.  In plain format, all the data of the
+	 * base directory is synced, taking into account all the tablespaces.
 	 * Errors are not considered fatal.
 	 */
 	if (do_sync)
@@ -2151,7 +2007,7 @@ BaseBackup(void)
 		if (format == 't')
 		{
 			if (strcmp(basedir, "-") != 0)
-				(void) fsync_fname(basedir, true);
+				(void) fsync_dir_recurse(basedir);
 		}
 		else
 		{
@@ -2241,7 +2097,7 @@ main(int argc, char **argv)
 					format = 't';
 				else
 				{
-					pg_log_error("invalid output format \"%s\", must be \"plain\" or \"tar\"\n",
+					pg_log_error("invalid output format \"%s\", must be \"plain\" or \"tar\"",
 								 optarg);
 					exit(1);
 				}
@@ -2313,7 +2169,7 @@ main(int argc, char **argv)
 				compresslevel = atoi(optarg);
 				if (compresslevel < 0 || compresslevel > 9)
 				{
-					pg_log_error("invalid compression level \"%s\"\n", optarg);
+					pg_log_error("invalid compression level \"%s\"", optarg);
 					exit(1);
 				}
 				break;

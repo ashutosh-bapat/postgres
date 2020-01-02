@@ -3,7 +3,7 @@
  * analyze.c
  *	  the Postgres statistics generator
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,6 +16,7 @@
 
 #include <math.h>
 
+#include "access/detoast.h"
 #include "access/genam.h"
 #include "access/multixact.h"
 #include "access/relation.h"
@@ -24,7 +25,6 @@
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/tupconvert.h"
-#include "access/tuptoaster.h"
 #include "access/visibilitymap.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -307,7 +307,8 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	VacAttrStats **vacattrstats;
 	AnlIndexData *indexdata;
 	int			targrows,
-				numrows;
+				numrows,
+				minrows;
 	double		totalrows,
 				totaldeadrows;
 	HeapTuple  *rows;
@@ -455,7 +456,8 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 						if (indexpr_item == NULL)	/* shouldn't happen */
 							elog(ERROR, "too few entries in indexprs list");
 						indexkey = (Node *) lfirst(indexpr_item);
-						indexpr_item = lnext(indexpr_item);
+						indexpr_item = lnext(indexInfo->ii_Expressions,
+											 indexpr_item);
 						thisdata->vacattrstats[tcnt] =
 							examine_attribute(Irel[ind], i + 1, indexkey);
 						if (thisdata->vacattrstats[tcnt] != NULL)
@@ -489,6 +491,16 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 				targrows = thisdata->vacattrstats[i]->minrows;
 		}
 	}
+
+	/*
+	 * Look at extended statistics objects too, as those may define custom
+	 * statistics target. So we may need to sample more rows and then build
+	 * the statistics with enough detail.
+	 */
+	minrows = ComputeExtStatisticsRows(onerel, attr_cnt, vacattrstats);
+
+	if (targrows < minrows)
+		targrows = minrows;
 
 	/*
 	 * Acquire the sample rows
@@ -573,9 +585,15 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 							thisdata->attr_cnt, thisdata->vacattrstats);
 		}
 
-		/* Build extended statistics (if there are any). */
-		BuildRelationExtStatistics(onerel, totalrows, numrows, rows, attr_cnt,
-								   vacattrstats);
+		/*
+		 * Build extended statistics (if there are any).
+		 *
+		 * For now we only build extended statistics on individual relations,
+		 * not for relations representing inheritance trees.
+		 */
+		if (!inh)
+			BuildRelationExtStatistics(onerel, totalrows, numrows, rows,
+									   attr_cnt, vacattrstats);
 	}
 
 	/*
@@ -1048,13 +1066,13 @@ acquire_sample_rows(Relation onerel, int elevel,
 			 * The first targrows sample rows are simply copied into the
 			 * reservoir. Then we start replacing tuples in the sample until
 			 * we reach the end of the relation.  This algorithm is from Jeff
-			 * Vitter's paper (see full citation below). It works by
-			 * repeatedly computing the number of tuples to skip before
-			 * selecting a tuple, which replaces a randomly chosen element of
-			 * the reservoir (current set of tuples).  At all times the
-			 * reservoir is a true random sample of the tuples we've passed
-			 * over so far, so when we fall off the end of the relation we're
-			 * done.
+			 * Vitter's paper (see full citation in utils/misc/sampling.c). It
+			 * works by repeatedly computing the number of tuples to skip
+			 * before selecting a tuple, which replaces a randomly chosen
+			 * element of the reservoir (current set of tuples).  At all times
+			 * the reservoir is a true random sample of the tuples we've
+			 * passed over so far, so when we fall off the end of the relation
+			 * we're done.
 			 */
 			if (numrows < targrows)
 				rows[numrows++] = ExecCopySlotHeapTuple(slot);
@@ -1349,8 +1367,7 @@ acquire_inherited_sample_rows(Relation onerel, int elevel,
 					TupleConversionMap *map;
 
 					map = convert_tuples_by_name(RelationGetDescr(childrel),
-												 RelationGetDescr(onerel),
-												 gettext_noop("could not convert row type"));
+												 RelationGetDescr(onerel));
 					if (map != NULL)
 					{
 						int			j;
@@ -1479,7 +1496,7 @@ update_attstats(Oid relid, bool inh, int natts, VacAttrStats **vacattrstats)
 				/* XXX knows more than it should about type float4: */
 				arry = construct_array(numdatums, nnum,
 									   FLOAT4OID,
-									   sizeof(float4), FLOAT4PASSBYVAL, 'i');
+									   sizeof(float4), true, 'i');
 				values[i++] = PointerGetDatum(arry);	/* stanumbersN */
 			}
 			else

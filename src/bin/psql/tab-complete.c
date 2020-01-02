@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2020, PostgreSQL Global Development Group
  *
  * src/bin/psql/tab-complete.c
  */
@@ -33,31 +33,34 @@
  */
 
 #include "postgres_fe.h"
-#include "tab-complete.h"
+
 #include "input.h"
+#include "tab-complete.h"
 
 /* If we don't have this, we might as well forget about the whole thing: */
 #ifdef USE_READLINE
 
 #include <ctype.h>
 
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_class_d.h"
-
+#include "common.h"
 #include "libpq-fe.h"
 #include "pqexpbuffer.h"
-#include "common.h"
 #include "settings.h"
 #include "stringutils.h"
 
-#ifdef HAVE_RL_FILENAME_COMPLETION_FUNCTION
-#define filename_completion_function rl_filename_completion_function
-#else
-/* missing in some header files */
-extern char *filename_completion_function();
+/*
+ * Ancient versions of libedit provide filename_completion_function()
+ * instead of rl_filename_completion_function().  Likewise for
+ * [rl_]completion_matches().
+ */
+#ifndef HAVE_RL_FILENAME_COMPLETION_FUNCTION
+#define rl_filename_completion_function filename_completion_function
 #endif
 
-#ifdef HAVE_RL_COMPLETION_MATCHES
-#define completion_matches rl_completion_matches
+#ifndef HAVE_RL_COMPLETION_MATCHES
+#define rl_completion_matches completion_matches
 #endif
 
 /* word break characters */
@@ -181,42 +184,45 @@ static bool completion_case_sensitive;	/* completion is case sensitive */
 #define COMPLETE_WITH_QUERY(query) \
 do { \
 	completion_charp = query; \
-	matches = completion_matches(text, complete_from_query); \
+	matches = rl_completion_matches(text, complete_from_query); \
 } while (0)
 
 #define COMPLETE_WITH_VERSIONED_QUERY(query) \
 do { \
 	completion_vquery = query; \
-	matches = completion_matches(text, complete_from_versioned_query); \
+	matches = rl_completion_matches(text, complete_from_versioned_query); \
 } while (0)
 
 #define COMPLETE_WITH_SCHEMA_QUERY(query, addon) \
 do { \
 	completion_squery = &(query); \
 	completion_charp = addon; \
-	matches = completion_matches(text, complete_from_schema_query); \
+	matches = rl_completion_matches(text, complete_from_schema_query); \
 } while (0)
 
 #define COMPLETE_WITH_VERSIONED_SCHEMA_QUERY(query, addon) \
 do { \
 	completion_squery = query; \
 	completion_vquery = addon; \
-	matches = completion_matches(text, complete_from_versioned_schema_query); \
+	matches = rl_completion_matches(text, complete_from_versioned_schema_query); \
+} while (0)
+
+/*
+ * Caution: COMPLETE_WITH_CONST is not for general-purpose use; you probably
+ * want COMPLETE_WITH() with one element, instead.
+ */
+#define COMPLETE_WITH_CONST(cs, con) \
+do { \
+	completion_case_sensitive = (cs); \
+	completion_charp = (con); \
+	matches = rl_completion_matches(text, complete_from_const); \
 } while (0)
 
 #define COMPLETE_WITH_LIST_INT(cs, list) \
 do { \
 	completion_case_sensitive = (cs); \
-	if (!(list)[1]) \
-	{ \
-		completion_charp = (list)[0]; \
-		matches = completion_matches(text, complete_from_const); \
-	} \
-	else \
-	{ \
-		completion_charpp = (list); \
-		matches = completion_matches(text, complete_from_list); \
-	} \
+	completion_charpp = (list); \
+	matches = rl_completion_matches(text, complete_from_list); \
 } while (0)
 
 #define COMPLETE_WITH_LIST(list) COMPLETE_WITH_LIST_INT(false, list)
@@ -256,7 +262,7 @@ do { \
 		completion_info_charp = _completion_table; \
 		completion_info_charp2 = _completion_schema; \
 	} \
-	matches = completion_matches(text, complete_from_query); \
+	matches = rl_completion_matches(text, complete_from_query); \
 } while (0)
 
 #define COMPLETE_WITH_ENUM_VALUE(type) \
@@ -281,7 +287,7 @@ do { \
 		completion_info_charp = _completion_type; \
 		completion_info_charp2 = _completion_schema; \
 	} \
-	matches = completion_matches(text, complete_from_query); \
+	matches = rl_completion_matches(text, complete_from_query); \
 } while (0)
 
 #define COMPLETE_WITH_FUNCTION_ARG(function) \
@@ -306,7 +312,7 @@ do { \
 		completion_info_charp = _completion_function; \
 		completion_info_charp2 = _completion_schema; \
 	} \
-	matches = completion_matches(text, complete_from_query); \
+	matches = rl_completion_matches(text, complete_from_query); \
 } while (0)
 
 /*
@@ -824,6 +830,18 @@ static const SchemaQuery Query_for_list_of_statistics = {
 "   FROM pg_catalog.pg_am "\
 "  WHERE substring(pg_catalog.quote_ident(amname),1,%d)='%s'"
 
+#define Query_for_list_of_index_access_methods \
+" SELECT pg_catalog.quote_ident(amname) "\
+"   FROM pg_catalog.pg_am "\
+"  WHERE substring(pg_catalog.quote_ident(amname),1,%d)='%s' AND "\
+"   amtype=" CppAsString2(AMTYPE_INDEX)
+
+#define Query_for_list_of_table_access_methods \
+" SELECT pg_catalog.quote_ident(amname) "\
+"   FROM pg_catalog.pg_am "\
+"  WHERE substring(pg_catalog.quote_ident(amname),1,%d)='%s' AND "\
+"   amtype=" CppAsString2(AMTYPE_TABLE)
+
 /* the silly-looking length condition is just to eat up the current word */
 #define Query_for_list_of_arguments \
 "SELECT pg_catalog.oidvectortypes(proargtypes)||')' "\
@@ -991,6 +1009,7 @@ static const pgsql_thing_t words_after_create[] = {
 	{"MATERIALIZED VIEW", NULL, NULL, &Query_for_list_of_matviews},
 	{"OPERATOR", NULL, NULL, NULL}, /* Querying for this is probably not such
 									 * a good idea. */
+	{"OR REPLACE", NULL, NULL, NULL, THING_NO_DROP | THING_NO_ALTER},
 	{"OWNED", NULL, NULL, NULL, THING_NO_CREATE | THING_NO_ALTER},	/* for DROP OWNED BY ... */
 	{"PARSER", Query_for_list_of_ts_parsers, NULL, NULL, THING_NO_SHOW},
 	{"POLICY", NULL, NULL, NULL},
@@ -1056,6 +1075,7 @@ static const char *const table_storage_parameters[] = {
 	"toast.autovacuum_vacuum_scale_factor",
 	"toast.autovacuum_vacuum_threshold",
 	"toast.log_autovacuum_min_duration",
+	"toast.vacuum_index_cleanup",
 	"toast.vacuum_truncate",
 	"toast_tuple_target",
 	"user_catalog_table",
@@ -1317,7 +1337,7 @@ ends_with(const char *s, char c)
  * According to readline spec this gets passed the text entered so far and its
  * start and end positions in the readline buffer. The return value is some
  * partially obscure list format that can be generated by readline's
- * completion_matches() function, so we don't have to worry about it.
+ * rl_completion_matches() function, so we don't have to worry about it.
  */
 static char **
 psql_completion(const char *text, int start, int end)
@@ -1421,7 +1441,7 @@ psql_completion(const char *text, int start, int end)
 		"\\t", "\\T", "\\timing",
 		"\\unset",
 		"\\x",
-		"\\w", "\\watch",
+		"\\w", "\\warn", "\\watch",
 		"\\z",
 		"\\!", "\\?",
 		NULL
@@ -1470,12 +1490,17 @@ psql_completion(const char *text, int start, int end)
 /* CREATE */
 	/* complete with something you can create */
 	else if (TailMatches("CREATE"))
-		matches = completion_matches(text, create_command_generator);
+		matches = rl_completion_matches(text, create_command_generator);
+
+	/* complete with something you can create or replace */
+	else if (TailMatches("CREATE", "OR", "REPLACE"))
+		COMPLETE_WITH("FUNCTION", "PROCEDURE", "LANGUAGE", "RULE", "VIEW",
+					  "AGGREGATE", "TRANSFORM");
 
 /* DROP, but not DROP embedded in other commands */
 	/* complete with something you can drop */
 	else if (Matches("DROP"))
-		matches = completion_matches(text, drop_command_generator);
+		matches = rl_completion_matches(text, drop_command_generator);
 
 /* ALTER */
 
@@ -1486,7 +1511,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* ALTER something */
 	else if (Matches("ALTER"))
-		matches = completion_matches(text, alter_command_generator);
+		matches = rl_completion_matches(text, alter_command_generator);
 	/* ALTER TABLE,INDEX,MATERIALIZED VIEW ALL IN TABLESPACE xxx */
 	else if (TailMatches("ALL", "IN", "TABLESPACE", MatchAny))
 		COMPLETE_WITH("SET TABLESPACE", "OWNED BY");
@@ -1669,7 +1694,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* ALTER LANGUAGE <name> */
 	else if (Matches("ALTER", "LANGUAGE", MatchAny))
-		COMPLETE_WITH("OWNER_TO", "RENAME TO");
+		COMPLETE_WITH("OWNER TO", "RENAME TO");
 
 	/* ALTER LARGE OBJECT <oid> */
 	else if (Matches("ALTER", "LARGE", "OBJECT", MatchAny))
@@ -1774,13 +1799,38 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("TO");
 	/* ALTER VIEW <name> */
 	else if (Matches("ALTER", "VIEW", MatchAny))
-		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME TO",
+		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME",
 					  "SET SCHEMA");
+	/* ALTER VIEW xxx RENAME */
+	else if (Matches("ALTER", "VIEW", MatchAny, "RENAME"))
+		COMPLETE_WITH_ATTR(prev2_wd, " UNION SELECT 'COLUMN' UNION SELECT 'TO'");
+	else if (Matches("ALTER", "VIEW", MatchAny, "ALTER|RENAME", "COLUMN"))
+		COMPLETE_WITH_ATTR(prev3_wd, "");
+	/* ALTER VIEW xxx RENAME yyy */
+	else if (Matches("ALTER", "VIEW", MatchAny, "RENAME", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+	/* ALTER VIEW xxx RENAME COLUMN yyy */
+	else if (Matches("ALTER", "VIEW", MatchAny, "RENAME", "COLUMN", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+
 	/* ALTER MATERIALIZED VIEW <name> */
 	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny))
-		COMPLETE_WITH("ALTER COLUMN", "OWNER TO", "RENAME TO",
-					  "SET SCHEMA");
-
+		COMPLETE_WITH("ALTER COLUMN", "CLUSTER ON", "DEPENDS ON EXTENSION",
+					  "OWNER TO", "RENAME", "RESET (", "SET");
+	/* ALTER MATERIALIZED VIEW xxx RENAME */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "RENAME"))
+		COMPLETE_WITH_ATTR(prev2_wd, " UNION SELECT 'COLUMN' UNION SELECT 'TO'");
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "ALTER|RENAME", "COLUMN"))
+		COMPLETE_WITH_ATTR(prev3_wd, "");
+	/* ALTER MATERIALIZED VIEW xxx RENAME yyy */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "RENAME", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+	/* ALTER MATERIALIZED VIEW xxx RENAME COLUMN yyy */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "RENAME", "COLUMN", MatchAnyExcept("TO")))
+		COMPLETE_WITH("TO");
+	/* ALTER MATERIALIZED VIEW xxx SET */
+	else if (Matches("ALTER", "MATERIALIZED", "VIEW", MatchAny, "SET"))
+		COMPLETE_WITH("(", "SCHEMA", "TABLESPACE", "WITHOUT CLUSTER");
 	/* ALTER POLICY <name> */
 	else if (Matches("ALTER", "POLICY"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_policies);
@@ -1823,7 +1873,7 @@ psql_completion(const char *text, int start, int end)
 
 	/* ALTER STATISTICS <name> */
 	else if (Matches("ALTER", "STATISTICS", MatchAny))
-		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA");
+		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA", "SET STATISTICS");
 
 	/* ALTER TRIGGER <name>, add ON */
 	else if (Matches("ALTER", "TRIGGER", MatchAny))
@@ -2213,7 +2263,7 @@ psql_completion(const char *text, int start, int end)
 			 Matches("COPY", "BINARY", MatchAny, "FROM|TO"))
 	{
 		completion_charp = "";
-		matches = completion_matches(text, complete_from_files);
+		matches = rl_completion_matches(text, complete_from_files);
 	}
 
 	/* Handle COPY [BINARY] <sth> FROM|TO filename */
@@ -2234,7 +2284,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("TYPE");
 	/* Complete "CREATE ACCESS METHOD <name> TYPE" */
 	else if (Matches("CREATE", "ACCESS", "METHOD", MatchAny, "TYPE"))
-		COMPLETE_WITH("INDEX");
+		COMPLETE_WITH("INDEX", "TABLE");
 	/* Complete "CREATE ACCESS METHOD <name> TYPE <type>" */
 	else if (Matches("CREATE", "ACCESS", "METHOD", MatchAny, "TYPE", MatchAny))
 		COMPLETE_WITH("HANDLER");
@@ -2322,11 +2372,15 @@ psql_completion(const char *text, int start, int end)
 	else if (TailMatches("INDEX", MatchAny, MatchAny, "ON", MatchAny, "USING") ||
 			 TailMatches("INDEX", MatchAny, "ON", MatchAny, "USING") ||
 			 TailMatches("INDEX", "ON", MatchAny, "USING"))
-		COMPLETE_WITH_QUERY(Query_for_list_of_access_methods);
+		COMPLETE_WITH_QUERY(Query_for_list_of_index_access_methods);
 	else if (TailMatches("ON", MatchAny, "USING", MatchAny) &&
 			 !TailMatches("POLICY", MatchAny, MatchAny, MatchAny, MatchAny, MatchAny) &&
 			 !TailMatches("FOR", MatchAny, MatchAny, MatchAny))
 		COMPLETE_WITH("(");
+
+	/* CREATE OR REPLACE */
+	else if (Matches("CREATE", "OR"))
+		COMPLETE_WITH("REPLACE");
 
 	/* CREATE POLICY */
 	/* Complete "CREATE POLICY <name> ON" */
@@ -2423,14 +2477,21 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("publish");
 
 /* CREATE RULE */
-	/* Complete "CREATE RULE <sth>" with "AS ON" */
-	else if (Matches("CREATE", "RULE", MatchAny))
+	/* Complete "CREATE [ OR REPLACE ] RULE <sth>" with "AS ON" */
+	else if (Matches("CREATE", "RULE", MatchAny) ||
+			 Matches("CREATE", "OR", "REPLACE", "RULE", MatchAny))
 		COMPLETE_WITH("AS ON");
-	/* Complete "CREATE RULE <sth> AS" with "ON" */
-	else if (Matches("CREATE", "RULE", MatchAny, "AS"))
+	/* Complete "CREATE [ OR REPLACE ] RULE <sth> AS" with "ON" */
+	else if (Matches("CREATE", "RULE", MatchAny, "AS") ||
+			 Matches("CREATE", "OR", "REPLACE", "RULE", MatchAny, "AS"))
 		COMPLETE_WITH("ON");
-	/* Complete "CREATE RULE <sth> AS ON" with SELECT|UPDATE|INSERT|DELETE */
-	else if (Matches("CREATE", "RULE", MatchAny, "AS", "ON"))
+
+	/*
+	 * Complete "CREATE [ OR REPLACE ] RULE <sth> AS ON" with
+	 * SELECT|UPDATE|INSERT|DELETE
+	 */
+	else if (Matches("CREATE", "RULE", MatchAny, "AS", "ON") ||
+			 Matches("CREATE", "OR", "REPLACE", "RULE", MatchAny, "AS", "ON"))
 		COMPLETE_WITH("SELECT", "UPDATE", "INSERT", "DELETE");
 	/* Complete "AS ON SELECT|UPDATE|INSERT|DELETE" with a "TO" */
 	else if (TailMatches("AS", "ON", "SELECT|UPDATE|INSERT|DELETE"))
@@ -2490,10 +2551,14 @@ psql_completion(const char *text, int start, int end)
 	/* Complete CREATE TABLE name (...) with supported options */
 	else if (TailMatches("CREATE", "TABLE", MatchAny, "(*)") ||
 			 TailMatches("CREATE", "UNLOGGED", "TABLE", MatchAny, "(*)"))
-		COMPLETE_WITH("INHERITS (", "PARTITION BY", "TABLESPACE", "WITH (");
+		COMPLETE_WITH("INHERITS (", "PARTITION BY", "USING", "TABLESPACE", "WITH (");
 	else if (TailMatches("CREATE", "TEMP|TEMPORARY", "TABLE", MatchAny, "(*)"))
 		COMPLETE_WITH("INHERITS (", "ON COMMIT", "PARTITION BY",
 					  "TABLESPACE", "WITH (");
+	/* Complete CREATE TABLE (...) USING with table access methods */
+	else if (TailMatches("CREATE", "TABLE", MatchAny, "(*)", "USING") ||
+			 TailMatches("CREATE", "TEMP|TEMPORARY|UNLOGGED", "TABLE", MatchAny, "(*)", "USING"))
+		COMPLETE_WITH_QUERY(Query_for_list_of_table_access_methods);
 	/* Complete CREATE TABLE (...) WITH with storage parameters */
 	else if (TailMatches("CREATE", "TABLE", MatchAny, "(*)", "WITH", "(") ||
 			 TailMatches("CREATE", "TEMP|TEMPORARY|UNLOGGED", "TABLE", MatchAny, "(*)", "WITH", "("))
@@ -2665,12 +2730,53 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("CREATE", "ROLE|USER|GROUP", MatchAny, "IN"))
 		COMPLETE_WITH("GROUP", "ROLE");
 
+/* CREATE TYPE */
+	else if (Matches("CREATE", "TYPE", MatchAny))
+		COMPLETE_WITH("(", "AS");
+	else if (Matches("CREATE", "TYPE", MatchAny, "AS"))
+		COMPLETE_WITH("ENUM", "RANGE", "(");
+	else if (HeadMatches("CREATE", "TYPE", MatchAny, "AS", "("))
+	{
+		if (TailMatches("(|*,", MatchAny))
+			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_datatypes, NULL);
+		else if (TailMatches("(|*,", MatchAny, MatchAnyExcept("*)")))
+			COMPLETE_WITH("COLLATE", ",", ")");
+	}
+	else if (Matches("CREATE", "TYPE", MatchAny, "AS", "ENUM|RANGE"))
+		COMPLETE_WITH("(");
+	else if (HeadMatches("CREATE", "TYPE", MatchAny, "("))
+	{
+		if (TailMatches("(|*,"))
+			COMPLETE_WITH("INPUT", "OUTPUT", "RECEIVE", "SEND",
+						  "TYPMOD_IN", "TYPMOD_OUT", "ANALYZE",
+						  "INTERNALLENGTH", "PASSEDBYVALUE", "ALIGNMENT",
+						  "STORAGE", "LIKE", "CATEGORY", "PREFERRED",
+						  "DEFAULT", "ELEMENT", "DELIMITER",
+						  "COLLATABLE");
+		else if (TailMatches("(*|*,", MatchAnyExcept("*=")))
+			COMPLETE_WITH("=");
+		else if (TailMatches("=", MatchAnyExcept("*)")))
+			COMPLETE_WITH(",", ")");
+	}
+	else if (HeadMatches("CREATE", "TYPE", MatchAny, "AS", "RANGE", "("))
+	{
+		if (TailMatches("(|*,"))
+			COMPLETE_WITH("SUBTYPE", "SUBTYPE_OPCLASS", "COLLATION",
+						  "CANONICAL", "SUBTYPE_DIFF");
+		else if (TailMatches("(*|*,", MatchAnyExcept("*=")))
+			COMPLETE_WITH("=");
+		else if (TailMatches("=", MatchAnyExcept("*)")))
+			COMPLETE_WITH(",", ")");
+	}
+
 /* CREATE VIEW --- is allowed inside CREATE SCHEMA, so use TailMatches */
-	/* Complete CREATE VIEW <name> with AS */
-	else if (TailMatches("CREATE", "VIEW", MatchAny))
+	/* Complete CREATE [ OR REPLACE ] VIEW <name> with AS */
+	else if (TailMatches("CREATE", "VIEW", MatchAny) ||
+			 TailMatches("CREATE", "OR", "REPLACE", "VIEW", MatchAny))
 		COMPLETE_WITH("AS");
-	/* Complete "CREATE VIEW <sth> AS with "SELECT" */
-	else if (TailMatches("CREATE", "VIEW", MatchAny, "AS"))
+	/* Complete "CREATE [ OR REPLACE ] VIEW <sth> AS with "SELECT" */
+	else if (TailMatches("CREATE", "VIEW", MatchAny, "AS") ||
+			 TailMatches("CREATE", "OR", "REPLACE", "VIEW", MatchAny, "AS"))
 		COMPLETE_WITH("SELECT");
 
 /* CREATE MATERIALIZED VIEW */
@@ -2769,6 +2875,10 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_FUNCTION_ARG(prev2_wd);
 	else if (Matches("DROP", "FOREIGN"))
 		COMPLETE_WITH("DATA WRAPPER", "TABLE");
+	else if (Matches("DROP", "DATABASE", MatchAny))
+		COMPLETE_WITH("WITH (");
+	else if (HeadMatches("DROP", "DATABASE") && (ends_with(prev_wd, '(')))
+		COMPLETE_WITH("FORCE");
 
 	/* DROP INDEX */
 	else if (Matches("DROP", "INDEX"))
@@ -2864,9 +2974,9 @@ psql_completion(const char *text, int start, int end)
 		 * one word, so the above test is correct.
 		 */
 		if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
-			COMPLETE_WITH("ANALYZE", "VERBOSE", "COSTS", "BUFFERS",
-						  "TIMING", "SUMMARY", "FORMAT");
-		else if (TailMatches("ANALYZE|VERBOSE|COSTS|BUFFERS|TIMING|SUMMARY"))
+			COMPLETE_WITH("ANALYZE", "VERBOSE", "COSTS", "SETTINGS",
+						  "BUFFERS", "TIMING", "SUMMARY", "FORMAT");
+		else if (TailMatches("ANALYZE|VERBOSE|COSTS|SETTINGS|BUFFERS|TIMING|SUMMARY"))
 			COMPLETE_WITH("ON", "OFF");
 		else if (TailMatches("FORMAT"))
 			COMPLETE_WITH("TEXT", "XML", "JSON", "YAML");
@@ -3344,8 +3454,13 @@ psql_completion(const char *text, int start, int end)
 	else if (HeadMatches("ALTER", "DATABASE|FUNCTION|PROCEDURE|ROLE|ROUTINE|USER") &&
 			 TailMatches("SET", MatchAny))
 		COMPLETE_WITH("FROM CURRENT", "TO");
-	/* Suggest possible variable values */
-	else if (TailMatches("SET", MatchAny, "TO|="))
+
+	/*
+	 * Suggest possible variable values in SET variable TO|=, along with the
+	 * preceding ALTER syntaxes.
+	 */
+	else if (TailMatches("SET", MatchAny, "TO|=") &&
+			 !TailMatches("UPDATE", MatchAny, "SET", MatchAny, "TO|="))
 	{
 		/* special cased code for individual GUCs */
 		if (TailMatches("DateStyle", "TO|="))
@@ -3363,21 +3478,29 @@ psql_completion(const char *text, int start, int end)
 			/* generic, type based, GUC support */
 			char	   *guctype = get_guctype(prev2_wd);
 
-			if (guctype && strcmp(guctype, "enum") == 0)
-			{
-				char		querybuf[1024];
-
-				snprintf(querybuf, sizeof(querybuf), Query_for_enum, prev2_wd);
-				COMPLETE_WITH_QUERY(querybuf);
-			}
-			else if (guctype && strcmp(guctype, "bool") == 0)
-				COMPLETE_WITH("on", "off", "true", "false", "yes", "no",
-							  "1", "0", "DEFAULT");
-			else
-				COMPLETE_WITH("DEFAULT");
-
+			/*
+			 * Note: if we don't recognize the GUC name, it's important to not
+			 * offer any completions, as most likely we've misinterpreted the
+			 * context and this isn't a GUC-setting command at all.
+			 */
 			if (guctype)
+			{
+				if (strcmp(guctype, "enum") == 0)
+				{
+					char		querybuf[1024];
+
+					snprintf(querybuf, sizeof(querybuf),
+							 Query_for_enum, prev2_wd);
+					COMPLETE_WITH_QUERY(querybuf);
+				}
+				else if (strcmp(guctype, "bool") == 0)
+					COMPLETE_WITH("on", "off", "true", "false", "yes", "no",
+								  "1", "0", "DEFAULT");
+				else
+					COMPLETE_WITH("DEFAULT");
+
 				free(guctype);
+			}
 		}
 	}
 
@@ -3414,7 +3537,7 @@ psql_completion(const char *text, int start, int end)
 	else if (TailMatches("UPDATE", MatchAny, "SET"))
 		COMPLETE_WITH_ATTR(prev2_wd, "");
 	/* UPDATE <table> SET <attr> = */
-	else if (TailMatches("UPDATE", MatchAny, "SET", MatchAny))
+	else if (TailMatches("UPDATE", MatchAny, "SET", MatchAnyExcept("*=")))
 		COMPLETE_WITH("=");
 
 /* USER MAPPING */
@@ -3591,9 +3714,9 @@ psql_completion(const char *text, int start, int end)
 	else if (TailMatchesCS("\\h|\\help", MatchAny))
 	{
 		if (TailMatches("DROP"))
-			matches = completion_matches(text, drop_command_generator);
+			matches = rl_completion_matches(text, drop_command_generator);
 		else if (TailMatches("ALTER"))
-			matches = completion_matches(text, alter_command_generator);
+			matches = rl_completion_matches(text, alter_command_generator);
 
 		/*
 		 * CREATE is recognized by tail match elsewhere, so doesn't need to be
@@ -3692,7 +3815,7 @@ psql_completion(const char *text, int start, int end)
 						   "\\s|\\w|\\write|\\lo_import"))
 	{
 		completion_charp = "\\";
-		matches = completion_matches(text, complete_from_files);
+		matches = rl_completion_matches(text, complete_from_files);
 	}
 
 	/*
@@ -3727,7 +3850,7 @@ psql_completion(const char *text, int start, int end)
 	 */
 	if (matches == NULL)
 	{
-		COMPLETE_WITH("");
+		COMPLETE_WITH_CONST(true, "");
 #ifdef HAVE_RL_COMPLETION_APPEND_CHARACTER
 		rl_completion_append_character = '\0';
 #endif
@@ -4157,10 +4280,21 @@ complete_from_list(const char *text, int state)
 
 /*
  * This function returns one fixed string the first time even if it doesn't
- * match what's there, and nothing the second time. This should be used if
- * there is only one possibility that can appear at a certain spot, so
- * misspellings will be overwritten.  The string to be passed must be in
- * completion_charp.
+ * match what's there, and nothing the second time.  The string
+ * to be used must be in completion_charp.
+ *
+ * If the given string is "", this has the effect of preventing readline
+ * from doing any completion.  (Without this, readline tries to do filename
+ * completion which is seldom the right thing.)
+ *
+ * If the given string is not empty, readline will replace whatever the
+ * user typed with that string.  This behavior might be useful if it's
+ * completely certain that we know what must appear at a certain spot,
+ * so that it's okay to overwrite misspellings.  In practice, given the
+ * relatively lame parsing technology used in this file, the level of
+ * certainty is seldom that high, so that you probably don't want to
+ * use this.  Use complete_from_list with a one-element list instead;
+ * that won't try to auto-correct "misspellings".
  */
 static char *
 complete_from_const(const char *text, int state)
@@ -4267,7 +4401,7 @@ complete_from_files(const char *text, int state)
 		}
 	}
 
-	unquoted_match = filename_completion_function(unquoted_text, state);
+	unquoted_match = rl_filename_completion_function(unquoted_text, state);
 	if (unquoted_match)
 	{
 		/*

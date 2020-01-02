@@ -3,7 +3,7 @@
  * genam.c
  *	  general index access method routines
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -557,8 +557,8 @@ systable_endscan(SysScanDesc sysscan)
  * we could do a heapscan and sort, but the uses are in places that
  * probably don't need to still work with corrupted catalog indexes.)
  * For the moment, therefore, these functions are merely the thinnest of
- * wrappers around index_beginscan/index_getnext.  The main reason for their
- * existence is to centralize possible future support of lossy operators
+ * wrappers around index_beginscan/index_getnext_slot.  The main reason for
+ * their existence is to centralize possible future support of lossy operators
  * in catalog scans.
  */
 SysScanDesc

@@ -3,7 +3,7 @@
  * hashpage.c
  *	  Hash table page management code for the Postgres hash access method
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,9 +32,8 @@
 #include "access/hash_xlog.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
-#include "storage/smgr.h"
 #include "storage/predicate.h"
-
+#include "storage/smgr.h"
 
 static bool _hash_alloc_buckets(Relation rel, BlockNumber firstblock,
 								uint32 nblocks);
@@ -359,7 +358,7 @@ _hash_init(Relation rel, double num_tuples, ForkNumber forkNum)
 	data_width = sizeof(uint32);
 	item_width = MAXALIGN(sizeof(IndexTupleData)) + MAXALIGN(data_width) +
 		sizeof(ItemIdData);		/* include the line pointer */
-	ffactor = RelationGetTargetPageUsage(rel, HASH_DEFAULT_FILLFACTOR) / item_width;
+	ffactor = HashGetTargetPageUsage(rel) / item_width;
 	/* keep to a sane range */
 	if (ffactor < 10)
 		ffactor = 10;
@@ -509,7 +508,7 @@ _hash_init_metabuffer(Buffer buf, double num_tuples, RegProcedure procid,
 	 * Choose the number of initial bucket pages to match the fill factor
 	 * given the estimated number of tuples.  We round up the result to the
 	 * total number of buckets which has to be allocated before using its
-	 * _hashm_spare element. However always force at least 2 bucket pages. The
+	 * hashm_spares element. However always force at least 2 bucket pages. The
 	 * upper limit is determined by considerations explained in
 	 * _hash_expandtable().
 	 */
@@ -1510,7 +1509,7 @@ _hash_getcachedmetap(Relation rel, Buffer *metabuf, bool force_refresh)
 		 * It's important that we don't set rd_amcache to an invalid value.
 		 * Either MemoryContextAlloc or _hash_getbuf could fail, so don't
 		 * install a pointer to the newly-allocated storage in the actual
-		 * relcache entry until both have succeeeded.
+		 * relcache entry until both have succeeded.
 		 */
 		if (rel->rd_amcache == NULL)
 			cache = MemoryContextAlloc(rel->rd_indexcxt,

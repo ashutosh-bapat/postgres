@@ -58,26 +58,32 @@ sub pgbench
 	return;
 }
 
-# Test concurrent insertion into table with serial column.  This
-# indirectly exercises LWLock and spinlock concurrency.  This test
-# makes a 5-MiB table.
+# tablespace for testing, because partitioned tables cannot use pg_default
+# explicitly and we want to test that table creation with tablespace works
+# for partitioned tables.
+my $ts = $node->basedir . '/regress_pgbench_tap_1_ts_dir';
+mkdir $ts or die "cannot create directory $ts";
+# this takes care of WIN-specific path issues
+my $ets = TestLib::perl2host($ts);
 
+# the next commands will issue a syntax error if the path contains a "'"
 $node->safe_psql('postgres',
-	'CREATE UNLOGGED TABLE insert_tbl (id serial primary key); ');
+       "CREATE TABLESPACE regress_pgbench_tap_1_ts LOCATION '$ets';"
+);
 
+# Test concurrent OID generation via pg_enum_oid_index.  This indirectly
+# exercises LWLock and spinlock concurrency.
+my $labels = join ',', map { "'l$_'" } 1 .. 1000;
 pgbench(
 	'--no-vacuum --client=5 --protocol=prepared --transactions=25',
 	0,
 	[qr{processed: 125/125}],
 	[qr{^$}],
-	'concurrent insert workload',
+	'concurrent OID generation',
 	{
 		'001_pgbench_concurrent_insert' =>
-		  'INSERT INTO insert_tbl SELECT FROM generate_series(1,1000);'
+		  "CREATE TYPE pg_temp.e AS ENUM ($labels); DROP TYPE pg_temp.e;"
 	});
-
-# cleanup
-$node->safe_psql('postgres', 'DROP TABLE insert_tbl;');
 
 # Trigger various connection errors
 pgbench(
@@ -101,37 +107,41 @@ pgbench(
 	[qr{^$}],
 	[
 		qr{creating tables},       qr{vacuuming},
-		qr{creating primary keys}, qr{done\.}
+		qr{creating primary keys}, qr{done in \d+\.\d\d s }
 	],
 	'pgbench scale 1 initialization',);
 
 # Again, with all possible options
 pgbench(
-	'--initialize --init-steps=dtpvg --scale=1 --unlogged-tables --fillfactor=98 --foreign-keys --quiet --tablespace=pg_default --index-tablespace=pg_default',
+	'--initialize --init-steps=dtpvg --scale=1 --unlogged-tables --fillfactor=98 --foreign-keys --quiet --tablespace=regress_pgbench_tap_1_ts --index-tablespace=regress_pgbench_tap_1_ts --partitions=2 --partition-method=hash',
 	0,
 	[qr{^$}i],
 	[
 		qr{dropping old tables},
 		qr{creating tables},
+		qr{creating 2 partitions},
 		qr{vacuuming},
 		qr{creating primary keys},
 		qr{creating foreign keys},
-		qr{done\.}
+		qr{(?!vacuuming)}, # no vacuum
+		qr{done in \d+\.\d\d s }
 	],
 	'pgbench scale 1 initialization');
 
 # Test interaction of --init-steps with legacy step-selection options
 pgbench(
-	'--initialize --init-steps=dtpvgvv --no-vacuum --foreign-keys --unlogged-tables',
+	'--initialize --init-steps=dtpvGvv --no-vacuum --foreign-keys --unlogged-tables --partitions=3',
 	0,
 	[qr{^$}],
 	[
 		qr{dropping old tables},
 		qr{creating tables},
+		qr{creating 3 partitions},
 		qr{creating primary keys},
-		qr{.* of .* tuples \(.*\) done},
+		qr{generating data \(server-side\)},
 		qr{creating foreign keys},
-		qr{done\.}
+		qr{(?!vacuuming)}, # no vacuum
+		qr{done in \d+\.\d\d s }
 	],
 	'pgbench --init-steps');
 
@@ -259,6 +269,49 @@ SELECT abalance::INTEGER AS balance
 COMMIT;
 }
 	});
+
+# Verify server logging of parameters.
+$node->append_conf('postgresql.conf', "log_parameters_on_error = true");
+$node->reload;
+pgbench(
+		'-n -t1 -c1 -M prepared',
+		2,
+		[],
+		[
+		qr{ERROR:  division by zero},
+		qr{CONTEXT:  extended query with parameters: \$1 = '1', \$2 = NULL}
+		],
+		'server parameter logging',
+		{
+			'001_param_1' => q{select '1' as one \gset
+SELECT 1 / (random() / 2)::int, :one::int, :two::int;
+}
+	});
+
+$node->append_conf('postgresql.conf', "log_min_duration_statement = 0");
+$node->reload;
+pgbench(
+		'-n -t1 -c1 -M prepared',
+		2,
+		[],
+		[
+		qr{ERROR:  invalid input syntax for type json},
+		qr[CONTEXT:  JSON data, line 1: \{ invalid\.\.\.[\r\n]+extended query with parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que \.\.\.']m
+		],
+		'server parameter logging',
+		{
+			'001_param_2' => q[select '{ invalid ' as value \gset
+select $$'Valame Dios!' dijo Sancho; 'no le dije yo a vuestra merced que mirase bien lo que hacia?'$$ as long \gset
+select column1::jsonb from (values (:value), (:long)) as q;
+]
+	});
+my $log = TestLib::slurp_file($node->logfile);
+like($log, qr[DETAIL:  parameters: \$1 = '\{ invalid ', \$2 = '''Valame Dios!'' dijo Sancho; ''no le dije yo a vuestra merced que mirase bien lo que hacia\?'''],
+	 "parameter report does not truncate");
+$log = undef;
+
+$node->append_conf('postgresql.conf', "log_min_duration_statement = -1");
+$node->reload;
 
 # test expressions
 # command 1..3 and 23 depend on random seed which is used to call srandom.
@@ -517,7 +570,7 @@ pgbench(
 		qr{processed: 1/1},
 		qr{shell-echo-output}
 	],
-	[qr{command=8.: int 2\b}],
+	[qr{command=8.: int 1\b}],
 	'pgbench backslash commands',
 	{
 		'001_pgbench_backslash_commands' => q{-- run set
@@ -529,10 +582,10 @@ pgbench(
 \sleep 0 s
 \sleep :zero
 -- setshell and continuation
-\setshell two\
-  expr \
-    1 + :one
-\set n debug(:two)
+\setshell another_one\
+  echo \
+    :one
+\set n debug(:another_one)
 -- shell
 \shell echo shell-echo-output
 }
@@ -915,5 +968,6 @@ check_pgbench_logs($bdir, '001_pgbench_log_3', 1, 10, 10,
 	qr{^\d \d{1,2} \d+ \d \d+ \d+$});
 
 # done
+$node->safe_psql('postgres', 'DROP TABLESPACE regress_pgbench_tap_1_ts');
 $node->stop;
 done_testing();

@@ -13,7 +13,7 @@
  * estimates are already available in pg_statistic.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -27,14 +27,14 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_statistic_ext.h"
-#include "utils/fmgrprotos.h"
-#include "utils/lsyscache.h"
+#include "catalog/pg_statistic_ext_data.h"
 #include "lib/stringinfo.h"
-#include "utils/syscache.h"
-#include "utils/typcache.h"
 #include "statistics/extended_stats_internal.h"
 #include "statistics/statistics.h"
-
+#include "utils/fmgrprotos.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
+#include "utils/typcache.h"
 
 static double ndistinct_for_combination(double totalrows, int numrows,
 										HeapTuple *rows, VacAttrStats **stats,
@@ -145,12 +145,12 @@ statext_ndistinct_load(Oid mvoid)
 	Datum		ndist;
 	HeapTuple	htup;
 
-	htup = SearchSysCache1(STATEXTOID, ObjectIdGetDatum(mvoid));
+	htup = SearchSysCache1(STATEXTDATASTXOID, ObjectIdGetDatum(mvoid));
 	if (!HeapTupleIsValid(htup))
 		elog(ERROR, "cache lookup failed for statistics object %u", mvoid);
 
-	ndist = SysCacheGetAttr(STATEXTOID, htup,
-							Anum_pg_statistic_ext_stxndistinct, &isnull);
+	ndist = SysCacheGetAttr(STATEXTDATASTXOID, htup,
+							Anum_pg_statistic_ext_data_stxdndistinct, &isnull);
 	if (isnull)
 		elog(ERROR,
 			 "requested statistic kind \"%c\" is not yet built for statistics object %u",
@@ -274,27 +274,19 @@ statext_ndistinct_deserialize(bytea *data)
 	tmp += sizeof(uint32);
 
 	if (ndist.magic != STATS_NDISTINCT_MAGIC)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg("invalid ndistinct magic %08x (expected %08x)",
-						ndist.magic, STATS_NDISTINCT_MAGIC)));
+		elog(ERROR, "invalid ndistinct magic %08x (expected %08x)",
+			 ndist.magic, STATS_NDISTINCT_MAGIC);
 	if (ndist.type != STATS_NDISTINCT_TYPE_BASIC)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg("invalid ndistinct type %d (expected %d)",
-						ndist.type, STATS_NDISTINCT_TYPE_BASIC)));
+		elog(ERROR, "invalid ndistinct type %d (expected %d)",
+			 ndist.type, STATS_NDISTINCT_TYPE_BASIC);
 	if (ndist.nitems == 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg("invalid zero-length item array in MVNDistinct")));
+		elog(ERROR, "invalid zero-length item array in MVNDistinct");
 
 	/* what minimum bytea size do we expect for those parameters */
 	minimum_size = MinSizeOfItems(ndist.nitems);
 	if (VARSIZE_ANY_EXHDR(data) < minimum_size)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_CORRUPTED),
-				 errmsg("invalid MVNDistinct size %zd (expected at least %zd)",
-						VARSIZE_ANY_EXHDR(data), minimum_size)));
+		elog(ERROR, "invalid MVNDistinct size %zd (expected at least %zd)",
+			 VARSIZE_ANY_EXHDR(data), minimum_size);
 
 	/*
 	 * Allocate space for the ndistinct items (no space for each item's
@@ -346,7 +338,7 @@ statext_ndistinct_deserialize(bytea *data)
  *		input routine for type pg_ndistinct
  *
  * pg_ndistinct is real enough to be a table column, but it has no
- * operations of its own, and disallows input (jus like pg_node_tree).
+ * operations of its own, and disallows input (just like pg_node_tree).
  */
 Datum
 pg_ndistinct_in(PG_FUNCTION_ARGS)
@@ -484,7 +476,7 @@ ndistinct_for_combination(double totalrows, int numrows, HeapTuple *rows,
 				 colstat->attrtypid);
 
 		/* prepare the sort function for this dimension */
-		multi_sort_add_dimension(mss, i, type->lt_opr, type->typcollation);
+		multi_sort_add_dimension(mss, i, type->lt_opr, colstat->attrcollid);
 
 		/* accumulate all the data for this dimension into the arrays */
 		for (j = 0; j < numrows; j++)

@@ -3,7 +3,7 @@
  * nodeModifyTable.c
  *	  routines to handle ModifyTable nodes.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -236,7 +236,7 @@ ExecCheckTIDVisible(EState *estate,
 	if (!IsolationUsesXactSnapshot())
 		return;
 
-	if (!table_fetch_row_version(rel, tid, SnapshotAny, tempSlot))
+	if (!table_tuple_fetch_row_version(rel, tid, SnapshotAny, tempSlot))
 		elog(ERROR, "failed to fetch conflicting tuple for ON CONFLICT");
 	ExecCheckTupleVisible(estate, rel, tempSlot);
 	ExecClearTuple(tempSlot);
@@ -411,7 +411,6 @@ ExecInsert(ModifyTableState *mtstate,
 		 * them.
 		 */
 		slot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
-
 	}
 	else
 	{
@@ -544,11 +543,11 @@ ExecInsert(ModifyTableState *mtstate,
 			specToken = SpeculativeInsertionLockAcquire(GetCurrentTransactionId());
 
 			/* insert the tuple, with the speculative token */
-			table_insert_speculative(resultRelationDesc, slot,
-									 estate->es_output_cid,
-									 0,
-									 NULL,
-									 specToken);
+			table_tuple_insert_speculative(resultRelationDesc, slot,
+										   estate->es_output_cid,
+										   0,
+										   NULL,
+										   specToken);
 
 			/* insert index entries for tuple */
 			recheckIndexes = ExecInsertIndexTuples(slot, estate, true,
@@ -556,8 +555,8 @@ ExecInsert(ModifyTableState *mtstate,
 												   arbiterIndexes);
 
 			/* adjust the tuple's state accordingly */
-			table_complete_speculative(resultRelationDesc, slot,
-									   specToken, !specConflict);
+			table_tuple_complete_speculative(resultRelationDesc, slot,
+											 specToken, !specConflict);
 
 			/*
 			 * Wake up anyone waiting for our decision.  They will re-check
@@ -584,9 +583,9 @@ ExecInsert(ModifyTableState *mtstate,
 		else
 		{
 			/* insert the tuple normally */
-			table_insert(resultRelationDesc, slot,
-						 estate->es_output_cid,
-						 0, NULL);
+			table_tuple_insert(resultRelationDesc, slot,
+							   estate->es_output_cid,
+							   0, NULL);
 
 			/* insert index entries for tuple */
 			if (resultRelInfo->ri_NumIndices > 0)
@@ -766,13 +765,13 @@ ExecDelete(ModifyTableState *mtstate,
 		 * mode transactions.
 		 */
 ldelete:;
-		result = table_delete(resultRelationDesc, tupleid,
-							  estate->es_output_cid,
-							  estate->es_snapshot,
-							  estate->es_crosscheck_snapshot,
-							  true /* wait for commit */ ,
-							  &tmfd,
-							  changingPart);
+		result = table_tuple_delete(resultRelationDesc, tupleid,
+									estate->es_output_cid,
+									estate->es_snapshot,
+									estate->es_crosscheck_snapshot,
+									true /* wait for commit */ ,
+									&tmfd,
+									changingPart);
 
 		switch (result)
 		{
@@ -828,11 +827,11 @@ ldelete:;
 					 * Already know that we're going to need to do EPQ, so
 					 * fetch tuple directly into the right slot.
 					 */
-					EvalPlanQualBegin(epqstate, estate);
+					EvalPlanQualBegin(epqstate);
 					inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 												 resultRelInfo->ri_RangeTableIndex);
 
-					result = table_lock_tuple(resultRelationDesc, tupleid,
+					result = table_tuple_lock(resultRelationDesc, tupleid,
 											  estate->es_snapshot,
 											  inputslot, estate->es_output_cid,
 											  LockTupleExclusive, LockWaitBlock,
@@ -843,8 +842,7 @@ ldelete:;
 					{
 						case TM_Ok:
 							Assert(tmfd.traversed);
-							epqslot = EvalPlanQual(estate,
-												   epqstate,
+							epqslot = EvalPlanQual(epqstate,
 												   resultRelationDesc,
 												   resultRelInfo->ri_RangeTableIndex,
 												   inputslot);
@@ -875,7 +873,7 @@ ldelete:;
 							 * out.
 							 *
 							 * See also TM_SelfModified response to
-							 * table_delete() above.
+							 * table_tuple_delete() above.
 							 */
 							if (tmfd.cmax != estate->es_output_cid)
 								ereport(ERROR,
@@ -900,7 +898,7 @@ ldelete:;
 							 * locking the latest version via
 							 * TUPLE_LOCK_FLAG_FIND_LAST_VERSION.
 							 */
-							elog(ERROR, "unexpected table_lock_tuple status: %u",
+							elog(ERROR, "unexpected table_tuple_lock status: %u",
 								 result);
 							return NULL;
 					}
@@ -918,7 +916,8 @@ ldelete:;
 				return NULL;
 
 			default:
-				elog(ERROR, "unrecognized table_delete status: %u", result);
+				elog(ERROR, "unrecognized table_tuple_delete status: %u",
+					 result);
 				return NULL;
 		}
 
@@ -990,8 +989,8 @@ ldelete:;
 			}
 			else
 			{
-				if (!table_fetch_row_version(resultRelationDesc, tupleid,
-											 SnapshotAny, slot))
+				if (!table_tuple_fetch_row_version(resultRelationDesc, tupleid,
+												   SnapshotAny, slot))
 					elog(ERROR, "failed to fetch deleted tuple for DELETE RETURNING");
 			}
 		}
@@ -1134,7 +1133,7 @@ ExecUpdate(ModifyTableState *mtstate,
 		 * If we generate a new candidate tuple after EvalPlanQual testing, we
 		 * must loop back here and recheck any RLS policies and constraints.
 		 * (We don't need to redo triggers, however.  If there are any BEFORE
-		 * triggers then trigger.c will have done table_lock_tuple to lock the
+		 * triggers then trigger.c will have done table_tuple_lock to lock the
 		 * correct tuple, so there's no need to do them again.)
 		 */
 lreplace:;
@@ -1309,12 +1308,12 @@ lreplace:;
 		 * needed for referential integrity updates in transaction-snapshot
 		 * mode transactions.
 		 */
-		result = table_update(resultRelationDesc, tupleid, slot,
-							  estate->es_output_cid,
-							  estate->es_snapshot,
-							  estate->es_crosscheck_snapshot,
-							  true /* wait for commit */ ,
-							  &tmfd, &lockmode, &update_indexes);
+		result = table_tuple_update(resultRelationDesc, tupleid, slot,
+									estate->es_output_cid,
+									estate->es_snapshot,
+									estate->es_crosscheck_snapshot,
+									true /* wait for commit */ ,
+									&tmfd, &lockmode, &update_indexes);
 
 		switch (result)
 		{
@@ -1369,11 +1368,10 @@ lreplace:;
 					 * Already know that we're going to need to do EPQ, so
 					 * fetch tuple directly into the right slot.
 					 */
-					EvalPlanQualBegin(epqstate, estate);
 					inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 												 resultRelInfo->ri_RangeTableIndex);
 
-					result = table_lock_tuple(resultRelationDesc, tupleid,
+					result = table_tuple_lock(resultRelationDesc, tupleid,
 											  estate->es_snapshot,
 											  inputslot, estate->es_output_cid,
 											  lockmode, LockWaitBlock,
@@ -1385,8 +1383,7 @@ lreplace:;
 						case TM_Ok:
 							Assert(tmfd.traversed);
 
-							epqslot = EvalPlanQual(estate,
-												   epqstate,
+							epqslot = EvalPlanQual(epqstate,
 												   resultRelationDesc,
 												   resultRelInfo->ri_RangeTableIndex,
 												   inputslot);
@@ -1412,7 +1409,7 @@ lreplace:;
 							 * otherwise error out.
 							 *
 							 * See also TM_SelfModified response to
-							 * table_update() above.
+							 * table_tuple_update() above.
 							 */
 							if (tmfd.cmax != estate->es_output_cid)
 								ereport(ERROR,
@@ -1422,8 +1419,8 @@ lreplace:;
 							return NULL;
 
 						default:
-							/* see table_lock_tuple call in ExecDelete() */
-							elog(ERROR, "unexpected table_lock_tuple status: %u",
+							/* see table_tuple_lock call in ExecDelete() */
+							elog(ERROR, "unexpected table_tuple_lock status: %u",
 								 result);
 							return NULL;
 					}
@@ -1440,7 +1437,8 @@ lreplace:;
 				return NULL;
 
 			default:
-				elog(ERROR, "unrecognized table_update status: %u", result);
+				elog(ERROR, "unrecognized table_tuple_update status: %u",
+					 result);
 				return NULL;
 		}
 
@@ -1521,7 +1519,7 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 	 * previous conclusion that the tuple is conclusively committed is not
 	 * true anymore.
 	 */
-	test = table_lock_tuple(relation, conflictTid,
+	test = table_tuple_lock(relation, conflictTid,
 							estate->es_snapshot,
 							existing, estate->es_output_cid,
 							lockmode, LockWaitBlock, 0,
@@ -1612,7 +1610,7 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 			return false;
 
 		default:
-			elog(ERROR, "unrecognized table_lock_tuple status: %u", test);
+			elog(ERROR, "unrecognized table_tuple_lock status: %u", test);
 	}
 
 	/* Success, the tuple is locked. */
@@ -1677,7 +1675,7 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 
 	/*
 	 * Note that it is possible that the target tuple has been modified in
-	 * this session, after the above table_lock_tuple. We choose to not error
+	 * this session, after the above table_tuple_lock. We choose to not error
 	 * out in that case, in line with ExecUpdate's treatment of similar cases.
 	 * This can happen if an UPDATE is triggered from within ExecQual(),
 	 * ExecWithCheckOptions() or ExecProject() above, e.g. by selecting from a
@@ -1957,8 +1955,7 @@ ExecSetupChildParentMapForSubplan(ModifyTableState *mtstate)
 	{
 		mtstate->mt_per_subplan_tupconv_maps[i] =
 			convert_tuples_by_name(RelationGetDescr(resultRelInfos[i].ri_RelationDesc),
-								   outdesc,
-								   gettext_noop("could not convert row type"));
+								   outdesc);
 	}
 }
 
@@ -2012,7 +2009,7 @@ ExecModifyTable(PlanState *pstate)
 	 * case it is within a CTE subplan.  Hence this test must be here, not in
 	 * ExecInitModifyTable.)
 	 */
-	if (estate->es_epqTupleSlot != NULL)
+	if (estate->es_epq_active != NULL)
 		elog(ERROR, "ModifyTable should not be called during EvalPlanQual");
 
 	/*
@@ -2314,7 +2311,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	 * verify that the proposed target relations are valid and open their
 	 * indexes for insertion of new index entries.  Note we *must* set
 	 * estate->es_result_relation_info correctly while we initialize each
-	 * sub-plan; ExecContextForcesOids depends on that!
+	 * sub-plan; external modules such as FDWs may depend on that (see
+	 * contrib/postgres_fdw/postgres_fdw.c: postgresBeginDirectModify() as one
+	 * example).
 	 */
 	saved_resultRelInfo = estate->es_result_relation_info;
 
@@ -2527,9 +2526,6 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		econtext = mtstate->ps.ps_ExprContext;
 		relationDesc = resultRelInfo->ri_RelationDesc->rd_att;
 
-		/* carried forward solely for the benefit of explain */
-		mtstate->mt_excludedtlist = node->exclRelTlist;
-
 		/* create state for DO UPDATE SET operation */
 		resultRelInfo->ri_onConflict = makeNode(OnConflictSetState);
 
@@ -2538,11 +2534,16 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 			table_slot_create(resultRelInfo->ri_RelationDesc,
 							  &mtstate->ps.state->es_tupleTable);
 
-		/* create the tuple slot for the UPDATE SET projection */
+		/*
+		 * Create the tuple slot for the UPDATE SET projection. We want a slot
+		 * of the table's type here, because the slot will be used to insert
+		 * into the table, and for RETURNING processing - which may access
+		 * system attributes.
+		 */
 		tupDesc = ExecTypeFromTL((List *) node->onConflictSet);
 		resultRelInfo->ri_onConflict->oc_ProjSlot =
 			ExecInitExtraTupleSlot(mtstate->ps.state, tupDesc,
-								   &TTSOpsVirtual);
+								   table_slot_callbacks(resultRelInfo->ri_RelationDesc));
 
 		/* build UPDATE SET projection state */
 		resultRelInfo->ri_onConflict->oc_ProjInfo =

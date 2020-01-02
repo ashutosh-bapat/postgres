@@ -8,7 +8,7 @@
  * stepping on each others' toes.  Formerly we used table-level locks
  * on pg_database, but that's too coarse-grained.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,6 +26,7 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/multixact.h"
 #include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xloginsert.h"
@@ -52,8 +53,8 @@
 #include "replication/slot.h"
 #include "storage/copydir.h"
 #include "storage/fd.h"
-#include "storage/lmgr.h"
 #include "storage/ipc.h"
+#include "storage/lmgr.h"
 #include "storage/md.h"
 #include "storage/procarray.h"
 #include "storage/smgr.h"
@@ -63,7 +64,6 @@
 #include "utils/pg_locale.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
 
 typedef struct
 {
@@ -103,14 +103,14 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	Relation	rel;
 	Oid			src_dboid;
 	Oid			src_owner;
-	int			src_encoding;
-	char	   *src_collate;
-	char	   *src_ctype;
+	int			src_encoding = -1;
+	char	   *src_collate = NULL;
+	char	   *src_ctype = NULL;
 	bool		src_istemplate;
 	bool		src_allowconn;
-	Oid			src_lastsysoid;
-	TransactionId src_frozenxid;
-	MultiXactId src_minmxid;
+	Oid			src_lastsysoid = InvalidOid;
+	TransactionId src_frozenxid = InvalidTransactionId;
+	MultiXactId src_minmxid = InvalidMultiXactId;
 	Oid			src_deftablespace;
 	volatile Oid dst_deftablespace;
 	Relation	pg_database_rel;
@@ -124,6 +124,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 	DefElem    *downer = NULL;
 	DefElem    *dtemplate = NULL;
 	DefElem    *dencoding = NULL;
+	DefElem    *dlocale = NULL;
 	DefElem    *dcollate = NULL;
 	DefElem    *dctype = NULL;
 	DefElem    *distemplate = NULL;
@@ -183,6 +184,15 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 						 errmsg("conflicting or redundant options"),
 						 parser_errposition(pstate, defel->location)));
 			dencoding = defel;
+		}
+		else if (strcmp(defel->defname, "locale") == 0)
+		{
+			if (dlocale)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
+			dlocale = defel;
 		}
 		else if (strcmp(defel->defname, "lc_collate") == 0)
 		{
@@ -244,6 +254,12 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 					 parser_errposition(pstate, defel->location)));
 	}
 
+	if (dlocale && (dcollate || dctype))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("conflicting or redundant options"),
+				 errdetail("LOCALE cannot be specified together with LC_COLLATE or LC_CTYPE.")));
+
 	if (downer && downer->arg)
 		dbowner = defGetString(downer);
 	if (dtemplate && dtemplate->arg)
@@ -275,6 +291,11 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 								encoding_name),
 						 parser_errposition(pstate, dencoding->location)));
 		}
+	}
+	if (dlocale && dlocale->arg)
+	{
+		dbcollate = defGetString(dlocale);
+		dbctype = defGetString(dlocale);
 	}
 	if (dcollate && dcollate->arg)
 		dbcollate = defGetString(dcollate);
@@ -469,6 +490,16 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 		dst_deftablespace = src_deftablespace;
 		/* Note there is no additional permission check in this path */
 	}
+
+	/*
+	 * If built with appropriate switch, whine when regression-testing
+	 * conventions for database names are violated.  But don't complain during
+	 * initdb.
+	 */
+#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
+	if (IsUnderPostmaster && strstr(dbname, "regression") == NULL)
+		elog(WARNING, "databases created by regression test cases should have names including \"regression\"");
+#endif
 
 	/*
 	 * Check for db name conflict.  This is just to give a more friendly error
@@ -779,7 +810,7 @@ createdb_failure_callback(int code, Datum arg)
  * DROP DATABASE
  */
 void
-dropdb(const char *dbname, bool missing_ok)
+dropdb(const char *dbname, bool missing_ok, bool force)
 {
 	Oid			db_id;
 	bool		db_istemplate;
@@ -865,19 +896,6 @@ dropdb(const char *dbname, bool missing_ok)
 	}
 
 	/*
-	 * Check for other backends in the target database.  (Because we hold the
-	 * database lock, no new ones can start after this.)
-	 *
-	 * As in CREATE DATABASE, check this after other error conditions.
-	 */
-	if (CountOtherDBBackends(db_id, &notherbackends, &npreparedxacts))
-		ereport(ERROR,
-				(errcode(ERRCODE_OBJECT_IN_USE),
-				 errmsg("database \"%s\" is being accessed by other users",
-						dbname),
-				 errdetail_busy_db(notherbackends, npreparedxacts)));
-
-	/*
 	 * Check if there are subscriptions defined in the target database.
 	 *
 	 * We can't drop them automatically because they might be holding
@@ -891,6 +909,27 @@ dropdb(const char *dbname, bool missing_ok)
 				 errdetail_plural("There is %d subscription.",
 								  "There are %d subscriptions.",
 								  nsubscriptions, nsubscriptions)));
+
+
+	/*
+	 * Attempt to terminate all existing connections to the target database if
+	 * the user has requested to do so.
+	 */
+	if (force)
+		TerminateOtherDBBackends(db_id);
+
+	/*
+	 * Check for other backends in the target database.  (Because we hold the
+	 * database lock, no new ones can start after this.)
+	 *
+	 * As in CREATE DATABASE, check this after other error conditions.
+	 */
+	if (CountOtherDBBackends(db_id, &notherbackends, &npreparedxacts))
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_IN_USE),
+				 errmsg("database \"%s\" is being accessed by other users",
+						dbname),
+				 errdetail_busy_db(notherbackends, npreparedxacts)));
 
 	/*
 	 * Remove the database's tuple from pg_database.
@@ -1007,6 +1046,15 @@ RenameDatabase(const char *oldname, const char *newname)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied to rename database")));
+
+	/*
+	 * If built with appropriate switch, whine when regression-testing
+	 * conventions for database names are violated.
+	 */
+#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
+	if (strstr(newname, "regression") == NULL)
+		elog(WARNING, "databases created by regression test cases should have names including \"regression\"");
+#endif
 
 	/*
 	 * Make sure the new name doesn't exist.  See notes for same error in
@@ -1363,10 +1411,11 @@ movedb(const char *dbname, const char *tblspcname)
 		xl_dbase_drop_rec xlrec;
 
 		xlrec.db_id = db_id;
-		xlrec.tablespace_id = src_tblspcoid;
+		xlrec.ntablespaces = 1;
 
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, sizeof(xl_dbase_drop_rec));
+		XLogRegisterData((char *) &src_tblspcoid, sizeof(Oid));
 
 		(void) XLogInsert(RM_DBASE_ID,
 						  XLOG_DBASE_DROP | XLR_SPECIAL_REL_UPDATE);
@@ -1390,6 +1439,30 @@ movedb_failure_callback(int code, Datum arg)
 	(void) rmtree(dstpath, true);
 }
 
+/*
+ * Process options and call dropdb function.
+ */
+void
+DropDatabase(ParseState *pstate, DropdbStmt *stmt)
+{
+	bool		force = false;
+	ListCell   *lc;
+
+	foreach(lc, stmt->options)
+	{
+		DefElem    *opt = (DefElem *) lfirst(lc);
+
+		if (strcmp(opt->defname, "force") == 0)
+			force = true;
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("unrecognized DROP DATABASE option \"%s\"", opt->defname),
+					 parser_errposition(pstate, opt->location)));
+	}
+
+	dropdb(stmt->dbname, stmt->missing_ok, force);
+}
 
 /*
  * ALTER DATABASE name ...
@@ -1814,7 +1887,7 @@ get_db_info(const char *name, LOCKMODE lockmode,
 				/* limit of frozen XIDs */
 				if (dbFrozenXidP)
 					*dbFrozenXidP = dbform->datfrozenxid;
-				/* minimum MultixactId */
+				/* minimum MultiXactId */
 				if (dbMinMultiP)
 					*dbMinMultiP = dbform->datminmxid;
 				/* default tablespace for this database */
@@ -1874,6 +1947,11 @@ remove_dbtablespaces(Oid db_id)
 	Relation	rel;
 	TableScanDesc scan;
 	HeapTuple	tuple;
+	List		*ltblspc = NIL;
+	ListCell	*cell;
+	int		ntblspc;
+	int		i;
+	Oid		*tablespace_ids;
 
 	rel = table_open(TableSpaceRelationId, AccessShareLock);
 	scan = table_beginscan_catalog(rel, 0, NULL);
@@ -1902,22 +1980,40 @@ remove_dbtablespaces(Oid db_id)
 					(errmsg("some useless files may be left behind in old database directory \"%s\"",
 							dstpath)));
 
-		/* Record the filesystem change in XLOG */
-		{
-			xl_dbase_drop_rec xlrec;
-
-			xlrec.db_id = db_id;
-			xlrec.tablespace_id = dsttablespace;
-
-			XLogBeginInsert();
-			XLogRegisterData((char *) &xlrec, sizeof(xl_dbase_drop_rec));
-
-			(void) XLogInsert(RM_DBASE_ID,
-							  XLOG_DBASE_DROP | XLR_SPECIAL_REL_UPDATE);
-		}
-
+		ltblspc = lappend_oid(ltblspc, dsttablespace);
 		pfree(dstpath);
 	}
+
+	ntblspc = list_length(ltblspc);
+	if (ntblspc == 0)
+	{
+		table_endscan(scan);
+		table_close(rel, AccessShareLock);
+		return;
+	}
+
+	tablespace_ids = (Oid *) palloc(ntblspc * sizeof(Oid));
+	i = 0;
+	foreach(cell, ltblspc)
+		tablespace_ids[i++] = lfirst_oid(cell);
+
+	/* Record the filesystem change in XLOG */
+	{
+		xl_dbase_drop_rec xlrec;
+
+		xlrec.db_id = db_id;
+		xlrec.ntablespaces = ntblspc;
+
+		XLogBeginInsert();
+		XLogRegisterData((char *) &xlrec, MinSizeOfDbaseDropRec);
+		XLogRegisterData((char *) tablespace_ids, ntblspc * sizeof(Oid));
+
+		(void) XLogInsert(RM_DBASE_ID,
+						  XLOG_DBASE_DROP | XLR_SPECIAL_REL_UPDATE);
+	}
+
+	list_free(ltblspc);
+	pfree(tablespace_ids);
 
 	table_endscan(scan);
 	table_close(rel, AccessShareLock);
@@ -2125,8 +2221,7 @@ dbase_redo(XLogReaderState *record)
 	{
 		xl_dbase_drop_rec *xlrec = (xl_dbase_drop_rec *) XLogRecGetData(record);
 		char	   *dst_path;
-
-		dst_path = GetDatabasePath(xlrec->db_id, xlrec->tablespace_id);
+		int			i;
 
 		if (InHotStandby)
 		{
@@ -2156,11 +2251,17 @@ dbase_redo(XLogReaderState *record)
 		/* Clean out the xlog relcache too */
 		XLogDropDatabase(xlrec->db_id);
 
-		/* And remove the physical files */
-		if (!rmtree(dst_path, true))
-			ereport(WARNING,
-					(errmsg("some useless files may be left behind in old database directory \"%s\"",
-							dst_path)));
+		for (i = 0; i < xlrec->ntablespaces; i++)
+		{
+			dst_path = GetDatabasePath(xlrec->db_id, xlrec->tablespace_ids[i]);
+
+			/* And remove the physical files */
+			if (!rmtree(dst_path, true))
+				ereport(WARNING,
+						(errmsg("some useless files may be left behind in old database directory \"%s\"",
+								dst_path)));
+			pfree(dst_path);
+		}
 
 		if (InHotStandby)
 		{

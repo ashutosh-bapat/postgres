@@ -733,7 +733,12 @@ my %tests = (
 			\QALTER TABLE ONLY dump_test.measurement ATTACH PARTITION dump_test_second_schema.measurement_y2006m2 \E
 			\QFOR VALUES FROM ('2006-02-01') TO ('2006-03-01');\E\n
 			/xm,
-		like => { binary_upgrade => 1, },
+		like => {
+			%full_runs,
+			role             => 1,
+			section_pre_data => 1,
+			binary_upgrade   => 1,
+		},
 	  },
 
 	'ALTER TABLE test_table CLUSTER ON test_table_pkey' => {
@@ -1371,8 +1376,8 @@ my %tests = (
 	'CREATE COLLATION test0 FROM "C"' => {
 		create_order => 76,
 		create_sql   => 'CREATE COLLATION test0 FROM "C";',
-		regexp       => qr/^
-		  \QCREATE COLLATION public.test0 (provider = libc, locale = 'C');\E/xm,
+		regexp       =>
+		  qr/CREATE COLLATION public.test0 \(provider = libc, locale = 'C'(, version = '[^']*')?\);/m,
 		collation => 1,
 		like      => { %full_runs, section_pre_data => 1, },
 	},
@@ -1399,6 +1404,15 @@ my %tests = (
 		regexp       => qr/^
 			\QCREATE DATABASE dump_test WITH TEMPLATE = template0 \E
 			.+;/xm,
+		like => { pg_dumpall_dbprivs => 1, },
+	},
+
+	"CREATE DATABASE dump_test2 LOCALE = 'C'" => {
+		create_order => 47,
+		create_sql   => "CREATE DATABASE dump_test2 LOCALE = 'C' TEMPLATE = template0;",
+		regexp       => qr/^
+			\QCREATE DATABASE dump_test2 \E.*\QLOCALE = 'C';\E
+			/xm,
 		like => { pg_dumpall_dbprivs => 1, },
 	},
 
@@ -1552,6 +1566,35 @@ my %tests = (
 			\QFUNCTION 1 (bigint, bigint) btint8cmp(bigint,bigint) ,\E\n\s+
 			\QFUNCTION 2 (bigint, bigint) btint8sortsupport(internal);\E
 			/xm,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+    # verify that a custom operator/opclass/range type is dumped in right order
+	'CREATE OPERATOR CLASS dump_test.op_class_custom' => {
+		create_order => 74,
+		create_sql   => 'CREATE OPERATOR dump_test.~~ (
+							 PROCEDURE = int4eq,
+							 LEFTARG = int,
+							 RIGHTARG = int);
+						 CREATE OPERATOR CLASS dump_test.op_class_custom
+							 FOR TYPE int USING btree AS
+							 OPERATOR 3 dump_test.~~;
+						 CREATE TYPE dump_test.range_type_custom AS RANGE (
+							 subtype = int,
+							 subtype_opclass = dump_test.op_class_custom);',
+		regexp => qr/^
+			\QCREATE OPERATOR dump_test.~~ (\E\n.+
+			\QCREATE OPERATOR FAMILY dump_test.op_class_custom USING btree;\E\n.+
+			\QCREATE OPERATOR CLASS dump_test.op_class_custom\E\n\s+
+			\QFOR TYPE integer USING btree FAMILY dump_test.op_class_custom AS\E\n\s+
+			\QOPERATOR 3 dump_test.~~(integer,integer);\E\n.+
+			\QCREATE TYPE dump_test.range_type_custom AS RANGE (\E\n\s+
+			\Qsubtype = integer,\E\n\s+
+			\Qsubtype_opclass = dump_test.op_class_custom\E\n
+			\Q);\E
+			/xms,
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
 		unlike => { exclude_dump_test_schema => 1, },
@@ -2283,9 +2326,9 @@ my %tests = (
 	'CREATE TABLE measurement PARTITIONED BY' => {
 		create_order => 90,
 		create_sql   => 'CREATE TABLE dump_test.measurement (
-						city_id int not null,
+						city_id serial not null,
 						logdate date not null,
-						peaktemp int,
+						peaktemp int CHECK (peaktemp >= -460),
 						unitsales int
 					   ) PARTITION BY RANGE (logdate);',
 		regexp => qr/^
@@ -2295,7 +2338,8 @@ my %tests = (
 			\s+\Qcity_id integer NOT NULL,\E\n
 			\s+\Qlogdate date NOT NULL,\E\n
 			\s+\Qpeaktemp integer,\E\n
-			\s+\Qunitsales integer\E\n
+			\s+\Qunitsales integer,\E\n
+			\s+\QCONSTRAINT measurement_peaktemp_check CHECK ((peaktemp >= '-460'::integer))\E\n
 			\)\n
 			\QPARTITION BY RANGE (logdate);\E\n
 			/xm,
@@ -2307,7 +2351,7 @@ my %tests = (
 		},
 	},
 
-	'CREATE TABLE measurement_y2006m2 PARTITION OF' => {
+	'Partition measurement_y2006m2 creation' => {
 		create_order => 91,
 		create_sql =>
 		  'CREATE TABLE dump_test_second_schema.measurement_y2006m2
@@ -2316,19 +2360,47 @@ my %tests = (
 						)
 						FOR VALUES FROM (\'2006-02-01\') TO (\'2006-03-01\');',
 		regexp => qr/^
-			\Q-- Name: measurement_y2006m2;\E.*\n
-			\Q--\E\n\n
-			\QCREATE TABLE dump_test_second_schema.measurement_y2006m2 PARTITION OF dump_test.measurement (\E\n
+			\QCREATE TABLE dump_test_second_schema.measurement_y2006m2 (\E\n
+			\s+\Qcity_id integer DEFAULT nextval('dump_test.measurement_city_id_seq'::regclass) NOT NULL,\E\n
+			\s+\Qlogdate date NOT NULL,\E\n
+			\s+\Qpeaktemp integer,\E\n
+			\s+\Qunitsales integer DEFAULT 0,\E\n
+			\s+\QCONSTRAINT measurement_peaktemp_check CHECK ((peaktemp >= '-460'::integer)),\E\n
 			\s+\QCONSTRAINT measurement_y2006m2_unitsales_check CHECK ((unitsales >= 0))\E\n
-			\)\n
-			\QFOR VALUES FROM ('2006-02-01') TO ('2006-03-01');\E\n
+			\);\n
 			/xm,
 		like => {
 			%full_runs,
-			role             => 1,
 			section_pre_data => 1,
+			role             => 1,
+			binary_upgrade   => 1,
 		},
-		unlike => { binary_upgrade => 1, },
+	},
+
+	'Creation of row-level trigger in partitioned table' => {
+		create_order => 92,
+		create_sql   => 'CREATE TRIGGER test_trigger
+		   AFTER INSERT ON dump_test.measurement
+		   FOR EACH ROW EXECUTE PROCEDURE dump_test.trigger_func()',
+		regexp => qr/^
+			\QCREATE TRIGGER test_trigger AFTER INSERT ON dump_test.measurement \E
+			\QFOR EACH ROW \E
+			\QEXECUTE FUNCTION dump_test.trigger_func();\E
+			/xm,
+		like => {
+			%full_runs, %dump_test_schema_runs, section_post_data => 1,
+		},
+		unlike => {
+			exclude_dump_test_schema => 1,
+		},
+	},
+
+	# this shouldn't ever get emitted
+	'Creation of row-level trigger in partition' => {
+		regexp => qr/^
+			\QCREATE TRIGGER test_trigger AFTER INSERT ON dump_test_second_schema.measurement\E
+			/xm,
+		like => {},
 	},
 
 	'CREATE TABLE test_fourth_table_zero_col' => {
@@ -2432,6 +2504,46 @@ my %tests = (
 		unlike => { exclude_dump_test_schema => 1, },
 	},
 
+	'CREATE TABLE test_inheritance_parent' => {
+		create_order => 90,
+		create_sql   => 'CREATE TABLE dump_test.test_inheritance_parent (
+						   col1 int NOT NULL,
+						   col2 int CHECK (col2 >= 42)
+						 );',
+		regexp => qr/^
+		\QCREATE TABLE dump_test.test_inheritance_parent (\E\n
+		\s+\Qcol1 integer NOT NULL,\E\n
+		\s+\Qcol2 integer,\E\n
+		\s+\QCONSTRAINT test_inheritance_parent_col2_check CHECK ((col2 >= 42))\E\n
+		\Q);\E\n
+		/xm,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_pre_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+	'CREATE TABLE test_inheritance_child' => {
+		create_order => 91,
+		create_sql   => 'CREATE TABLE dump_test.test_inheritance_child (
+						    col1 int NOT NULL,
+						    CONSTRAINT test_inheritance_child CHECK (col2 >= 142857)
+						) INHERITS (dump_test.test_inheritance_parent);',
+		regexp => qr/^
+		\QCREATE TABLE dump_test.test_inheritance_child (\E\n
+		\s+\Qcol1 integer,\E\n
+		\s+\QCONSTRAINT test_inheritance_child CHECK ((col2 >= 142857))\E\n
+		\)\n
+		\QINHERITS (dump_test.test_inheritance_parent);\E\n
+		/xm,
+		like => {
+			%full_runs, %dump_test_schema_runs, section_pre_data => 1,
+		},
+		unlike => {
+			binary_upgrade           => 1,
+			exclude_dump_test_schema => 1,
+		},
+	},
+
 	'CREATE STATISTICS extended_stats_no_options' => {
 		create_order => 97,
 		create_sql   => 'CREATE STATISTICS dump_test.test_ext_stats_no_options
@@ -2450,6 +2562,17 @@ my %tests = (
 							(ndistinct) ON col1, col2 FROM dump_test.test_fifth_table',
 		regexp => qr/^
 			\QCREATE STATISTICS dump_test.test_ext_stats_opts (ndistinct) ON col1, col2 FROM dump_test.test_fifth_table;\E
+		    /xms,
+		like =>
+		  { %full_runs, %dump_test_schema_runs, section_post_data => 1, },
+		unlike => { exclude_dump_test_schema => 1, },
+	},
+
+	'ALTER STATISTICS extended_stats_options' => {
+		create_order => 98,
+		create_sql   => 'ALTER STATISTICS dump_test.test_ext_stats_opts SET STATISTICS 1000',
+		regexp => qr/^
+			\QALTER STATISTICS dump_test.test_ext_stats_opts SET STATISTICS 1000;\E
 		    /xms,
 		like =>
 		  { %full_runs, %dump_test_schema_runs, section_post_data => 1, },
@@ -3131,7 +3254,7 @@ my %tests = (
 	# AM occurs. To achieve that we create a table with the standard
 	# AM, test AM, standard AM. That guarantees that there needs to be
 	# a SET interspersed.  Then use a regex that prevents interspersed
-	# SET ...; statements, followed by the exptected CREATE TABLE. Not
+	# SET ...; statements, followed by the expected CREATE TABLE. Not
 	# pretty, but seems hard to do better in this framework.
 	'CREATE TABLE regress_pg_dump_table_am' => {
 		create_order => 12,
@@ -3340,22 +3463,22 @@ command_fails_like(
 # Test dumping a non-existent schema, table, and patterns with --strict-names
 
 command_fails_like(
-	[ 'pg_dump', '-p', "$port", '-n', 'nonexistant' ],
+	[ 'pg_dump', '-p', "$port", '-n', 'nonexistent' ],
 	qr/\Qpg_dump: error: no matching schemas were found\E/,
 	'dumping a non-existent schema');
 
 command_fails_like(
-	[ 'pg_dump', '-p', "$port", '-t', 'nonexistant' ],
+	[ 'pg_dump', '-p', "$port", '-t', 'nonexistent' ],
 	qr/\Qpg_dump: error: no matching tables were found\E/,
 	'dumping a non-existent table');
 
 command_fails_like(
-	[ 'pg_dump', '-p', "$port", '--strict-names', '-n', 'nonexistant*' ],
+	[ 'pg_dump', '-p', "$port", '--strict-names', '-n', 'nonexistent*' ],
 	qr/\Qpg_dump: error: no matching schemas were found for pattern\E/,
 	'no matching schemas');
 
 command_fails_like(
-	[ 'pg_dump', '-p', "$port", '--strict-names', '-t', 'nonexistant*' ],
+	[ 'pg_dump', '-p', "$port", '--strict-names', '-t', 'nonexistent*' ],
 	qr/\Qpg_dump: error: no matching tables were found for pattern\E/,
 	'no matching tables');
 

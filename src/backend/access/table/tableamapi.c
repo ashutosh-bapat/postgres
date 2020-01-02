@@ -3,7 +3,7 @@
  * tableamapi.c
  *		Support routines for API for Postgres table access methods
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/table/tableamapi.c
@@ -18,6 +18,7 @@
 #include "catalog/pg_am.h"
 #include "catalog/pg_proc.h"
 #include "commands/defrem.h"
+#include "miscadmin.h"
 #include "utils/fmgroids.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
@@ -50,6 +51,7 @@ GetTableAmRoutine(Oid amhandler)
 	Assert(routine->scan_begin != NULL);
 	Assert(routine->scan_end != NULL);
 	Assert(routine->scan_rescan != NULL);
+	Assert(routine->scan_getnextslot != NULL);
 
 	Assert(routine->parallelscan_estimate != NULL);
 	Assert(routine->parallelscan_initialize != NULL);
@@ -61,7 +63,10 @@ GetTableAmRoutine(Oid amhandler)
 	Assert(routine->index_fetch_tuple != NULL);
 
 	Assert(routine->tuple_fetch_row_version != NULL);
+	Assert(routine->tuple_tid_valid != NULL);
+	Assert(routine->tuple_get_latest_tid != NULL);
 	Assert(routine->tuple_satisfies_snapshot != NULL);
+	Assert(routine->compute_xid_horizon_for_tuples != NULL);
 
 	Assert(routine->tuple_insert != NULL);
 
@@ -88,10 +93,11 @@ GetTableAmRoutine(Oid amhandler)
 	Assert(routine->index_validate_scan != NULL);
 
 	Assert(routine->relation_size != NULL);
+	Assert(routine->relation_needs_toast_table != NULL);
 
 	Assert(routine->relation_estimate_size != NULL);
 
-	/* optional, but one callback implies presence of hte other */
+	/* optional, but one callback implies presence of the other */
 	Assert((routine->scan_bitmap_next_block == NULL) ==
 		   (routine->scan_bitmap_next_tuple == NULL));
 	Assert(routine->scan_sample_next_block != NULL);
@@ -106,7 +112,8 @@ check_default_table_access_method(char **newval, void **extra, GucSource source)
 {
 	if (**newval == '\0')
 	{
-		GUC_check_errdetail("default_table_access_method may not be empty.");
+		GUC_check_errdetail("%s cannot be empty.",
+							"default_table_access_method");
 		return false;
 	}
 
@@ -118,10 +125,11 @@ check_default_table_access_method(char **newval, void **extra, GucSource source)
 	}
 
 	/*
-	 * If we aren't inside a transaction, we cannot do database access so
-	 * cannot verify the name.  Must accept the value on faith.
+	 * If we aren't inside a transaction, or not connected to a database, we
+	 * cannot do the catalog access necessary to verify the method.  Must
+	 * accept the value on faith.
 	 */
-	if (IsTransactionState())
+	if (IsTransactionState() && MyDatabaseId != InvalidOid)
 	{
 		if (!OidIsValid(get_table_am_oid(*newval, true)))
 		{

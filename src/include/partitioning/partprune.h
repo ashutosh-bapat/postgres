@@ -4,7 +4,7 @@
  *	  prototypes for partprune.c
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/partitioning/partprune.h
@@ -41,7 +41,7 @@ struct RelOptInfo;
  *					subsidiary data, such as the FmgrInfos.
  * planstate		Points to the parent plan node's PlanState when called
  *					during execution; NULL when called from the planner.
- * exprstates		Array of ExprStates, indexed as per PruneCtxStateIdx; one
+ * exprstates		Array of ExprStates, indexed as per PruneCxtStateIdx; one
  *					for each partition key in each pruning step.  Allocated if
  *					planstate is non-NULL, otherwise NULL.
  */
@@ -60,10 +60,10 @@ typedef struct PartitionPruneContext
 } PartitionPruneContext;
 
 /*
- * PruneCxtStateIdx() computes the correct index into the stepcmpfuncs[],
- * exprstates[] and exprhasexecparam[] arrays for step step_id and
- * partition key column keyno.  (Note: there is code that assumes the
- * entries for a given step are sequential, so this is not chosen freely.)
+ * PruneCxtStateIdx() computes the correct index into the stepcmpfuncs[]
+ * and exprstates[] arrays for step step_id and partition key column keyno.
+ * (Note: there is code that assumes the entries for a given step are
+ * sequential, so this is not chosen freely.)
  */
 #define PruneCxtStateIdx(partnatts, step_id, keyno) \
 	((partnatts) * (step_id) + (keyno))

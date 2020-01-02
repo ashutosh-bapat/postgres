@@ -3,7 +3,7 @@
  * bufmgr.c
  *	  buffer manager interface routines
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -438,7 +438,8 @@ static void PinBuffer_Locked(BufferDesc *buf);
 static void UnpinBuffer(BufferDesc *buf, bool fixOwner);
 static void BufferSync(int flags);
 static uint32 WaitBufHdrUnlocked(BufferDesc *buf);
-static int	SyncOneBuffer(int buf_id, bool skip_recently_used, WritebackContext *flush_context);
+static int	SyncOneBuffer(int buf_id, bool skip_recently_used,
+						  WritebackContext *wb_context);
 static void WaitIO(BufferDesc *buf);
 static bool StartBufferIO(BufferDesc *buf, bool forInput);
 static void TerminateBufferIO(BufferDesc *buf, bool clear_dirty,
@@ -1207,7 +1208,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 			LWLockAcquire(newPartitionLock, LW_EXCLUSIVE);
 			/* remember we have no old-partition lock or tag */
 			oldPartitionLock = NULL;
-			/* this just keeps the compiler quiet about uninit variables */
+			/* keep the compiler quiet about uninitialized variables */
 			oldHash = 0;
 		}
 
@@ -1851,6 +1852,10 @@ BufferSync(int flags)
 		}
 
 		UnlockBufHdr(bufHdr, buf_state);
+
+		/* Check for barrier events in case NBuffers is large. */
+		if (ProcSignalBarrierPending)
+			ProcessProcSignalBarrier();
 	}
 
 	if (num_to_scan == 0)
@@ -1929,6 +1934,10 @@ BufferSync(int flags)
 		}
 
 		s->num_to_scan++;
+
+		/* Check for barrier events. */
+		if (ProcSignalBarrierPending)
+			ProcessProcSignalBarrier();
 	}
 
 	Assert(num_spaces > 0);
@@ -2017,6 +2026,8 @@ BufferSync(int flags)
 
 		/*
 		 * Sleep to throttle our I/O rate.
+		 *
+		 * (This will check for barrier events even if it doesn't sleep.)
 		 */
 		CheckpointWriteDelay(flags, (double) num_processed / num_to_scan);
 	}
@@ -2346,7 +2357,7 @@ BgBufferSync(WritebackContext *wb_context)
  *	BUF_REUSABLE: buffer is available for replacement, ie, it has
  *		pin count 0 and usage count 0.
  *
- * (BUF_WRITTEN could be set in error if FlushBuffers finds the buffer clean
+ * (BUF_WRITTEN could be set in error if FlushBuffer finds the buffer clean
  * after locking it, but we don't care all that much.)
  *
  * Note: caller must have done ResourceOwnerEnlargeBuffers.
@@ -2900,7 +2911,7 @@ BufferGetLSNAtomic(Buffer buffer)
  *		DropRelFileNodeBuffers
  *
  *		This function removes from the buffer pool all the pages of the
- *		specified relation fork that have block numbers >= firstDelBlock.
+ *		specified relation forks that have block numbers >= firstDelBlock.
  *		(In particular, with firstDelBlock = 0, all pages are removed.)
  *		Dirty pages are simply dropped, without bothering to write them
  *		out first.  Therefore, this is NOT rollback-able, and so should be
@@ -2923,16 +2934,21 @@ BufferGetLSNAtomic(Buffer buffer)
  * --------------------------------------------------------------------
  */
 void
-DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber forkNum,
-					   BlockNumber firstDelBlock)
+DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber *forkNum,
+					   int nforks, BlockNumber *firstDelBlock)
 {
 	int			i;
+	int			j;
 
 	/* If it's a local relation, it's localbuf.c's problem. */
 	if (RelFileNodeBackendIsTemp(rnode))
 	{
 		if (rnode.backend == MyBackendId)
-			DropRelFileNodeLocalBuffers(rnode.node, forkNum, firstDelBlock);
+		{
+			for (j = 0; j < nforks; j++)
+				DropRelFileNodeLocalBuffers(rnode.node, forkNum[j],
+											firstDelBlock[j]);
+		}
 		return;
 	}
 
@@ -2961,11 +2977,18 @@ DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber forkNum,
 			continue;
 
 		buf_state = LockBufHdr(bufHdr);
-		if (RelFileNodeEquals(bufHdr->tag.rnode, rnode.node) &&
-			bufHdr->tag.forkNum == forkNum &&
-			bufHdr->tag.blockNum >= firstDelBlock)
-			InvalidateBuffer(bufHdr);	/* releases spinlock */
-		else
+
+		for (j = 0; j < nforks; j++)
+		{
+			if (RelFileNodeEquals(bufHdr->tag.rnode, rnode.node) &&
+				bufHdr->tag.forkNum == forkNum[j] &&
+				bufHdr->tag.blockNum >= firstDelBlock[j])
+			{
+				InvalidateBuffer(bufHdr); /* releases spinlock */
+				break;
+			}
+		}
+		if (j >= nforks)
 			UnlockBufHdr(bufHdr, buf_state);
 	}
 }

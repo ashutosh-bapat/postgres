@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/pgevent
 #
-# Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Copyright (c) 1996-2020, PostgreSQL Global Development Group
 #
 #-------------------------------------------------------------------------
 
@@ -16,7 +16,9 @@ include $(top_builddir)/src/Makefile.global
 
 ifeq ($(PORTNAME), win32)
 
-OBJS=pgevent.o pgmsgevent.o
+OBJS = \
+	pgevent.o \
+	pgmsgevent.o
 NAME=pgevent
 
 SHLIB_LINK =

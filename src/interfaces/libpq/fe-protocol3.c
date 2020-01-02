@@ -3,7 +3,7 @@
  * fe-protocol3.c
  *	  functions that are specific to frontend/backend protocol version 3
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,12 +17,6 @@
 #include <ctype.h>
 #include <fcntl.h>
 
-#include "libpq-fe.h"
-#include "libpq-int.h"
-
-#include "mb/pg_wchar.h"
-#include "port/pg_bswap.h"
-
 #ifdef WIN32
 #include "win32.h"
 #else
@@ -32,6 +26,10 @@
 #endif
 #endif
 
+#include "libpq-fe.h"
+#include "libpq-int.h"
+#include "mb/pg_wchar.h"
+#include "port/pg_bswap.h"
 
 /*
  * This macro lists the backend message types that could be "long" (more
@@ -317,8 +315,8 @@ pqParseInput3(PGconn *conn)
 					 *
 					 * If we're doing a Describe, we have to pass something
 					 * back to the client, so set up a COMMAND_OK result,
-					 * instead of TUPLES_OK.  Otherwise we can just ignore
-					 * this message.
+					 * instead of PGRES_TUPLES_OK.  Otherwise we can just
+					 * ignore this message.
 					 */
 					if (conn->queryclass == PGQUERY_DESCRIBE)
 					{
@@ -996,7 +994,7 @@ pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
 	/* If we couldn't allocate a PGresult, just say "out of memory" */
 	if (res == NULL)
 	{
-		appendPQExpBuffer(msg, libpq_gettext("out of memory\n"));
+		appendPQExpBufferStr(msg, libpq_gettext("out of memory\n"));
 		return;
 	}
 
@@ -1009,7 +1007,7 @@ pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
 		if (res->errMsg && res->errMsg[0])
 			appendPQExpBufferStr(msg, res->errMsg);
 		else
-			appendPQExpBuffer(msg, libpq_gettext("no error message available\n"));
+			appendPQExpBufferStr(msg, libpq_gettext("no error message available\n"));
 		return;
 	}
 

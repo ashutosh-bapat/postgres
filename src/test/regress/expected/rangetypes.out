@@ -519,7 +519,7 @@ select numrange(1.0, 2.0) * numrange(2.5, 3.0);
 (1 row)
 
 create table numrange_test2(nr numrange);
-create index numrange_test2_hash_idx on numrange_test2 (nr);
+create index numrange_test2_hash_idx on numrange_test2 using hash (nr);
 INSERT INTO numrange_test2 VALUES('[, 5)');
 INSERT INTO numrange_test2 VALUES(numrange(1.1, 2.2));
 INSERT INTO numrange_test2 VALUES(numrange(1.1, 2.2));
@@ -650,6 +650,30 @@ select daterange('2000-01-10'::date, '2000-01-11'::date, '(]');
         daterange        
 -------------------------
  [01-11-2000,01-12-2000)
+(1 row)
+
+select daterange('-infinity'::date, '2000-01-01'::date, '()');
+       daterange        
+------------------------
+ (-infinity,01-01-2000)
+(1 row)
+
+select daterange('-infinity'::date, '2000-01-01'::date, '[)');
+       daterange        
+------------------------
+ [-infinity,01-01-2000)
+(1 row)
+
+select daterange('2000-01-01'::date, 'infinity'::date, '[)');
+       daterange       
+-----------------------
+ [01-01-2000,infinity)
+(1 row)
+
+select daterange('2000-01-01'::date, 'infinity'::date, '[]');
+       daterange       
+-----------------------
+ [01-01-2000,infinity]
 (1 row)
 
 -- test GiST index that's been built incrementally
@@ -1351,6 +1375,9 @@ select *, row_to_json(upper(t)) as u from
  ["(5,6)","(7,8)") | {"a":7,"b":8}
 (2 rows)
 
+-- this must be rejected to avoid self-inclusion issues:
+alter type two_ints add attribute c two_ints_range;
+ERROR:  composite type two_ints cannot be made a member of itself
 drop type two_ints cascade;
 NOTICE:  drop cascades to type two_ints_range
 --

@@ -3,7 +3,7 @@
  * pg_depend.c
  *	  routines to support manipulation of the pg_depend relation
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -705,10 +705,11 @@ sequenceIsOwned(Oid seqId, char deptype, Oid *tableId, int32 *colId)
 
 /*
  * Collect a list of OIDs of all sequences owned by the specified relation,
- * and column if specified.
+ * and column if specified.  If deptype is not zero, then only find sequences
+ * with the specified dependency type.
  */
-List *
-getOwnedSequences(Oid relid, AttrNumber attnum)
+static List *
+getOwnedSequences_internal(Oid relid, AttrNumber attnum, char deptype)
 {
 	List	   *result = NIL;
 	Relation	depRel;
@@ -750,7 +751,8 @@ getOwnedSequences(Oid relid, AttrNumber attnum)
 			(deprec->deptype == DEPENDENCY_AUTO || deprec->deptype == DEPENDENCY_INTERNAL) &&
 			get_rel_relkind(deprec->objid) == RELKIND_SEQUENCE)
 		{
-			result = lappend_oid(result, deprec->objid);
+			if (!deptype || deprec->deptype == deptype)
+				result = lappend_oid(result, deprec->objid);
 		}
 	}
 
@@ -762,25 +764,40 @@ getOwnedSequences(Oid relid, AttrNumber attnum)
 }
 
 /*
- * Get owned sequence, error if not exactly one.
+ * Collect a list of OIDs of all sequences owned (identity or serial) by the
+ * specified relation.
+ */
+List *
+getOwnedSequences(Oid relid)
+{
+	return getOwnedSequences_internal(relid, 0, 0);
+}
+
+/*
+ * Get owned identity sequence, error if not exactly one.
  */
 Oid
-getOwnedSequence(Oid relid, AttrNumber attnum)
+getIdentitySequence(Oid relid, AttrNumber attnum, bool missing_ok)
 {
-	List	   *seqlist = getOwnedSequences(relid, attnum);
+	List	   *seqlist = getOwnedSequences_internal(relid, attnum, DEPENDENCY_INTERNAL);
 
 	if (list_length(seqlist) > 1)
 		elog(ERROR, "more than one owned sequence found");
 	else if (list_length(seqlist) < 1)
-		elog(ERROR, "no owned sequence found");
+	{
+		if (missing_ok)
+			return InvalidOid;
+		else
+			elog(ERROR, "no owned sequence found");
+	}
 
 	return linitial_oid(seqlist);
 }
 
 /*
  * get_constraint_index
- *		Given the OID of a unique or primary-key constraint, return the
- *		OID of the underlying unique index.
+ *		Given the OID of a unique, primary-key, or exclusion constraint,
+ *		return the OID of the underlying index.
  *
  * Return InvalidOid if the index couldn't be found; this suggests the
  * given OID is bogus, but we leave it to caller to decide what to do.
@@ -827,10 +844,13 @@ get_constraint_index(Oid constraintId)
 		{
 			char		relkind = get_rel_relkind(deprec->objid);
 
-			/* This is pure paranoia; there shouldn't be any such */
+			/*
+			 * This is pure paranoia; there shouldn't be any other relkinds
+			 * dependent on a constraint.
+			 */
 			if (relkind != RELKIND_INDEX &&
 				relkind != RELKIND_PARTITIONED_INDEX)
-				break;
+				continue;
 
 			indexId = deprec->objid;
 			break;
@@ -845,8 +865,9 @@ get_constraint_index(Oid constraintId)
 
 /*
  * get_index_constraint
- *		Given the OID of an index, return the OID of the owning unique or
- *		primary-key constraint, or InvalidOid if no such constraint.
+ *		Given the OID of an index, return the OID of the owning unique,
+ *		primary-key, or exclusion constraint, or InvalidOid if there
+ *		is no owning constraint.
  */
 Oid
 get_index_constraint(Oid indexId)

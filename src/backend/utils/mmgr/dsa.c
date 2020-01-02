@@ -39,7 +39,7 @@
  * empty and be returned to the free page manager, and whole segments can
  * become empty and be returned to the operating system.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -2235,8 +2235,8 @@ check_for_freed_segments(dsa_area *area)
 
 	/*
 	 * Any other process that has freed a segment has incremented
-	 * free_segment_counter while holding an LWLock, and that must precede any
-	 * backend creating a new segment in the same slot while holding an
+	 * freed_segment_counter while holding an LWLock, and that must precede
+	 * any backend creating a new segment in the same slot while holding an
 	 * LWLock, and that must precede the creation of any dsa_pointer pointing
 	 * into the new segment which might reach us here, and the caller must
 	 * have sent the dsa_pointer to this process using appropriate memory
@@ -2258,7 +2258,7 @@ check_for_freed_segments(dsa_area *area)
 }
 
 /*
- * Workhorse for check_for_free_segments(), and also used directly in path
+ * Workhorse for check_for_freed_segments(), and also used directly in path
  * where the area lock is already held.  This should be called after acquiring
  * the lock but before looking up any segment by index number, to make sure we
  * unmap any stale segments that might have previously had the same index as a

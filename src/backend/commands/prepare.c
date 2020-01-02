@@ -7,7 +7,7 @@
  * accessed via the extended FE/BE query protocol.
  *
  *
- * Copyright (c) 2002-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/prepare.c
@@ -143,7 +143,7 @@ PrepareQuery(PrepareStmt *stmt, const char *queryString,
 	}
 
 	/*
-	 * grammar only allows OptimizableStmt, so this check should be redundant
+	 * grammar only allows PreparableStmt, so this check should be redundant
 	 */
 	switch (query->commandType)
 	{
@@ -381,7 +381,8 @@ EvaluateParams(PreparedStatement *pstmt, List *params,
 							i + 1,
 							format_type_be(given_type_id),
 							format_type_be(expected_type_id)),
-					 errhint("You will need to rewrite or cast the expression.")));
+					 errhint("You will need to rewrite or cast the expression."),
+					 parser_errposition(pstate, exprLocation(lfirst(l)))));
 
 		/* Take care of collations in the finished expression. */
 		assign_expr_collations(pstate, expr);
@@ -682,7 +683,7 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 		/* No need for CommandCounterIncrement, as ExplainOnePlan did it */
 
 		/* Separate plans with an appropriate separator */
-		if (lnext(p) != NULL)
+		if (lnext(plan_list, p) != NULL)
 			ExplainSeparatePlans(es);
 	}
 
@@ -713,8 +714,7 @@ pg_prepared_statement(PG_FUNCTION_ARGS)
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* need to build tuplestore in query context */
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;

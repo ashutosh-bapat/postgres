@@ -3,7 +3,7 @@
  * plpgsql.h		- Definitions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,6 +21,7 @@
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "utils/expandedrecord.h"
+#include "utils/typcache.h"
 
 
 /**********************************************************************
@@ -206,6 +207,10 @@ typedef struct PLpgSQL_type
 	Oid			collation;		/* from pg_type, but can be overridden */
 	bool		typisarray;		/* is "true" array, or domain over one */
 	int32		atttypmod;		/* typmod (taken from someplace else) */
+	/* Remaining fields are used only for named composite types (not RECORD) */
+	TypeName   *origtypname;	/* type name as written by user */
+	TypeCacheEntry *tcache;		/* typcache entry for composite type */
+	uint64		tupdesc_id;		/* last-seen tupdesc identifier */
 } PLpgSQL_type;
 
 /*
@@ -229,6 +234,7 @@ typedef struct PLpgSQL_expr
 	int			expr_simple_generation; /* plancache generation we checked */
 	Oid			expr_simple_type;	/* result type Oid, if simple */
 	int32		expr_simple_typmod; /* result typmod, if simple */
+	bool		expr_simple_mutable;	/* true if simple expr is mutable */
 
 	/*
 	 * if expr is simple AND prepared in current transaction,
@@ -371,6 +377,12 @@ typedef struct PLpgSQL_rec
 	bool		notnull;
 	PLpgSQL_expr *default_val;
 	/* end of PLpgSQL_variable fields */
+
+	/*
+	 * Note: for non-RECORD cases, we may from time to time re-look-up the
+	 * composite type, using datatype->origtypname.  That can result in
+	 * changing rectypeid.
+	 */
 
 	PLpgSQL_type *datatype;		/* can be NULL, if rectypeid is RECORDOID */
 	Oid			rectypeid;		/* declared type of variable */
@@ -685,7 +697,7 @@ typedef struct PLpgSQL_stmt_fori
 /*
  * PLpgSQL_stmt_forq represents a FOR statement running over a SQL query.
  * It is the common supertype of PLpgSQL_stmt_fors, PLpgSQL_stmt_forc
- * and PLpgSQL_dynfors.
+ * and PLpgSQL_stmt_dynfors.
  */
 typedef struct PLpgSQL_stmt_forq
 {
@@ -1227,7 +1239,8 @@ extern PLpgSQL_type *plpgsql_parse_cwordtype(List *idents);
 extern PLpgSQL_type *plpgsql_parse_wordrowtype(char *ident);
 extern PLpgSQL_type *plpgsql_parse_cwordrowtype(List *idents);
 extern PLpgSQL_type *plpgsql_build_datatype(Oid typeOid, int32 typmod,
-											Oid collation);
+											Oid collation,
+											TypeName *origtypname);
 extern PLpgSQL_variable *plpgsql_build_variable(const char *refname, int lineno,
 												PLpgSQL_type *dtype,
 												bool add2namespace);
@@ -1239,7 +1252,7 @@ extern PLpgSQL_recfield *plpgsql_build_recfield(PLpgSQL_rec *rec,
 extern int	plpgsql_recognize_err_condition(const char *condname,
 											bool allow_sqlstate);
 extern PLpgSQL_condition *plpgsql_parse_err_condition(char *condname);
-extern void plpgsql_adddatum(PLpgSQL_datum *new);
+extern void plpgsql_adddatum(PLpgSQL_datum *newdatum);
 extern int	plpgsql_add_initdatums(int **varnos);
 extern void plpgsql_HashTableInit(void);
 
@@ -1266,7 +1279,8 @@ extern Oid	plpgsql_exec_get_datum_type(PLpgSQL_execstate *estate,
 										PLpgSQL_datum *datum);
 extern void plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
 											 PLpgSQL_datum *datum,
-											 Oid *typeid, int32 *typmod, Oid *collation);
+											 Oid *typeId, int32 *typMod,
+											 Oid *collation);
 
 /*
  * Functions for namespace handling in pl_funcs.c

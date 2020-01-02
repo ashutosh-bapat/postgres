@@ -42,13 +42,14 @@ my $contrib_extrasource = {
 	'seg'  => [ 'contrib/seg/segscan.l',   'contrib/seg/segparse.y' ],
 };
 my @contrib_excludes = (
-	'commit_ts',       'hstore_plperl',
-	'hstore_plpython', 'intagg',
-	'jsonb_plperl',    'jsonb_plpython',
-	'ltree_plpython',  'pgcrypto',
-	'sepgsql',         'brin',
-	'test_extensions', 'test_pg_dump',
-	'snapshot_too_old');
+	'commit_ts',        'hstore_plperl',
+	'hstore_plpython',  'intagg',
+	'jsonb_plperl',     'jsonb_plpython',
+	'ltree_plpython',   'pgcrypto',
+	'sepgsql',          'brin',
+	'test_extensions',  'test_misc',
+	'test_pg_dump',     'snapshot_too_old',
+	'unsafe_tests');
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'initdb' => 'FRONTEND' };
@@ -93,7 +94,7 @@ sub mkvcbuild
 	$solution = CreateSolution($vsVersion, $config);
 
 	our @pgportfiles = qw(
-	  chklocale.c crypt.c fls.c fseeko.c getrusage.c inet_aton.c random.c
+	  chklocale.c explicit_bzero.c fls.c fseeko.c getpeereid.c getrusage.c inet_aton.c random.c
 	  srandom.c getaddrinfo.c gettimeofday.c inet_net_ntop.c kill.c open.c
 	  erand48.c snprintf.c strlcat.c strlcpy.c dirmod.c noblock.c path.c
 	  dirent.c dlopen.c getopt.c getopt_long.c
@@ -122,7 +123,7 @@ sub mkvcbuild
 	  base64.c config_info.c controldata_utils.c d2s.c exec.c f2s.c file_perm.c ip.c
 	  keywords.c kwlookup.c link-canary.c md5.c
 	  pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
-	  saslprep.c scram-common.c string.c unicode_norm.c username.c
+	  saslprep.c scram-common.c string.c stringinfo.c unicode_norm.c username.c
 	  wait_error.c);
 
 	if ($solution->{options}->{openssl})
@@ -141,7 +142,8 @@ sub mkvcbuild
 	our @pgcommonbkndfiles = @pgcommonallfiles;
 
 	our @pgfeutilsfiles = qw(
-	  conditional.c mbprint.c print.c psqlscan.l psqlscan.c simple_list.c string_utils.c);
+	  cancel.c conditional.c mbprint.c print.c psqlscan.l psqlscan.c
+	  simple_list.c string_utils.c recovery_gen.c);
 
 	$libpgport = $solution->AddProject('libpgport', 'lib', 'misc');
 	$libpgport->AddDefine('FRONTEND');
@@ -300,7 +302,7 @@ sub mkvcbuild
 	$libecpgcompat->AddIncludeDir('src/interfaces/ecpg/include');
 	$libecpgcompat->AddIncludeDir('src/interfaces/libpq');
 	$libecpgcompat->UseDef('src/interfaces/ecpg/compatlib/compatlib.def');
-	$libecpgcompat->AddReference($pgtypes, $libecpg, $libpgport);
+	$libecpgcompat->AddReference($pgtypes, $libecpg, $libpgport, $libpgcommon);
 
 	my $ecpg = $solution->AddProject('ecpg', 'exe', 'interfaces',
 		'src/interfaces/ecpg/preproc');
@@ -309,7 +311,6 @@ sub mkvcbuild
 	$ecpg->AddIncludeDir('src/interfaces/libpq');
 	$ecpg->AddPrefixInclude('src/interfaces/ecpg/preproc');
 	$ecpg->AddFiles('src/interfaces/ecpg/preproc', 'pgc.l', 'preproc.y');
-	$ecpg->AddDefine('ECPG_COMPILE');
 	$ecpg->AddReference($libpgcommon, $libpgport);
 
 	my $pgregress_ecpg =

@@ -29,7 +29,7 @@
  * and a non-lossy page.
  *
  *
- * Copyright (c) 2003-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/nodes/tidbitmap.c
@@ -934,7 +934,7 @@ tbm_extract_page_tuple(PagetableEntry *page, TBMIterateResult *output)
 }
 
 /*
- *	tbm_advance_schunkbit - Advance the chunkbit
+ *	tbm_advance_schunkbit - Advance the schunkbit
  */
 static inline void
 tbm_advance_schunkbit(PagetableEntry *chunk, int *schunkbitp)
@@ -1021,7 +1021,7 @@ tbm_iterate(TBMIterator *iterator)
 		PagetableEntry *page;
 		int			ntuples;
 
-		/* In ONE_PAGE state, we don't allocate an spages[] array */
+		/* In TBM_ONE_PAGE state, we don't allocate an spages[] array */
 		if (tbm->status == TBM_ONE_PAGE)
 			page = &tbm->entry1;
 		else

@@ -2,7 +2,7 @@
  * reorderbuffer.h
  *	  PostgreSQL logical replay/reorder buffer management.
  *
- * Copyright (c) 2012-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2020, PostgreSQL Global Development Group
  *
  * src/include/replication/reorderbuffer.h
  */
@@ -16,6 +16,8 @@
 #include "utils/relcache.h"
 #include "utils/snapshot.h"
 #include "utils/timestamp.h"
+
+extern PGDLLIMPORT int logical_decoding_work_mem;
 
 /* an individual tuple, stored in one chunk of memory */
 typedef struct ReorderBufferTupleBuf
@@ -63,6 +65,9 @@ enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_TRUNCATE
 };
 
+/* forward declaration */
+struct ReorderBufferTXN;
+
 /*
  * a single 'change', can be an insert (with one tuple), an update (old, new),
  * or a delete (old).
@@ -76,6 +81,9 @@ typedef struct ReorderBufferChange
 
 	/* The type of change. */
 	enum ReorderBufferChangeType action;
+
+	/* Transaction this change belongs to. */
+	struct ReorderBufferTXN *txn;
 
 	RepOriginId origin_id;
 
@@ -286,40 +294,40 @@ typedef struct ReorderBufferTXN
 	 */
 	dlist_node	node;
 
+	/*
+	 * Size of this transaction (changes currently in memory, in bytes).
+	 */
+	Size		size;
+
 } ReorderBufferTXN;
 
 /* so we can define the callbacks used inside struct ReorderBuffer itself */
 typedef struct ReorderBuffer ReorderBuffer;
 
 /* change callback signature */
-typedef void (*ReorderBufferApplyChangeCB) (
-											ReorderBuffer *rb,
+typedef void (*ReorderBufferApplyChangeCB) (ReorderBuffer *rb,
 											ReorderBufferTXN *txn,
 											Relation relation,
 											ReorderBufferChange *change);
 
 /* truncate callback signature */
-typedef void (*ReorderBufferApplyTruncateCB) (
-											  ReorderBuffer *rb,
+typedef void (*ReorderBufferApplyTruncateCB) (ReorderBuffer *rb,
 											  ReorderBufferTXN *txn,
 											  int nrelations,
 											  Relation relations[],
 											  ReorderBufferChange *change);
 
 /* begin callback signature */
-typedef void (*ReorderBufferBeginCB) (
-									  ReorderBuffer *rb,
+typedef void (*ReorderBufferBeginCB) (ReorderBuffer *rb,
 									  ReorderBufferTXN *txn);
 
 /* commit callback signature */
-typedef void (*ReorderBufferCommitCB) (
-									   ReorderBuffer *rb,
+typedef void (*ReorderBufferCommitCB) (ReorderBuffer *rb,
 									   ReorderBufferTXN *txn,
 									   XLogRecPtr commit_lsn);
 
 /* message callback signature */
-typedef void (*ReorderBufferMessageCB) (
-										ReorderBuffer *rb,
+typedef void (*ReorderBufferMessageCB) (ReorderBuffer *rb,
 										ReorderBufferTXN *txn,
 										XLogRecPtr message_lsn,
 										bool transactional,
@@ -391,6 +399,20 @@ struct ReorderBuffer
 	/* buffer for disk<->memory conversions */
 	char	   *outbuf;
 	Size		outbufsize;
+
+	/* memory accounting */
+	Size		size;
+
+	/*
+	 * Statistics about transactions spilled to disk.
+	 *
+	 * A single transaction may be spilled repeatedly, which is why we keep
+	 * two different counters. For spilling, the transaction counter includes
+	 * both toplevel transactions and subtransactions.
+	 */
+	int64		spillCount;		/* spill-to-disk invocation counter */
+	int64		spillTxns;		/* number of transactions spilled to disk  */
+	int64		spillBytes;		/* amount of data spilled to disk */
 };
 
 

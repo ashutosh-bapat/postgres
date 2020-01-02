@@ -4,7 +4,7 @@
  *	  Virtual file descriptor definitions.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/fd.h
@@ -33,7 +33,7 @@
  * no way for them to share kernel file descriptors with other files.
  *
  * Likewise, use AllocateDir/FreeDir, not opendir/closedir, to allocate
- * open directories (DIR*), and OpenTransientFile/CloseTransient File for an
+ * open directories (DIR*), and OpenTransientFile/CloseTransientFile for an
  * unbuffered file descriptor.
  */
 #ifndef FD_H
@@ -135,6 +135,8 @@ extern void AtEOXact_Files(bool isCommit);
 extern void AtEOSubXact_Files(bool isCommit, SubTransactionId mySubid,
 							  SubTransactionId parentSubid);
 extern void RemovePgTempFiles(void);
+extern void RemovePgTempFilesInDir(const char *tmpdirname, bool missing_ok,
+								   bool unlink_all);
 extern bool looks_like_temp_rel_name(const char *name);
 
 extern int	pg_fsync(int fd);

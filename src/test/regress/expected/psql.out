@@ -4180,6 +4180,25 @@ drop table psql_serial_tab;
 \pset format aligned
 \pset expanded off
 \pset border 1
+-- \echo and allied features
+\echo this is a test
+this is a test
+\echo -n without newline
+without newline\echo with -n newline
+with -n newline
+\echo '-n' with newline
+-n with newline
+\set foo bar
+\echo foo = :foo
+foo = bar
+\qecho this is a test
+this is a test
+\qecho foo = :foo
+foo = bar
+\warn this is a test
+this is a test
+\warn foo = :foo
+foo = bar
 -- tests for \if ... \endif
 \if true
   select 'okay';
@@ -4256,6 +4275,17 @@ all true
 	\echo 'all false'
 all false
 \endif
+-- test true-false elif after initial true branch
+\if true
+	\echo 'should print #2-5'
+should print #2-5
+\elif true
+	\echo 'should not print #2-6'
+\elif false
+	\echo 'should not print #2-7'
+\else
+	\echo 'should not print #2-8'
+\endif
 -- test simple true-then-else
 \if true
 	\echo 'first thing true'
@@ -4329,22 +4359,60 @@ bar 'bar' "bar"
 	:try_to_quit
 	\echo `nosuchcommand` :foo :'foo' :"foo"
 	\pset fieldsep | `nosuchcommand` :foo :'foo' :"foo"
-	\a \C arg1 \c arg1 arg2 arg3 arg4 \cd arg1 \conninfo
+	\a
+	\C arg1
+	\c arg1 arg2 arg3 arg4
+	\cd arg1
+	\conninfo
 	\copy arg1 arg2 arg3 arg4 arg5 arg6
-	\copyright \dt arg1 \e arg1 arg2
+	\copyright
+	SELECT 1 as one, 2, 3 \crosstabview
+	\dt arg1
+	\e arg1 arg2
 	\ef whole_line
 	\ev whole_line
-	\echo arg1 arg2 arg3 arg4 arg5 \echo arg1 \encoding arg1 \errverbose
-	\g arg1 \gx arg1 \gexec \h \html \i arg1 \ir arg1 \l arg1 \lo arg1 arg2
-	\o arg1 \p \password arg1 \prompt arg1 arg2 \pset arg1 arg2 \q
-	\reset \s arg1 \set arg1 arg2 arg3 arg4 arg5 arg6 arg7 \setenv arg1 arg2
+	\echo arg1 arg2 arg3 arg4 arg5
+	\echo arg1
+	\encoding arg1
+	\errverbose
+	\f arg1
+	\g arg1
+	\gx arg1
+	\gexec
+	SELECT 1 AS one \gset
+	\h
+	\?
+	\html
+	\i arg1
+	\ir arg1
+	\l arg1
+	\lo arg1 arg2
+invalid command \lo
+	\lo_list
+	\o arg1
+	\p
+	\password arg1
+	\prompt arg1 arg2
+	\pset arg1 arg2
+	\q
+	\reset
+	\s arg1
+	\set arg1 arg2 arg3 arg4 arg5 arg6 arg7
+	\setenv arg1 arg2
 	\sf whole_line
 	\sv whole_line
-	\t arg1 \T arg1 \timing arg1 \unset arg1 \w arg1 \watch arg1 \x arg1
+	\t arg1
+	\T arg1
+	\timing arg1
+	\unset arg1
+	\w arg1
+	\watch arg1
+	\x arg1
 	-- \else here is eaten as part of OT_FILEPIPE argument
 	\w |/no/such/file \else
 	-- \endif here is eaten as part of whole-line argument
 	\! whole_line \endif
+	\z
 \else
 	\echo 'should print #8-1'
 should print #8-1
@@ -4599,9 +4667,9 @@ last error message: division by zero
 last error code: 22012
 \unset FETCH_COUNT
 create schema testpart;
-create role testrole_partitioning;
-alter schema testpart owner to testrole_partitioning;
-set role to testrole_partitioning;
+create role regress_partitioning_role;
+alter schema testpart owner to regress_partitioning_role;
+set role to regress_partitioning_role;
 -- run test inside own schema and hide other partitions
 set search_path to testpart;
 create table testtable_apple(logdate date);
@@ -4614,25 +4682,25 @@ create index testpart_apple_index on testpart_apple(logdate);
 create index testpart_orange_index on testpart_orange(logdate);
 -- only partition related object should be displayed
 \dP test*apple*
-                                       List of partitioned relations
-  Schema  |         Name         |         Owner         |       Type        | Parent name |     Table      
-----------+----------------------+-----------------------+-------------------+-------------+----------------
- testpart | testpart_apple       | testrole_partitioning | partitioned table |             | 
- testpart | testpart_apple_index | testrole_partitioning | partitioned index |             | testpart_apple
+                                         List of partitioned relations
+  Schema  |         Name         |           Owner           |       Type        | Parent name |     Table      
+----------+----------------------+---------------------------+-------------------+-------------+----------------
+ testpart | testpart_apple       | regress_partitioning_role | partitioned table |             | 
+ testpart | testpart_apple_index | regress_partitioning_role | partitioned index |             | testpart_apple
 (2 rows)
 
 \dPt test*apple*
-                   List of partitioned tables
-  Schema  |      Name      |         Owner         | Parent name 
-----------+----------------+-----------------------+-------------
- testpart | testpart_apple | testrole_partitioning | 
+                     List of partitioned tables
+  Schema  |      Name      |           Owner           | Parent name 
+----------+----------------+---------------------------+-------------
+ testpart | testpart_apple | regress_partitioning_role | 
 (1 row)
 
 \dPi test*apple*
-                              List of partitioned indexes
-  Schema  |         Name         |         Owner         | Parent name |     Table      
-----------+----------------------+-----------------------+-------------+----------------
- testpart | testpart_apple_index | testrole_partitioning |             | testpart_apple
+                                List of partitioned indexes
+  Schema  |         Name         |           Owner           | Parent name |     Table      
+----------+----------------------+---------------------------+-------------+----------------
+ testpart | testpart_apple_index | regress_partitioning_role |             | testpart_apple
 (1 row)
 
 drop table testtable_apple;
@@ -4657,75 +4725,87 @@ create table child_35_40 partition of child_30_40
    for values from (35) to (40);
 insert into parent_tab values (generate_series(30,39));
 \dPt
-          List of partitioned tables
-  Schema  |    Name    |         Owner         
-----------+------------+-----------------------
- testpart | parent_tab | testrole_partitioning
+            List of partitioned tables
+  Schema  |    Name    |           Owner           
+----------+------------+---------------------------
+ testpart | parent_tab | regress_partitioning_role
 (1 row)
 
 \dPi
-                 List of partitioned indexes
-  Schema  |     Name     |         Owner         |   Table    
-----------+--------------+-----------------------+------------
- testpart | parent_index | testrole_partitioning | parent_tab
+                   List of partitioned indexes
+  Schema  |     Name     |           Owner           |   Table    
+----------+--------------+---------------------------+------------
+ testpart | parent_index | regress_partitioning_role | parent_tab
 (1 row)
 
 \dP testpart.*
-                                     List of partitioned relations
-  Schema  |        Name        |         Owner         |       Type        | Parent name  |    Table    
-----------+--------------------+-----------------------+-------------------+--------------+-------------
- testpart | parent_tab         | testrole_partitioning | partitioned table |              | 
- testpart | child_30_40        | testrole_partitioning | partitioned table | parent_tab   | 
- testpart | parent_index       | testrole_partitioning | partitioned index |              | parent_tab
- testpart | child_30_40_id_idx | testrole_partitioning | partitioned index | parent_index | child_30_40
+                                       List of partitioned relations
+  Schema  |        Name        |           Owner           |       Type        | Parent name  |    Table    
+----------+--------------------+---------------------------+-------------------+--------------+-------------
+ testpart | parent_tab         | regress_partitioning_role | partitioned table |              | 
+ testpart | child_30_40        | regress_partitioning_role | partitioned table | parent_tab   | 
+ testpart | parent_index       | regress_partitioning_role | partitioned index |              | parent_tab
+ testpart | child_30_40_id_idx | regress_partitioning_role | partitioned index | parent_index | child_30_40
 (4 rows)
 
 \dP
-                          List of partitioned relations
-  Schema  |     Name     |         Owner         |       Type        |   Table    
-----------+--------------+-----------------------+-------------------+------------
- testpart | parent_tab   | testrole_partitioning | partitioned table | 
- testpart | parent_index | testrole_partitioning | partitioned index | parent_tab
+                            List of partitioned relations
+  Schema  |     Name     |           Owner           |       Type        |   Table    
+----------+--------------+---------------------------+-------------------+------------
+ testpart | parent_tab   | regress_partitioning_role | partitioned table | 
+ testpart | parent_index | regress_partitioning_role | partitioned index | parent_tab
 (2 rows)
 
 \dPtn
-                  List of partitioned tables
-  Schema  |    Name     |         Owner         | Parent name 
-----------+-------------+-----------------------+-------------
- testpart | parent_tab  | testrole_partitioning | 
- testpart | child_30_40 | testrole_partitioning | parent_tab
+                    List of partitioned tables
+  Schema  |    Name     |           Owner           | Parent name 
+----------+-------------+---------------------------+-------------
+ testpart | parent_tab  | regress_partitioning_role | 
+ testpart | child_30_40 | regress_partitioning_role | parent_tab
 (2 rows)
 
 \dPin
-                            List of partitioned indexes
-  Schema  |        Name        |         Owner         | Parent name  |    Table    
-----------+--------------------+-----------------------+--------------+-------------
- testpart | parent_index       | testrole_partitioning |              | parent_tab
- testpart | child_30_40_id_idx | testrole_partitioning | parent_index | child_30_40
+                              List of partitioned indexes
+  Schema  |        Name        |           Owner           | Parent name  |    Table    
+----------+--------------------+---------------------------+--------------+-------------
+ testpart | parent_index       | regress_partitioning_role |              | parent_tab
+ testpart | child_30_40_id_idx | regress_partitioning_role | parent_index | child_30_40
 (2 rows)
 
 \dPn
-                                     List of partitioned relations
-  Schema  |        Name        |         Owner         |       Type        | Parent name  |    Table    
-----------+--------------------+-----------------------+-------------------+--------------+-------------
- testpart | parent_tab         | testrole_partitioning | partitioned table |              | 
- testpart | child_30_40        | testrole_partitioning | partitioned table | parent_tab   | 
- testpart | parent_index       | testrole_partitioning | partitioned index |              | parent_tab
- testpart | child_30_40_id_idx | testrole_partitioning | partitioned index | parent_index | child_30_40
+                                       List of partitioned relations
+  Schema  |        Name        |           Owner           |       Type        | Parent name  |    Table    
+----------+--------------------+---------------------------+-------------------+--------------+-------------
+ testpart | parent_tab         | regress_partitioning_role | partitioned table |              | 
+ testpart | child_30_40        | regress_partitioning_role | partitioned table | parent_tab   | 
+ testpart | parent_index       | regress_partitioning_role | partitioned index |              | parent_tab
+ testpart | child_30_40_id_idx | regress_partitioning_role | partitioned index | parent_index | child_30_40
 (4 rows)
 
 \dPn testpart.*
-                                     List of partitioned relations
-  Schema  |        Name        |         Owner         |       Type        | Parent name  |    Table    
-----------+--------------------+-----------------------+-------------------+--------------+-------------
- testpart | parent_tab         | testrole_partitioning | partitioned table |              | 
- testpart | child_30_40        | testrole_partitioning | partitioned table | parent_tab   | 
- testpart | parent_index       | testrole_partitioning | partitioned index |              | parent_tab
- testpart | child_30_40_id_idx | testrole_partitioning | partitioned index | parent_index | child_30_40
+                                       List of partitioned relations
+  Schema  |        Name        |           Owner           |       Type        | Parent name  |    Table    
+----------+--------------------+---------------------------+-------------------+--------------+-------------
+ testpart | parent_tab         | regress_partitioning_role | partitioned table |              | 
+ testpart | child_30_40        | regress_partitioning_role | partitioned table | parent_tab   | 
+ testpart | parent_index       | regress_partitioning_role | partitioned index |              | parent_tab
+ testpart | child_30_40_id_idx | regress_partitioning_role | partitioned index | parent_index | child_30_40
 (4 rows)
 
 drop table parent_tab cascade;
 drop schema testpart;
 set search_path to default;
 set role to default;
-drop role testrole_partitioning;
+drop role regress_partitioning_role;
+-- \d on toast table (use pg_statistic's toast table, which has a known name)
+\d pg_toast.pg_toast_2619
+TOAST table "pg_toast.pg_toast_2619"
+   Column   |  Type   
+------------+---------
+ chunk_id   | oid
+ chunk_seq  | integer
+ chunk_data | bytea
+Owning table: "pg_catalog.pg_statistic"
+Indexes:
+    "pg_toast_2619_index" PRIMARY KEY, btree (chunk_id, chunk_seq)
+

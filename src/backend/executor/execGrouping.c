@@ -7,7 +7,7 @@
  * collation-sensitive, so the code in this file has no support for passing
  * collation settings through from callers.  That may have to change someday.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,8 +21,8 @@
 #include "access/parallel.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
-#include "utils/lsyscache.h"
 #include "utils/hashutils.h"
+#include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
 static uint32 TupleHashTableHash(struct tuplehash_hash *tb, const MinimalTuple tuple);
@@ -166,6 +166,7 @@ BuildTupleHashTableExt(PlanState *parent,
 	TupleHashTable hashtable;
 	Size		entrysize = sizeof(TupleHashEntryData) + additionalsize;
 	MemoryContext oldcontext;
+	bool		allow_jit;
 
 	Assert(nbuckets > 0);
 
@@ -210,13 +211,23 @@ BuildTupleHashTableExt(PlanState *parent,
 	hashtable->tableslot = MakeSingleTupleTableSlot(CreateTupleDescCopy(inputDesc),
 													&TTSOpsMinimalTuple);
 
+	/*
+	 * If the old reset interface is used (i.e. BuildTupleHashTable, rather
+	 * than BuildTupleHashTableExt), allowing JIT would lead to the generated
+	 * functions to a) live longer than the query b) be re-generated each time
+	 * the table is being reset. Therefore prevent JIT from being used in that
+	 * case, by not providing a parent node (which prevents accessing the
+	 * JitContext in the EState).
+	 */
+	allow_jit = metacxt != tablecxt;
+
 	/* build comparator for all columns */
 	/* XXX: should we support non-minimal tuples for the inputslot? */
 	hashtable->tab_eq_func = ExecBuildGroupingEqual(inputDesc, inputDesc,
 													&TTSOpsMinimalTuple, &TTSOpsMinimalTuple,
 													numCols,
 													keyColIdx, eqfuncoids, collations,
-													NULL);
+													allow_jit ? parent : NULL);
 
 	/*
 	 * While not pretty, it's ok to not shut down this context, but instead
@@ -371,12 +382,9 @@ FindTupleHashEntry(TupleHashTable hashtable, TupleTableSlot *slot,
 /*
  * Compute the hash value for a tuple
  *
- * The passed-in key is a pointer to TupleHashEntryData.  In an actual hash
- * table entry, the firstTuple field points to a tuple (in MinimalTuple
- * format).  LookupTupleHashEntry sets up a dummy TupleHashEntryData with a
- * NULL firstTuple field --- that cues us to look at the inputslot instead.
- * This convention avoids the need to materialize virtual input tuples unless
- * they actually need to get copied into the table.
+ * If tuple is NULL, use the input slot instead. This convention avoids the
+ * need to materialize virtual input tuples unless they actually need to get
+ * copied into the table.
  *
  * Also, the caller must select an appropriate memory context for running
  * the hash functions. (dynahash.c doesn't change CurrentMemoryContext.)
@@ -444,8 +452,6 @@ TupleHashTableHash(struct tuplehash_hash *tb, const MinimalTuple tuple)
 
 /*
  * See whether two tuples (presumably of the same hash value) match
- *
- * As above, the passed pointers are pointers to TupleHashEntryData.
  */
 static int
 TupleHashTableMatch(struct tuplehash_hash *tb, const MinimalTuple tuple1, const MinimalTuple tuple2)

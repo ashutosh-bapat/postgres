@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/psql
 #
-# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/psql/Makefile
@@ -21,11 +21,24 @@ REFDOCDIR= $(top_srcdir)/doc/src/sgml/ref
 override CPPFLAGS := -I. -I$(srcdir) -I$(libpq_srcdir) $(CPPFLAGS)
 LDFLAGS_INTERNAL += -L$(top_builddir)/src/fe_utils -lpgfeutils $(libpq_pgport)
 
-OBJS=	command.o common.o copy.o crosstabview.o \
-	describe.o help.o input.o large_obj.o mainloop.o \
-	prompt.o psqlscanslash.o sql_help.o startup.o stringutils.o \
-	tab-complete.o variables.o \
-	$(WIN32RES)
+OBJS = \
+	$(WIN32RES) \
+	command.o \
+	common.o \
+	copy.o \
+	crosstabview.o \
+	describe.o \
+	help.o \
+	input.o \
+	large_obj.o \
+	mainloop.o \
+	prompt.o \
+	psqlscanslash.o \
+	sql_help.o \
+	startup.o \
+	stringutils.o \
+	tab-complete.o \
+	variables.o
 
 
 all: psql

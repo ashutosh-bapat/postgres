@@ -4,7 +4,7 @@
  *	  header file for postgres btree access method implementation.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/nbtree.h
@@ -18,6 +18,7 @@
 #include "access/itup.h"
 #include "access/sdir.h"
 #include "access/xlogreader.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_index.h"
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
@@ -97,12 +98,12 @@ typedef BTPageOpaqueData *BTPageOpaque;
 typedef struct BTMetaPageData
 {
 	uint32		btm_magic;		/* should contain BTREE_MAGIC */
-	uint32		btm_version;	/* should contain BTREE_VERSION */
+	uint32		btm_version;	/* nbtree version (always <= BTREE_VERSION) */
 	BlockNumber btm_root;		/* current root location */
 	uint32		btm_level;		/* tree level of the root page */
 	BlockNumber btm_fastroot;	/* current "fast" root location */
 	uint32		btm_fastlevel;	/* tree level of the "fast" root page */
-	/* following fields are available since page version 3 */
+	/* remaining fields only valid when btm_version >= BTREE_NOVAC_VERSION */
 	TransactionId btm_oldest_btpo_xact; /* oldest btpo_xact among all deleted
 										 * pages */
 	float8		btm_last_cleanup_num_heap_tuples;	/* number of heap tuples
@@ -297,10 +298,10 @@ typedef struct BTMetaPageData
 #define BT_N_KEYS_OFFSET_MASK		0x0FFF
 #define BT_HEAP_TID_ATTR			0x1000
 
-/* Get/set downlink block number */
-#define BTreeInnerTupleGetDownLink(itup) \
+/* Get/set downlink block number in pivot tuple */
+#define BTreeTupleGetDownLink(itup) \
 	ItemPointerGetBlockNumberNoCheck(&((itup)->t_tid))
-#define BTreeInnerTupleSetDownLink(itup, blkno) \
+#define BTreeTupleSetDownLink(itup, blkno) \
 	ItemPointerSetBlockNumber(&((itup)->t_tid), (blkno))
 
 /*
@@ -403,20 +404,19 @@ typedef struct BTMetaPageData
 #define BT_WRITE		BUFFER_LOCK_EXCLUSIVE
 
 /*
- *	BTStackData -- As we descend a tree, we push the (location, downlink)
- *	pairs from internal pages onto a private stack.  If we split a
- *	leaf, we use this stack to walk back up the tree and insert data
- *	into parent pages (and possibly to split them, too).  Lehman and
- *	Yao's update algorithm guarantees that under no circumstances can
- *	our private stack give us an irredeemably bad picture up the tree.
- *	Again, see the paper for details.
+ * BTStackData -- As we descend a tree, we push the location of pivot
+ * tuples whose downlink we are about to follow onto a private stack.  If
+ * we split a leaf, we use this stack to walk back up the tree and insert
+ * data into its parent page at the correct location.  We also have to
+ * recursively insert into the grandparent page if and when the parent page
+ * splits.  Our private stack can become stale due to concurrent page
+ * splits and page deletions, but it should never give us an irredeemably
+ * bad picture.
  */
-
 typedef struct BTStackData
 {
 	BlockNumber bts_blkno;
 	OffsetNumber bts_offset;
-	BlockNumber bts_btentry;
 	struct BTStackData *bts_parent;
 } BTStackData;
 
@@ -681,6 +681,23 @@ typedef BTScanOpaqueData *BTScanOpaque;
 #define SK_BT_DESC			(INDOPTION_DESC << SK_BT_INDOPTION_SHIFT)
 #define SK_BT_NULLS_FIRST	(INDOPTION_NULLS_FIRST << SK_BT_INDOPTION_SHIFT)
 
+typedef struct BTOptions
+{
+	int32		varlena_header_;	/* varlena header (do not touch directly!) */
+	int			fillfactor;		/* page fill factor in percent (0..100) */
+	/* fraction of newly inserted tuples prior to trigger index cleanup */
+	float8		vacuum_cleanup_index_scale_factor;
+} BTOptions;
+
+#define BTGetFillFactor(relation) \
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_INDEX && \
+				 relation->rd_rel->relam == BTREE_AM_OID), \
+	 (relation)->rd_options ? \
+	 ((BTOptions *) (relation)->rd_options)->fillfactor : \
+	 BTREE_DEFAULT_FILLFACTOR)
+#define BTGetTargetPageFreeSpace(relation) \
+	(BLCKSZ * (100 - BTGetFillFactor(relation)) / 100)
+
 /*
  * Constant definition for progress reporting.  Phase numbers must match
  * btbuildphasename.
@@ -731,8 +748,8 @@ extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
 						 IndexUniqueCheck checkUnique, Relation heapRel);
-extern Buffer _bt_getstackbuf(Relation rel, BTStack stack);
-extern void _bt_finish_split(Relation rel, Buffer bbuf, BTStack stack);
+extern void _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack);
+extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
 
 /*
  * prototypes for functions in nbtsplitloc.c
@@ -762,8 +779,7 @@ extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_delete(Relation rel, Buffer buf,
 								OffsetNumber *itemnos, int nitems, Relation heapRel);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
-								OffsetNumber *itemnos, int nitems,
-								BlockNumber lastBlockVacuumed);
+								OffsetNumber *deletable, int ndeletable);
 extern int	_bt_pagedel(Relation rel, Buffer buf);
 
 /*

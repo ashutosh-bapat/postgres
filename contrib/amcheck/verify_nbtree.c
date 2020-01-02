@@ -14,7 +14,7 @@
  * that every visible heap tuple has a matching index tuple.
  *
  *
- * Copyright (c) 2017-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2017-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/amcheck/verify_nbtree.c
@@ -35,6 +35,7 @@
 #include "lib/bloomfilter.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
+#include "storage/smgr.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 
@@ -128,6 +129,7 @@ PG_FUNCTION_INFO_V1(bt_index_parent_check);
 static void bt_index_check_internal(Oid indrelid, bool parentcheck,
 									bool heapallindexed, bool rootdescend);
 static inline void btree_index_checkable(Relation rel);
+static inline bool btree_index_mainfork_expected(Relation rel);
 static void bt_check_every_level(Relation rel, Relation heaprel,
 								 bool heapkeyspace, bool readonly, bool heapallindexed,
 								 bool rootdescend);
@@ -138,7 +140,7 @@ static BTScanInsert bt_right_page_check_scankey(BtreeCheckState *state);
 static void bt_downlink_check(BtreeCheckState *state, BTScanInsert targetkey,
 							  BlockNumber childblock);
 static void bt_downlink_missing_check(BtreeCheckState *state);
-static void bt_tuple_present_callback(Relation index, HeapTuple htup,
+static void bt_tuple_present_callback(Relation index, ItemPointer tid,
 									  Datum *values, bool *isnull,
 									  bool tupleIsAlive, void *checkstate);
 static IndexTuple bt_normalize_tuple(BtreeCheckState *state,
@@ -225,7 +227,6 @@ bt_index_check_internal(Oid indrelid, bool parentcheck, bool heapallindexed,
 	Oid			heapid;
 	Relation	indrel;
 	Relation	heaprel;
-	bool		heapkeyspace;
 	LOCKMODE	lockmode;
 
 	if (parentcheck)
@@ -275,10 +276,22 @@ bt_index_check_internal(Oid indrelid, bool parentcheck, bool heapallindexed,
 	/* Relation suitable for checking as B-Tree? */
 	btree_index_checkable(indrel);
 
-	/* Check index, possibly against table it is an index on */
-	heapkeyspace = _bt_heapkeyspace(indrel);
-	bt_check_every_level(indrel, heaprel, heapkeyspace, parentcheck,
-						 heapallindexed, rootdescend);
+	if (btree_index_mainfork_expected(indrel))
+	{
+		bool	heapkeyspace;
+
+		RelationOpenSmgr(indrel);
+		if (!smgrexists(indrel->rd_smgr, MAIN_FORKNUM))
+			ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg("index \"%s\" lacks a main relation fork",
+							RelationGetRelationName(indrel))));
+
+		/* Check index, possibly against table it is an index on */
+		heapkeyspace = _bt_heapkeyspace(indrel);
+		bt_check_every_level(indrel, heaprel, heapkeyspace, parentcheck,
+							 heapallindexed, rootdescend);
+	}
 
 	/*
 	 * Release locks early. That's ok here because nothing in the called
@@ -322,6 +335,28 @@ btree_index_checkable(Relation rel)
 				 errmsg("cannot check index \"%s\"",
 						RelationGetRelationName(rel)),
 				 errdetail("Index is not valid.")));
+}
+
+/*
+ * Check if B-Tree index relation should have a file for its main relation
+ * fork.  Verification uses this to skip unlogged indexes when in hot standby
+ * mode, where there is simply nothing to verify.
+ *
+ * NB: Caller should call btree_index_checkable() before calling here.
+ */
+static inline bool
+btree_index_mainfork_expected(Relation rel)
+{
+	if (rel->rd_rel->relpersistence != RELPERSISTENCE_UNLOGGED ||
+		!RecoveryInProgress())
+		return true;
+
+	ereport(NOTICE,
+			(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
+			 errmsg("cannot verify unlogged index \"%s\" during recovery, skipping",
+					RelationGetRelationName(rel))));
+
+	return false;
 }
 
 /*
@@ -377,11 +412,20 @@ bt_check_every_level(Relation rel, Relation heaprel, bool heapkeyspace,
 
 	if (state->heapallindexed)
 	{
+		int64		total_pages;
 		int64		total_elems;
 		uint64		seed;
 
-		/* Size Bloom filter based on estimated number of tuples in index */
-		total_elems = (int64) state->rel->rd_rel->reltuples;
+		/*
+		 * Size Bloom filter based on estimated number of tuples in index,
+		 * while conservatively assuming that each block must contain at least
+		 * MaxIndexTuplesPerPage / 5 non-pivot tuples.  (Non-leaf pages cannot
+		 * contain non-pivot tuples.  That's okay because they generally make
+		 * up no more than about 1% of all pages in the index.)
+		 */
+		total_pages = RelationGetNumberOfBlocks(rel);
+		total_elems = Max(total_pages * (MaxIndexTuplesPerPage / 5),
+						  (int64) state->rel->rd_rel->reltuples);
 		/* Random seed relies on backend srandom() call to avoid repetition */
 		seed = random();
 		/* Create Bloom filter to fingerprint index */
@@ -425,8 +469,6 @@ bt_check_every_level(Relation rel, Relation heaprel, bool heapkeyspace,
 		}
 		else
 		{
-			int64		total_pages;
-
 			/*
 			 * Extra readonly downlink check.
 			 *
@@ -437,7 +479,6 @@ bt_check_every_level(Relation rel, Relation heaprel, bool heapkeyspace,
 			 * splits and page deletions, though.  This is taken care of in
 			 * bt_downlink_missing_check().
 			 */
-			total_pages = (int64) state->rel->rd_rel->relpages;
 			state->downlinkfilter = bloom_create(total_pages, work_mem, seed);
 		}
 	}
@@ -717,7 +758,7 @@ bt_check_level_from_leftmost(BtreeCheckState *state, BtreeLevel level)
 											  state->target,
 											  P_FIRSTDATAKEY(opaque));
 				itup = (IndexTuple) PageGetItem(state->target, itemid);
-				nextleveldown.leftmost = BTreeInnerTupleGetDownLink(itup);
+				nextleveldown.leftmost = BTreeTupleGetDownLink(itup);
 				nextleveldown.level = opaque->btpo.level - 1;
 			}
 			else
@@ -798,23 +839,25 @@ nextpage:
  * target page:
  *
  * - That every "real" data item is less than or equal to the high key, which
- *	 is an upper bound on the items on the pages (where there is a high key at
- *	 all -- pages that are rightmost lack one).
+ *	 is an upper bound on the items on the page.  Data items should be
+ *	 strictly less than the high key when the page is an internal page.
  *
- * - That within the page, every "real" item is less than or equal to the item
- *	 immediately to its right, if any (i.e., that the items are in order within
- *	 the page, so that the binary searches performed by index scans are sane).
+ * - That within the page, every data item is strictly less than the item
+ *	 immediately to its right, if any (i.e., that the items are in order
+ *	 within the page, so that the binary searches performed by index scans are
+ *	 sane).
  *
- * - That the last item stored on the page is less than or equal to the first
- *	 "real" data item on the page to the right (if such a first item is
+ * - That the last data item stored on the page is strictly less than the
+ *	 first data item on the page to the right (when such a first item is
  *	 available).
  *
- * - That tuples report that they have the expected number of attributes.
- *	 INCLUDE index pivot tuples should not contain non-key attributes.
+ * - Various checks on the structure of tuples themselves.  For example, check
+ *	 that non-pivot tuples have no truncated attributes.
  *
  * Furthermore, when state passed shows ShareLock held, function also checks:
  *
- * - That all child pages respect downlinks lower bound.
+ * - That all child pages respect strict lower bound from parent's pivot
+ *	 tuple.
  *
  * - That downlink to block was encountered in parent where that's expected.
  *   (Limited to heapallindexed readonly callers.)
@@ -935,7 +978,7 @@ bt_target_page_check(BtreeCheckState *state)
 		/* Fingerprint downlink blocks in heapallindexed + readonly case */
 		if (state->heapallindexed && state->readonly && !P_ISLEAF(topaque))
 		{
-			BlockNumber childblock = BTreeInnerTupleGetDownLink(itup);
+			BlockNumber childblock = BTreeTupleGetDownLink(itup);
 
 			bloom_add_element(state->downlinkfilter,
 							  (unsigned char *) &childblock,
@@ -1224,7 +1267,7 @@ bt_target_page_check(BtreeCheckState *state)
 		 */
 		if (!P_ISLEAF(topaque) && state->readonly)
 		{
-			BlockNumber childblock = BTreeInnerTupleGetDownLink(itup);
+			BlockNumber childblock = BTreeTupleGetDownLink(itup);
 
 			bt_downlink_check(state, skey, childblock);
 		}
@@ -1703,7 +1746,7 @@ bt_downlink_missing_check(BtreeCheckState *state)
 	itemid = PageGetItemIdCareful(state, state->targetblock, state->target,
 								  P_FIRSTDATAKEY(topaque));
 	itup = (IndexTuple) PageGetItem(state->target, itemid);
-	childblk = BTreeInnerTupleGetDownLink(itup);
+	childblk = BTreeTupleGetDownLink(itup);
 	for (;;)
 	{
 		CHECK_FOR_INTERRUPTS();
@@ -1728,7 +1771,7 @@ bt_downlink_missing_check(BtreeCheckState *state)
 		itemid = PageGetItemIdCareful(state, childblk, child,
 									  P_FIRSTDATAKEY(copaque));
 		itup = (IndexTuple) PageGetItem(child, itemid);
-		childblk = BTreeInnerTupleGetDownLink(itup);
+		childblk = BTreeTupleGetDownLink(itup);
 		/* Be slightly more pro-active in freeing this memory, just in case */
 		pfree(child);
 	}
@@ -1847,7 +1890,7 @@ bt_downlink_missing_check(BtreeCheckState *state)
  * also allows us to detect the corruption in many cases.
  */
 static void
-bt_tuple_present_callback(Relation index, HeapTuple htup, Datum *values,
+bt_tuple_present_callback(Relation index, ItemPointer tid, Datum *values,
 						  bool *isnull, bool tupleIsAlive, void *checkstate)
 {
 	BtreeCheckState *state = (BtreeCheckState *) checkstate;
@@ -1858,7 +1901,7 @@ bt_tuple_present_callback(Relation index, HeapTuple htup, Datum *values,
 
 	/* Generate a normalized index tuple for fingerprinting */
 	itup = index_form_tuple(RelationGetDescr(index), values, isnull);
-	itup->t_tid = htup->t_self;
+	itup->t_tid = *tid;
 	norm = bt_normalize_tuple(state, itup);
 
 	/* Probe Bloom filter -- tuple should be present */

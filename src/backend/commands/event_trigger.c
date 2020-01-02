@@ -3,7 +3,7 @@
  * event_trigger.c
  *	  PostgreSQL EVENT TRIGGER support code.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -33,11 +33,12 @@
 #include "commands/extension.h"
 #include "commands/trigger.h"
 #include "funcapi.h"
-#include "parser/parse_func.h"
-#include "pgstat.h"
 #include "lib/ilist.h"
 #include "miscadmin.h"
+#include "parser/parse_func.h"
+#include "pgstat.h"
 #include "tcop/deparse_utility.h"
+#include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/evtcache.h"
@@ -46,7 +47,6 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
-#include "tcop/utility.h"
 
 typedef struct EventTriggerQueryState
 {
@@ -151,8 +151,7 @@ static void AlterEventTriggerOwner_internal(Relation rel,
 											HeapTuple tup,
 											Oid newOwnerId);
 static event_trigger_command_tag_check_result check_ddl_tag(const char *tag);
-static event_trigger_command_tag_check_result check_table_rewrite_ddl_tag(
-																		  const char *tag);
+static event_trigger_command_tag_check_result check_table_rewrite_ddl_tag(const char *tag);
 static void error_duplicate_filter_variable(const char *defname);
 static Datum filter_list_to_array(List *filterlist);
 static Oid	insert_event_trigger_tuple(const char *trigname, const char *eventname,
@@ -172,7 +171,6 @@ CreateEventTrigger(CreateEventTrigStmt *stmt)
 	HeapTuple	tuple;
 	Oid			funcoid;
 	Oid			funcrettype;
-	Oid			fargtypes[1];	/* dummy */
 	Oid			evtowner = GetUserId();
 	ListCell   *lc;
 	List	   *tags = NULL;
@@ -238,7 +236,7 @@ CreateEventTrigger(CreateEventTrigStmt *stmt)
 						stmt->trigname)));
 
 	/* Find and validate the trigger function. */
-	funcoid = LookupFuncName(stmt->funcname, 0, fargtypes, false);
+	funcoid = LookupFuncName(stmt->funcname, 0, NULL, false);
 	funcrettype = get_func_rettype(funcoid);
 	if (funcrettype != EVTTRIGGEROID)
 		ereport(ERROR,
@@ -935,13 +933,11 @@ EventTriggerSQLDrop(Node *parsetree)
 	{
 		EventTriggerInvoke(runlist, &trigdata);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		currentEventTriggerState->in_sql_drop = false;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	currentEventTriggerState->in_sql_drop = false;
 
 	/* Cleanup. */
 	list_free(runlist);
@@ -1008,16 +1004,12 @@ EventTriggerTableRewrite(Node *parsetree, Oid tableOid, int reason)
 	{
 		EventTriggerInvoke(runlist, &trigdata);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		currentEventTriggerState->table_rewrite_oid = InvalidOid;
 		currentEventTriggerState->table_rewrite_reason = 0;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	currentEventTriggerState->table_rewrite_oid = InvalidOid;
-	currentEventTriggerState->table_rewrite_reason = 0;
 
 	/* Cleanup. */
 	list_free(runlist);

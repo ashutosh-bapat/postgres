@@ -8,7 +8,7 @@
  * special I/O conversion routines.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,11 +33,11 @@
 #include "miscadmin.h"
 #include "parser/parse_type.h"
 #include "parser/scansup.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
-#include "utils/acl.h"
 #include "utils/regproc.h"
+#include "utils/syscache.h"
 #include "utils/varlena.h"
 
 static char *format_operator_internal(Oid operator_oid, bool force_qualify);

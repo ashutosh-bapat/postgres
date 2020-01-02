@@ -3,7 +3,7 @@
  * pg_recvlogical.c - receive data from a logical decoding slot in a streaming
  *					  fashion and write it to a local file.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/pg_recvlogical.c
@@ -19,18 +19,15 @@
 #include <sys/select.h>
 #endif
 
-/* local includes */
-#include "streamutil.h"
-
 #include "access/xlog_internal.h"
-#include "common/file_perm.h"
 #include "common/fe_memutils.h"
+#include "common/file_perm.h"
 #include "common/logging.h"
 #include "getopt_long.h"
 #include "libpq-fe.h"
 #include "libpq/pqsignal.h"
 #include "pqexpbuffer.h"
-
+#include "streamutil.h"
 
 /* Time to sleep between reconnection attempts */
 #define RECONNECT_SLEEP_TIME 5
@@ -192,8 +189,8 @@ OutputFsync(TimestampTz now)
 
 	if (fsync(outfd) != 0)
 	{
-		pg_log_error("could not fsync file \"%s\": %m", outfile);
-		return false;
+		pg_log_fatal("could not fsync file \"%s\": %m", outfile);
+		exit(1);
 	}
 
 	return true;
@@ -1020,12 +1017,11 @@ prepareToTerminate(PGconn *conn, XLogRecPtr endpos, bool keepalive, XLogRecPtr l
 	if (verbose)
 	{
 		if (keepalive)
-			pg_log_info("endpos %X/%X reached by keepalive",
+			pg_log_info("end position %X/%X reached by keepalive",
 						(uint32) (endpos >> 32), (uint32) endpos);
 		else
-			pg_log_info("endpos %X/%X reached by record at %X/%X",
+			pg_log_info("end position %X/%X reached by WAL record at %X/%X",
 						(uint32) (endpos >> 32), (uint32) (endpos),
 						(uint32) (lsn >> 32), (uint32) lsn);
-
 	}
 }

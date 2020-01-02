@@ -3,7 +3,7 @@
  * arrayfuncs.c
  *	  Support functions for arrays.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -139,7 +139,7 @@ static void array_insert_slice(ArrayType *destArray, ArrayType *origArray,
 							   int *st, int *endp,
 							   int typlen, bool typbyval, char typalign);
 static int	array_cmp(FunctionCallInfo fcinfo);
-static ArrayType *create_array_envelope(int ndims, int *dimv, int *lbv, int nbytes,
+static ArrayType *create_array_envelope(int ndims, int *dimv, int *lbsv, int nbytes,
 										Oid elmtype, int dataoffset);
 static ArrayType *array_fill_internal(ArrayType *dims, ArrayType *lbs,
 									  Datum value, bool isnull, Oid elmtype,
@@ -1322,7 +1322,7 @@ array_recv(PG_FUNCTION_ARGS)
 		lBound[i] = pq_getmsgint(buf, 4);
 
 		/*
-		 * Check overflow of upper bound. (ArrayNItems() below checks that
+		 * Check overflow of upper bound. (ArrayGetNItems() below checks that
 		 * dim[i] >= 0)
 		 */
 		if (dim[i] != 0)
@@ -1997,7 +1997,7 @@ array_get_element_expanded(Datum arraydatum,
 
 /*
  * array_get_slice :
- *		   This routine takes an array and a range of indices (upperIndex and
+ *		   This routine takes an array and a range of indices (upperIndx and
  *		   lowerIndx), creates a new array structure for the referred elements
  *		   and returns a pointer to it.
  *
@@ -4159,7 +4159,7 @@ array_contain_compare(AnyArrayType *array1, AnyArrayType *array2, Oid collation,
 		nelems2 = array2->xpn.nelems;
 	}
 	else
-		deconstruct_array(&(array2->flt),
+		deconstruct_array((ArrayType *) array2,
 						  element_type, typlen, typbyval, typalign,
 						  &values2, &nulls2, &nelems2);
 

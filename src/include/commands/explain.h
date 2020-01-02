@@ -3,7 +3,7 @@
  * explain.h
  *	  prototypes for explain.c
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * src/include/commands/explain.h
@@ -46,6 +46,7 @@ typedef struct ExplainState
 	List	   *rtable_names;	/* alias names for RTEs */
 	List	   *deparse_cxt;	/* context list for deparsing expressions */
 	Bitmapset  *printed_subplans;	/* ids of SubPlans we've printed */
+	bool		hide_workers;	/* set if we find an invisible Gather */
 } ExplainState;
 
 /* Hook for plugins to get control in ExplainOneQuery() */
@@ -84,7 +85,7 @@ extern void ExplainPrintTriggers(ExplainState *es, QueryDesc *queryDesc);
 
 extern void ExplainPrintJITSummary(ExplainState *es, QueryDesc *queryDesc);
 extern void ExplainPrintJIT(ExplainState *es, int jit_flags,
-							struct JitInstrumentation *jit_instr, int worker_i);
+							struct JitInstrumentation *jit_instr, int worker_num);
 
 extern void ExplainQueryText(ExplainState *es, QueryDesc *queryDesc);
 

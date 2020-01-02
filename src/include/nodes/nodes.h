@@ -4,7 +4,7 @@
  *	  Definitions for tagged nodes.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/nodes.h
@@ -420,6 +420,7 @@ typedef enum NodeTag
 	T_CreateStatsStmt,
 	T_AlterCollationStmt,
 	T_CallStmt,
+	T_AlterStatsStmt,
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)
@@ -769,8 +770,8 @@ typedef enum AggStrategy
 /* Primitive options supported by nodeAgg.c: */
 #define AGGSPLITOP_COMBINE		0x01	/* substitute combinefn for transfn */
 #define AGGSPLITOP_SKIPFINAL	0x02	/* skip finalfn, return state as-is */
-#define AGGSPLITOP_SERIALIZE	0x04	/* apply serializefn to output */
-#define AGGSPLITOP_DESERIALIZE	0x08	/* apply deserializefn to input */
+#define AGGSPLITOP_SERIALIZE	0x04	/* apply serialfn to output */
+#define AGGSPLITOP_DESERIALIZE	0x08	/* apply deserialfn to input */
 
 /* Supported operating modes (i.e., useful combinations of these options): */
 typedef enum AggSplit

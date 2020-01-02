@@ -3,7 +3,7 @@
  * walsender.h
  *	  Exports from replication/walsender.c.
  *
- * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  * src/include/replication/walsender.h
  *
@@ -13,8 +13,6 @@
 #define _WALSENDER_H
 
 #include <signal.h>
-
-#include "fmgr.h"
 
 /*
  * What to do with a snapshot in create replication slot command.

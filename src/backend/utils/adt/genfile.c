@@ -4,7 +4,7 @@
  *		Functions for direct access to files
  *
  *
- * Copyright (c) 2004-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2020, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -325,7 +325,7 @@ pg_read_binary_file(PG_FUNCTION_ARGS)
 
 /*
  * Wrapper functions for the 1 and 3 argument variants of pg_read_file_v2()
- * and pg_binary_read_file().
+ * and pg_read_binary_file().
  *
  * These are necessary to pass the sanity check in opr_sanity, which checks
  * that all built-in functions that share the implementing C function take

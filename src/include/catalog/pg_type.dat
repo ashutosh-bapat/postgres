@@ -3,7 +3,7 @@
 # pg_type.dat
 #    Initial contents of the pg_type system catalog.
 #
-# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_type.dat
@@ -215,7 +215,7 @@
 
 { oid => '700', array_type_oid => '1021',
   descr => 'single-precision floating point number, 4-byte storage',
-  typname => 'float4', typlen => '4', typbyval => 'FLOAT4PASSBYVAL',
+  typname => 'float4', typlen => '4', typbyval => 't',
   typcategory => 'N', typinput => 'float4in', typoutput => 'float4out',
   typreceive => 'float4recv', typsend => 'float4send', typalign => 'i' },
 { oid => '701', array_type_oid => '1022',

@@ -3,9 +3,9 @@
  *		Normalize a Unicode string to NFKC form
  *
  * This implements Unicode normalization, per the documentation at
- * http://www.unicode.org/reports/tr15/.
+ * https://www.unicode.org/reports/tr15/.
  *
- * Portions Copyright (c) 2017-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2017-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/common/unicode_norm.c
@@ -109,7 +109,7 @@ get_decomposed_size(pg_wchar code)
 	/*
 	 * Fast path for Hangul characters not stored in tables to save memory as
 	 * decomposition is algorithmic. See
-	 * http://unicode.org/reports/tr15/tr15-18.html, annex 10 for details on
+	 * https://www.unicode.org/reports/tr15/tr15-18.html, annex 10 for details on
 	 * the matter.
 	 */
 	if (code >= SBASE && code < SBASE + SCOUNT)
@@ -178,7 +178,7 @@ recompose_code(uint32 start, uint32 code, uint32 *result)
 			 ((start - SBASE) % TCOUNT) == 0 &&
 			 code >= TBASE && code < (TBASE + TCOUNT))
 	{
-		/* make syllable of from LVT */
+		/* make syllable of form LVT */
 		uint32		tindex = code - TBASE;
 
 		*result = start + tindex;
@@ -234,7 +234,7 @@ decompose_code(pg_wchar code, pg_wchar **result, int *current)
 	/*
 	 * Fast path for Hangul characters not stored in tables to save memory as
 	 * decomposition is algorithmic. See
-	 * http://unicode.org/reports/tr15/tr15-18.html, annex 10 for details on
+	 * https://www.unicode.org/reports/tr15/tr15-18.html, annex 10 for details on
 	 * the matter.
 	 */
 	if (code >= SBASE && code < SBASE + SCOUNT)
@@ -362,7 +362,7 @@ unicode_normalize_kc(const pg_wchar *input)
 			continue;
 
 		/*
-		 * Per Unicode (http://unicode.org/reports/tr15/tr15-18.html) annex 4,
+		 * Per Unicode (https://www.unicode.org/reports/tr15/tr15-18.html) annex 4,
 		 * a sequence of two adjacent characters in a string is an
 		 * exchangeable pair if the combining class (from the Unicode
 		 * Character Database) for the first character is greater than the

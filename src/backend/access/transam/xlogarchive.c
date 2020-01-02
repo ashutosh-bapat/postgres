@@ -4,7 +4,7 @@
  *		Functions for archiving WAL files and restoring from the archive.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogarchive.c
@@ -63,6 +63,13 @@ RestoreArchivedFile(char *path, const char *xlogfname,
 	XLogSegNo	restartSegNo;
 	XLogRecPtr	restartRedoPtr;
 	TimeLineID	restartTli;
+
+	/*
+	 * Ignore restore_command when not in archive recovery (meaning
+	 * we are in crash recovery).
+	 */
+	if (!ArchiveRecoveryRequested)
+		goto not_available;
 
 	/* In standby mode, restore_command might not be supplied */
 	if (recoveryRestoreCommand == NULL || strcmp(recoveryRestoreCommand, "") == 0)

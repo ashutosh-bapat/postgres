@@ -2,7 +2,7 @@
  *
  * partbounds.h
  *
- * Copyright (c) 2007-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2020, PostgreSQL Global Development Group
  *
  * src/include/partitioning/partbounds.h
  *
@@ -56,7 +56,6 @@
  * pointed by remainder produced when hash value of the datum-tuple is divided
  * by the greatest modulus.
  */
-
 typedef struct PartitionBoundInfoData
 {
 	char		strategy;		/* hash, list or range? */

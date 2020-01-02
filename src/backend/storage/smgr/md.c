@@ -10,7 +10,7 @@
  * It doesn't matter whether the bits are on spinning rust or some other
  * storage technology.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -25,20 +25,21 @@
 #include <fcntl.h>
 #include <sys/file.h>
 
-#include "miscadmin.h"
-#include "access/xlogutils.h"
 #include "access/xlog.h"
+#include "access/xlogutils.h"
+#include "commands/tablespace.h"
+#include "miscadmin.h"
+#include "pg_trace.h"
 #include "pgstat.h"
 #include "postmaster/bgwriter.h"
-#include "storage/fd.h"
 #include "storage/bufmgr.h"
+#include "storage/fd.h"
 #include "storage/md.h"
 #include "storage/relfilenode.h"
 #include "storage/smgr.h"
 #include "storage/sync.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
-#include "pg_trace.h"
 
 /*
  *	The magnetic disk storage manager keeps track of open file
@@ -120,7 +121,7 @@ static MemoryContext MdCxt;		/* context for all MdfdVec objects */
 /* local routines */
 static void mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum,
 						 bool isRedo);
-static MdfdVec *mdopen(SMgrRelation reln, ForkNumber forknum, int behavior);
+static MdfdVec *mdopenfork(SMgrRelation reln, ForkNumber forknum, int behavior);
 static void register_dirty_segment(SMgrRelation reln, ForkNumber forknum,
 								   MdfdVec *seg);
 static void register_unlink_segment(RelFileNodeBackend rnode, ForkNumber forknum,
@@ -165,7 +166,7 @@ mdexists(SMgrRelation reln, ForkNumber forkNum)
 	 */
 	mdclose(reln, forkNum);
 
-	return (mdopen(reln, forkNum, EXTENSION_RETURN_NULL) != NULL);
+	return (mdopenfork(reln, forkNum, EXTENSION_RETURN_NULL) != NULL);
 }
 
 /*
@@ -184,6 +185,19 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 		return;					/* created and opened already... */
 
 	Assert(reln->md_num_open_segs[forkNum] == 0);
+
+	/*
+	 * We may be using the target table space for the first time in this
+	 * database, so create a per-database subdirectory if needed.
+	 *
+	 * XXX this is a fairly ugly violation of module layering, but this seems
+	 * to be the best place to put the check.  Maybe TablespaceCreateDbspace
+	 * should be here and not in commands/tablespace.c?  But that would imply
+	 * importing a lot of stuff that smgr.c oughtn't know, either.
+	 */
+	TablespaceCreateDbspace(reln->smgr_rnode.node.spcNode,
+							reln->smgr_rnode.node.dbNode,
+							isRedo);
 
 	path = relpath(reln->smgr_rnode, forkNum);
 
@@ -425,7 +439,7 @@ mdextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 }
 
 /*
- *	mdopen() -- Open the specified relation.
+ *	mdopenfork() -- Open one fork of the specified relation.
  *
  * Note we only open the first segment, when there are multiple segments.
  *
@@ -435,7 +449,7 @@ mdextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
  * invent one out of whole cloth.
  */
 static MdfdVec *
-mdopen(SMgrRelation reln, ForkNumber forknum, int behavior)
+mdopenfork(SMgrRelation reln, ForkNumber forknum, int behavior)
 {
 	MdfdVec    *mdfd;
 	char	   *path;
@@ -472,6 +486,17 @@ mdopen(SMgrRelation reln, ForkNumber forknum, int behavior)
 	Assert(_mdnblocks(reln, forknum, mdfd) <= ((BlockNumber) RELSEG_SIZE));
 
 	return mdfd;
+}
+
+/*
+ *  mdopen() -- Initialize newly-opened relation.
+ */
+void
+mdopen(SMgrRelation reln)
+{
+	/* mark it not open */
+	for (int forknum = 0; forknum <= MAX_FORKNUM; forknum++)
+		reln->md_num_open_segs[forknum] = 0;
 }
 
 /*
@@ -706,14 +731,14 @@ mdwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
  *	mdnblocks() -- Get the number of blocks stored in a relation.
  *
  *		Important side effect: all active segments of the relation are opened
- *		and added to the mdfd_seg_fds array.  If this routine has not been
+ *		and added to the md_seg_fds array.  If this routine has not been
  *		called, then only segments up to the last one actually touched
  *		are present in the array.
  */
 BlockNumber
 mdnblocks(SMgrRelation reln, ForkNumber forknum)
 {
-	MdfdVec    *v = mdopen(reln, forknum, EXTENSION_FAIL);
+	MdfdVec    *v = mdopenfork(reln, forknum, EXTENSION_FAIL);
 	BlockNumber nblocks;
 	BlockNumber segno = 0;
 
@@ -921,7 +946,7 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 }
 
 /*
- * register_unlink() -- Schedule a file to be deleted after next checkpoint
+ * register_unlink_segment() -- Schedule a file to be deleted after next checkpoint
  */
 static void
 register_unlink_segment(RelFileNodeBackend rnode, ForkNumber forknum,
@@ -1137,7 +1162,7 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 		v = &reln->md_seg_fds[forknum][reln->md_num_open_segs[forknum] - 1];
 	else
 	{
-		v = mdopen(reln, forknum, behavior);
+		v = mdopenfork(reln, forknum, behavior);
 		if (!v)
 			return NULL;		/* if behavior & EXTENSION_RETURN_NULL */
 	}
@@ -1163,9 +1188,6 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 			 * replaying WAL data that has a write into a high-numbered
 			 * segment of a relation that was later deleted. We want to go
 			 * ahead and create the segments so we can finish out the replay.
-			 * However if the caller has specified
-			 * EXTENSION_REALLY_RETURN_NULL, then extension is not desired
-			 * even in recovery; we won't reach this point in that case.
 			 *
 			 * We have to maintain the invariant that segments before the last
 			 * active segment are of size RELSEG_SIZE; therefore, if
@@ -1258,25 +1280,41 @@ int
 mdsyncfiletag(const FileTag *ftag, char *path)
 {
 	SMgrRelation reln = smgropen(ftag->rnode, InvalidBackendId);
-	MdfdVec    *v;
-	char	   *p;
+	File		file;
+	bool		need_to_close;
+	int			result,
+				save_errno;
 
-	/* Provide the path for informational messages. */
-	p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
-	strlcpy(path, p, MAXPGPATH);
-	pfree(p);
+	/* See if we already have the file open, or need to open it. */
+	if (ftag->segno < reln->md_num_open_segs[ftag->forknum])
+	{
+		file = reln->md_seg_fds[ftag->forknum][ftag->segno].mdfd_vfd;
+		strlcpy(path, FilePathName(file), MAXPGPATH);
+		need_to_close = false;
+	}
+	else
+	{
+		char	   *p;
 
-	/* Try to open the requested segment. */
-	v = _mdfd_getseg(reln,
-					 ftag->forknum,
-					 ftag->segno * (BlockNumber) RELSEG_SIZE,
-					 false,
-					 EXTENSION_RETURN_NULL | EXTENSION_DONT_CHECK_SIZE);
-	if (v == NULL)
-		return -1;
+		p = _mdfd_segpath(reln, ftag->forknum, ftag->segno);
+		strlcpy(path, p, MAXPGPATH);
+		pfree(p);
 
-	/* Try to fsync the file. */
-	return FileSync(v->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC);
+		file = PathNameOpenFile(path, O_RDWR | PG_BINARY);
+		if (file < 0)
+			return -1;
+		need_to_close = true;
+	}
+
+	/* Sync the file. */
+	result = FileSync(file, WAIT_EVENT_DATA_FILE_SYNC);
+	save_errno = errno;
+
+	if (need_to_close)
+		FileClose(file);
+
+	errno = save_errno;
+	return result;
 }
 
 /*

@@ -8,7 +8,7 @@
  * or call fmgr-callable functions.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fmgr.h
@@ -96,7 +96,7 @@ typedef struct FunctionCallInfoBaseData
 } FunctionCallInfoBaseData;
 
 /*
- * Space needed for for a FunctionCallInfoBaseData struct with sufficient space
+ * Space needed for a FunctionCallInfoBaseData struct with sufficient space
  * for `nargs` arguments.
  */
 #define SizeForFunctionCallInfo(nargs) \
@@ -446,7 +446,6 @@ typedef struct
 	int			funcmaxargs;	/* FUNC_MAX_ARGS */
 	int			indexmaxkeys;	/* INDEX_MAX_KEYS */
 	int			namedatalen;	/* NAMEDATALEN */
-	int			float4byval;	/* FLOAT4PASSBYVAL */
 	int			float8byval;	/* FLOAT8PASSBYVAL */
 } Pg_magic_struct;
 
@@ -458,7 +457,6 @@ typedef struct
 	FUNC_MAX_ARGS, \
 	INDEX_MAX_KEYS, \
 	NAMEDATALEN, \
-	FLOAT4PASSBYVAL, \
 	FLOAT8PASSBYVAL \
 }
 
@@ -489,7 +487,8 @@ extern int no_such_variable
 
 /* These are for invocation of a specifically named function with a
  * directly-computed parameter list.  Note that neither arguments nor result
- * are allowed to be NULL.
+ * are allowed to be NULL.  Also, the function cannot be one that needs to
+ * look at FmgrInfo, since there won't be any.
  */
 extern Datum DirectFunctionCall1Coll(PGFunction func, Oid collation,
 									 Datum arg1);

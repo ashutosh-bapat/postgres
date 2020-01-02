@@ -12,7 +12,7 @@
  * identifying statement boundaries in multi-statement source strings.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/parsenodes.h
@@ -2149,7 +2149,6 @@ typedef struct Constraint
 	Node	   *raw_expr;		/* expr, as untransformed parse tree */
 	char	   *cooked_expr;	/* expr, as nodeToString representation */
 	char		generated_when; /* ALWAYS or BY DEFAULT */
-	char		generated_kind; /* currently always STORED */
 
 	/* Fields used for unique constraints (UNIQUE and PRIMARY KEY): */
 	List	   *keys;			/* String nodes naming referenced key
@@ -2801,6 +2800,18 @@ typedef struct CreateStatsStmt
 } CreateStatsStmt;
 
 /* ----------------------
+ *		Alter Statistics Statement
+ * ----------------------
+ */
+typedef struct AlterStatsStmt
+{
+	NodeTag		type;
+	List	   *defnames;		/* qualified name (list of Value strings) */
+	int			stxstattarget;	/* statistics target */
+	bool		missing_ok;		/* skip error if statistics object is missing */
+} AlterStatsStmt;
+
+/* ----------------------
  *		Create Function Statement
  * ----------------------
  */
@@ -3144,6 +3155,7 @@ typedef struct DropdbStmt
 	NodeTag		type;
 	char	   *dbname;			/* database to drop */
 	bool		missing_ok;		/* skip error if db is missing? */
+	List	   *options;		/* currently only FORCE is supported */
 } DropdbStmt;
 
 /* ----------------------
@@ -3311,7 +3323,8 @@ typedef struct ConstraintsSetStmt
  */
 
 /* Reindex options */
-#define REINDEXOPT_VERBOSE 1 << 0	/* print progress info */
+#define REINDEXOPT_VERBOSE (1 << 0)	/* print progress info */
+#define REINDEXOPT_REPORT_PROGRESS (1 << 1)	/* report pgstat progress */
 
 typedef enum ReindexObjectType
 {

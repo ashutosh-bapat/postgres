@@ -14,7 +14,7 @@
  * contain optimizable statements, which we should transform.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/analyze.c
@@ -1344,7 +1344,7 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 	int			sublist_length = -1;
 	bool		lateral = false;
 	RangeTblEntry *rte;
-	int			rtindex;
+	ParseNamespaceItem *nsitem;
 	ListCell   *lc;
 	ListCell   *lc2;
 	int			i;
@@ -1516,15 +1516,15 @@ transformValuesClause(ParseState *pstate, SelectStmt *stmt)
 									  NULL, lateral, true);
 	addRTEtoQuery(pstate, rte, true, true, true);
 
-	/* assume new rte is at end */
-	rtindex = list_length(pstate->p_rtable);
-	Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
+	/* grab the namespace item made by addRTEtoQuery */
+	nsitem = (ParseNamespaceItem *) llast(pstate->p_namespace);
+	Assert(rte == nsitem->p_rte);
 
 	/*
 	 * Generate a targetlist as though expanding "*"
 	 */
 	Assert(pstate->p_next_resno == 1);
-	qry->targetList = expandRelAttrs(pstate, rte, rtindex, 0, -1);
+	qry->targetList = expandNSItemAttrs(pstate, nsitem, 0, -1);
 
 	/*
 	 * The grammar allows attaching ORDER BY, LIMIT, and FOR UPDATE to a
@@ -2082,7 +2082,7 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 			 * Select common collation.  A common collation is required for
 			 * all set operators except UNION ALL; see SQL:2008 7.13 <query
 			 * expression> Syntax Rule 15c.  (If we fail to identify a common
-			 * collation for a UNION ALL column, the curCollations element
+			 * collation for a UNION ALL column, the colCollations element
 			 * will be set to InvalidOid, which may result in a runtime error
 			 * if something at a higher query level wants to use the column's
 			 * collation.)
@@ -2341,7 +2341,7 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 		target_rte->updatedCols = bms_add_member(target_rte->updatedCols,
 												 attrno - FirstLowInvalidHeapAttributeNumber);
 
-		orig_tl = lnext(orig_tl);
+		orig_tl = lnext(origTlist, orig_tl);
 	}
 	if (orig_tl != NULL)
 		elog(ERROR, "UPDATE target count mismatch --- internal error");

@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Logging framework for frontend programs
  *
- * Copyright (c) 2018-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2018-2020, PostgreSQL Global Development Group
  *
  * src/common/logging.c
  *
@@ -215,6 +215,8 @@ pg_log_generic_v(enum pg_log_level level, const char *pg_restrict fmt, va_list a
 	va_end(ap2);
 
 	buf = pg_malloc_extended(required_len, MCXT_ALLOC_NO_OOM);
+
+	errno = save_errno;			/* malloc might change errno */
 
 	if (!buf)
 	{

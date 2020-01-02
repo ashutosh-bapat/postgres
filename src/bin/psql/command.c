@@ -1,12 +1,11 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2020, PostgreSQL Global Development Group
  *
  * src/bin/psql/command.c
  */
 #include "postgres_fe.h"
-#include "command.h"
 
 #include <ctype.h>
 #include <time.h>
@@ -24,22 +23,22 @@
 #endif
 
 #include "catalog/pg_class_d.h"
-#include "portability/instr_time.h"
-
-#include "libpq-fe.h"
-#include "pqexpbuffer.h"
-#include "common/logging.h"
-#include "fe_utils/print.h"
-#include "fe_utils/string_utils.h"
-
+#include "command.h"
 #include "common.h"
+#include "common/logging.h"
 #include "copy.h"
 #include "crosstabview.h"
 #include "describe.h"
+#include "fe_utils/cancel.h"
+#include "fe_utils/print.h"
+#include "fe_utils/string_utils.h"
 #include "help.h"
 #include "input.h"
 #include "large_obj.h"
+#include "libpq-fe.h"
 #include "mainloop.h"
+#include "portability/instr_time.h"
+#include "pqexpbuffer.h"
 #include "psqlscanslash.h"
 #include "settings.h"
 #include "variables.h"
@@ -319,7 +318,8 @@ exec_command(const char *cmd,
 		status = exec_command_ef_ev(scan_state, active_branch, query_buf, true);
 	else if (strcmp(cmd, "ev") == 0)
 		status = exec_command_ef_ev(scan_state, active_branch, query_buf, false);
-	else if (strcmp(cmd, "echo") == 0 || strcmp(cmd, "qecho") == 0)
+	else if (strcmp(cmd, "echo") == 0 || strcmp(cmd, "qecho") == 0 ||
+			 strcmp(cmd, "warn") == 0)
 		status = exec_command_echo(scan_state, active_branch, cmd);
 	else if (strcmp(cmd, "elif") == 0)
 		status = exec_command_elif(scan_state, cstack, query_buf);
@@ -1114,7 +1114,7 @@ exec_command_ef_ev(PsqlScanState scan_state, bool active_branch,
 }
 
 /*
- * \echo and \qecho -- echo arguments to stdout or query output
+ * \echo, \qecho, and \warn -- echo arguments to stdout, query output, or stderr
  */
 static backslashResult
 exec_command_echo(PsqlScanState scan_state, bool active_branch, const char *cmd)
@@ -1129,13 +1129,15 @@ exec_command_echo(PsqlScanState scan_state, bool active_branch, const char *cmd)
 
 		if (strcmp(cmd, "qecho") == 0)
 			fout = pset.queryFout;
+		else if (strcmp(cmd, "warn") == 0)
+			fout = stderr;
 		else
 			fout = stdout;
 
 		while ((value = psql_scan_slash_option(scan_state,
 											   OT_NORMAL, &quoted, false)))
 		{
-			if (!quoted && strcmp(value, "-n") == 0)
+			if (first && !no_newline && !quoted && strcmp(value, "-n") == 0)
 				no_newline = true;
 			else
 			{
@@ -2870,6 +2872,26 @@ param_is_newly_set(const char *old_val, const char *new_val)
 	return false;
 }
 
+/* return whether the connection has 'hostaddr' in its conninfo */
+static bool
+has_hostaddr(PGconn *conn)
+{
+	bool		used = false;
+	PQconninfoOption *ciopt = PQconninfo(conn);
+
+	for (PQconninfoOption *p = ciopt; p->keyword != NULL; p++)
+	{
+		if (strcmp(p->keyword, "hostaddr") == 0 && p->val != NULL)
+		{
+			used = true;
+			break;
+		}
+	}
+
+	PQconninfoFree(ciopt);
+	return used;
+}
+
 /*
  * do_connect -- handler for \connect
  *
@@ -2929,24 +2951,24 @@ do_connect(enum trivalue reuse_previous_specification,
 		port = NULL;
 	}
 
-	/* grab missing values from the old connection */
+	/*
+	 * Grab missing values from the old connection.  If we grab host (or host
+	 * is the same as before) and hostaddr was set, grab that too.
+	 */
 	if (reuse_previous)
 	{
 		if (!user)
 			user = PQuser(o_conn);
-		if (host && strcmp(host, PQhost(o_conn)) == 0)
+		if (host && strcmp(host, PQhost(o_conn)) == 0 &&
+			has_hostaddr(o_conn))
 		{
-			/*
-			 * if we are targetting the same host, reuse its hostaddr for
-			 * consistency
-			 */
 			hostaddr = PQhostaddr(o_conn);
 		}
 		if (!host)
 		{
 			host = PQhost(o_conn);
-			/* also set hostaddr for consistency */
-			hostaddr = PQhostaddr(o_conn);
+			if (has_hostaddr(o_conn))
+				hostaddr = PQhostaddr(o_conn);
 		}
 		if (!port)
 			port = PQport(o_conn);
@@ -2972,7 +2994,7 @@ do_connect(enum trivalue reuse_previous_specification,
 	if (!dbname && reuse_previous)
 	{
 		initPQExpBuffer(&connstr);
-		appendPQExpBuffer(&connstr, "dbname=");
+		appendPQExpBufferStr(&connstr, "dbname=");
 		appendConnStrVal(&connstr, PQdb(o_conn));
 		dbname = connstr.data;
 		/* has_connection_string=true would be a dead store */
@@ -3097,8 +3119,14 @@ do_connect(enum trivalue reuse_previous_specification,
 			pg_log_error("\\connect: %s", PQerrorMessage(n_conn));
 			if (o_conn)
 			{
+				/*
+				 * Transition to having no connection.  Keep this bit in sync
+				 * with CheckConnection().
+				 */
 				PQfinish(o_conn);
 				pset.db = NULL;
+				ResetCancelConn();
+				UnsyncVariables();
 			}
 		}
 
@@ -3112,7 +3140,8 @@ do_connect(enum trivalue reuse_previous_specification,
 
 	/*
 	 * Replace the old connection with the new one, and update
-	 * connection-dependent variables.
+	 * connection-dependent variables.  Keep the resynchronization logic in
+	 * sync with CheckConnection().
 	 */
 	PQsetNoticeProcessor(n_conn, NoticeProcessor, NULL);
 	pset.db = n_conn;
@@ -3129,7 +3158,10 @@ do_connect(enum trivalue reuse_previous_specification,
 			char	   *host = PQhost(pset.db);
 			char	   *hostaddr = PQhostaddr(pset.db);
 
-			/* If the host is an absolute path, the connection is via socket */
+			/*
+			 * If the host is an absolute path, the connection is via socket
+			 * unless overridden by hostaddr
+			 */
 			if (is_absolute_path(host))
 			{
 				if (hostaddr && *hostaddr)
@@ -3200,7 +3232,8 @@ connection_warnings(bool in_startup)
 										 sverbuf, sizeof(sverbuf)));
 
 #ifdef WIN32
-		checkWin32Codepage();
+		if (in_startup)
+			checkWin32Codepage();
 #endif
 		printSSLInfo();
 		printGSSInfo();
@@ -3247,7 +3280,7 @@ printGSSInfo(void)
 	if (!PQgssEncInUse(pset.db))
 		return;					/* no GSSAPI encryption in use */
 
-	printf(_("GSSAPI Encrypted connection\n"));
+	printf(_("GSSAPI-encrypted connection\n"));
 }
 
 
@@ -3474,7 +3507,8 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 		{
 			unsigned int ql = query_buf->len;
 
-			if (ql == 0 || query_buf->data[ql - 1] != '\n')
+			/* force newline-termination of what we send to editor */
+			if (ql > 0 && query_buf->data[ql - 1] != '\n')
 			{
 				appendPQExpBufferChar(query_buf, '\n');
 				ql++;
@@ -4553,7 +4587,7 @@ lookup_object_oid(EditableObjectType obj_type, const char *desc,
 			 */
 			appendPQExpBufferStr(query, "SELECT ");
 			appendStringLiteralConn(query, desc, pset.db);
-			appendPQExpBuffer(query, "::pg_catalog.regclass::pg_catalog.oid");
+			appendPQExpBufferStr(query, "::pg_catalog.regclass::pg_catalog.oid");
 			break;
 	}
 

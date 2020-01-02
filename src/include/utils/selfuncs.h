@@ -5,7 +5,7 @@
  *	  infrastructure for selectivity and cost estimation.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/selfuncs.h
@@ -16,6 +16,7 @@
 #define SELFUNCS_H
 
 #include "access/htup.h"
+#include "fmgr.h"
 #include "nodes/pathnodes.h"
 
 
@@ -109,7 +110,7 @@ typedef struct
 	double		numIndexPages;	/* number of leaf pages visited */
 	double		numIndexTuples; /* number of leaf tuples visited */
 	double		spc_random_page_cost;	/* relevant random_page_cost value */
-	double		num_sa_scans;	/* # indexscans from ScalarArrayOps */
+	double		num_sa_scans;	/* # indexscans from ScalarArrayOpExprs */
 } GenericCosts;
 
 /* Hooks for plugins to get control when we ask for stats */

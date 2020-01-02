@@ -5,7 +5,7 @@
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/streamutil.c
@@ -17,10 +17,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-/* local includes */
-#include "receivelog.h"
-#include "streamutil.h"
-
 #include "access/xlog_internal.h"
 #include "common/fe_memutils.h"
 #include "common/file_perm.h"
@@ -29,6 +25,8 @@
 #include "fe_utils/connect.h"
 #include "port/pg_bswap.h"
 #include "pqexpbuffer.h"
+#include "receivelog.h"
+#include "streamutil.h"
 
 #define ERRCODE_DUPLICATE_OBJECT  "42710"
 
@@ -500,19 +498,19 @@ CreateReplicationSlot(PGconn *conn, const char *slot_name, const char *plugin,
 	/* Build query */
 	appendPQExpBuffer(query, "CREATE_REPLICATION_SLOT \"%s\"", slot_name);
 	if (is_temporary)
-		appendPQExpBuffer(query, " TEMPORARY");
+		appendPQExpBufferStr(query, " TEMPORARY");
 	if (is_physical)
 	{
-		appendPQExpBuffer(query, " PHYSICAL");
+		appendPQExpBufferStr(query, " PHYSICAL");
 		if (reserve_wal)
-			appendPQExpBuffer(query, " RESERVE_WAL");
+			appendPQExpBufferStr(query, " RESERVE_WAL");
 	}
 	else
 	{
 		appendPQExpBuffer(query, " LOGICAL \"%s\"", plugin);
 		if (PQserverVersion(conn) >= 100000)
 			/* pg_recvlogical doesn't use an exported snapshot, so suppress */
-			appendPQExpBuffer(query, " NOEXPORT_SNAPSHOT");
+			appendPQExpBufferStr(query, " NOEXPORT_SNAPSHOT");
 	}
 
 	res = PQexec(conn, query->data);

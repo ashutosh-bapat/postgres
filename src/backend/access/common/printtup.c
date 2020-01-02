@@ -5,7 +5,7 @@
  *	  clients and standalone backends are supported here).
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -262,14 +262,14 @@ SendRowDescriptionCols_3(StringInfo buf, TupleDesc typeinfo, List *targetlist, i
 		/* Do we have a non-resjunk tlist item? */
 		while (tlist_item &&
 			   ((TargetEntry *) lfirst(tlist_item))->resjunk)
-			tlist_item = lnext(tlist_item);
+			tlist_item = lnext(targetlist, tlist_item);
 		if (tlist_item)
 		{
 			TargetEntry *tle = (TargetEntry *) lfirst(tlist_item);
 
 			resorigtbl = tle->resorigtbl;
 			resorigcol = tle->resorigcol;
-			tlist_item = lnext(tlist_item);
+			tlist_item = lnext(targetlist, tlist_item);
 		}
 		else
 		{

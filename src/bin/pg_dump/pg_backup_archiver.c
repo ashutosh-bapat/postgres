@@ -30,14 +30,13 @@
 #include <io.h>
 #endif
 
+#include "dumputils.h"
+#include "fe_utils/string_utils.h"
+#include "libpq/libpq-fs.h"
 #include "parallel.h"
 #include "pg_backup_archiver.h"
 #include "pg_backup_db.h"
 #include "pg_backup_utils.h"
-#include "dumputils.h"
-#include "fe_utils/string_utils.h"
-
-#include "libpq/libpq-fs.h"
 
 #define TEXT_DUMP_HEADER "--\n-- PostgreSQL database dump\n--\n\n"
 #define TEXT_DUMPALL_HEADER "--\n-- PostgreSQL database cluster dump\n--\n\n"
@@ -554,8 +553,8 @@ RestoreArchive(Archive *AHX)
 							 */
 							if (strncmp(dropStmt, "ALTER TABLE", 11) == 0)
 							{
-								appendPQExpBuffer(ftStmt,
-												  "ALTER TABLE IF EXISTS");
+								appendPQExpBufferStr(ftStmt,
+													 "ALTER TABLE IF EXISTS");
 								dropStmt = dropStmt + 11;
 							}
 
@@ -1046,8 +1045,6 @@ WriteData(Archive *AHX, const void *data, size_t dLen)
 		fatal("internal error -- WriteData cannot be called outside the context of a DataDumper routine");
 
 	AH->WriteDataPtr(AH, data, dLen);
-
-	return;
 }
 
 /*
@@ -1462,7 +1459,6 @@ void
 archputs(const char *s, Archive *AH)
 {
 	WriteData(AH, s, strlen(s));
-	return;
 }
 
 /* Public */
@@ -1737,8 +1733,6 @@ ahwrite(const void *ptr, size_t size, size_t nmemb, ArchiveHandle *AH)
 
 	if (bytes_written != size * nmemb)
 		WRITE_ERROR_EXIT;
-
-	return;
 }
 
 /* on some error, we may decide to go on... */
@@ -1989,7 +1983,7 @@ WriteInt(ArchiveHandle *AH, int i)
 	 * This is a bit yucky, but I don't want to make the binary format very
 	 * dependent on representation, and not knowing much about it, I write out
 	 * a sign byte. If you change this, don't forget to change the file
-	 * version #, and modify readInt to read the new format AS WELL AS the old
+	 * version #, and modify ReadInt to read the new format AS WELL AS the old
 	 * formats.
 	 */
 
@@ -4870,7 +4864,7 @@ CloneArchive(ArchiveHandle *AH)
 		 * any data to/from the database.
 		 */
 		initPQExpBuffer(&connstr);
-		appendPQExpBuffer(&connstr, "dbname=");
+		appendPQExpBufferStr(&connstr, "dbname=");
 		appendConnStrVal(&connstr, PQdb(AH->connection));
 		pghost = PQhost(AH->connection);
 		pgport = PQport(AH->connection);

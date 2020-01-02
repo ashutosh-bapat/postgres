@@ -3,7 +3,7 @@
  * varsup.c
  *	  postgres OID & XID variables support routines
  *
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/access/transam/varsup.c
@@ -488,7 +488,7 @@ ForceTransactionIdLimitUpdate(void)
 	if (!TransactionIdIsValid(xidVacLimit))
 		return true;			/* this shouldn't happen anymore either */
 	if (TransactionIdFollowsOrEquals(nextXid, xidVacLimit))
-		return true;			/* past VacLimit, don't delay updating */
+		return true;			/* past xidVacLimit, don't delay updating */
 	if (!SearchSysCacheExists1(DATABASEOID, ObjectIdGetDatum(oldestXidDB)))
 		return true;			/* could happen, per comments above */
 	return false;

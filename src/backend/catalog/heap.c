@@ -3,7 +3,7 @@
  * heap.c
  *	  code to create and destroy POSTGRES heap relations
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -83,7 +83,6 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
-#include "utils/rel.h"
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -125,7 +124,6 @@ static void SetRelationNumChecks(Relation rel, int numchecks);
 static Node *cookConstraint(ParseState *pstate,
 							Node *raw_constraint,
 							char *relname);
-static List *insert_ordered_unique_oid(List *list, Oid datum);
 
 
 /* ----------------------------------------------------------------
@@ -573,6 +571,10 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
  * are reliably identifiable only within a session, since the identity info
  * may use a typmod that is only locally assigned.  The caller is expected
  * to know whether these cases are safe.)
+ *
+ * flags can also control the phrasing of the error messages.  If
+ * CHKATYPE_IS_PARTKEY is specified, "attname" should be a partition key
+ * column number as text, not a real column name.
  * --------------------------------
  */
 void
@@ -599,10 +601,19 @@ CheckAttributeType(const char *attname,
 		if (!((atttypid == ANYARRAYOID && (flags & CHKATYPE_ANYARRAY)) ||
 			  (atttypid == RECORDOID && (flags & CHKATYPE_ANYRECORD)) ||
 			  (atttypid == RECORDARRAYOID && (flags & CHKATYPE_ANYRECORD))))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					 errmsg("column \"%s\" has pseudo-type %s",
-							attname, format_type_be(atttypid))));
+		{
+			if (flags & CHKATYPE_IS_PARTKEY)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				/* translator: first %s is an integer not a name */
+						 errmsg("partition key column %s has pseudo-type %s",
+								attname, format_type_be(atttypid))));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+						 errmsg("column \"%s\" has pseudo-type %s",
+								attname, format_type_be(atttypid))));
+		}
 	}
 	else if (att_typtype == TYPTYPE_DOMAIN)
 	{
@@ -634,7 +645,7 @@ CheckAttributeType(const char *attname,
 					 errmsg("composite type %s cannot be made a member of itself",
 							format_type_be(atttypid))));
 
-		containing_rowtypes = lcons_oid(atttypid, containing_rowtypes);
+		containing_rowtypes = lappend_oid(containing_rowtypes, atttypid);
 
 		relation = relation_open(get_typ_typrelid(atttypid), AccessShareLock);
 
@@ -649,12 +660,21 @@ CheckAttributeType(const char *attname,
 			CheckAttributeType(NameStr(attr->attname),
 							   attr->atttypid, attr->attcollation,
 							   containing_rowtypes,
-							   flags);
+							   flags & ~CHKATYPE_IS_PARTKEY);
 		}
 
 		relation_close(relation, AccessShareLock);
 
-		containing_rowtypes = list_delete_first(containing_rowtypes);
+		containing_rowtypes = list_delete_last(containing_rowtypes);
+	}
+	else if (att_typtype == TYPTYPE_RANGE)
+	{
+		/*
+		 * If it's a range, recurse to check its subtype.
+		 */
+		CheckAttributeType(attname, get_range_subtype(atttypid), attcollation,
+						   containing_rowtypes,
+						   flags);
 	}
 	else if (OidIsValid((att_typelem = get_element_type(atttypid))))
 	{
@@ -671,11 +691,21 @@ CheckAttributeType(const char *attname,
 	 * useless, and it cannot be dumped, so we must disallow it.
 	 */
 	if (!OidIsValid(attcollation) && type_is_collatable(atttypid))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-				 errmsg("no collation was derived for column \"%s\" with collatable type %s",
-						attname, format_type_be(atttypid)),
-				 errhint("Use the COLLATE clause to set the collation explicitly.")));
+	{
+		if (flags & CHKATYPE_IS_PARTKEY)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+			/* translator: first %s is an integer not a name */
+					 errmsg("no collation was derived for partition key column %s with collatable type %s",
+							attname, format_type_be(atttypid)),
+					 errhint("Use the COLLATE clause to set the collation explicitly.")));
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("no collation was derived for column \"%s\" with collatable type %s",
+							attname, format_type_be(atttypid)),
+					 errhint("Use the COLLATE clause to set the collation explicitly.")));
+	}
 }
 
 /*
@@ -1588,9 +1618,8 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 	/*
 	 * Grab an exclusive lock on the target table, which we will NOT release
 	 * until end of transaction.  (In the simple case where we are directly
-	 * dropping this column, AlterTableDropColumn already did this ... but
-	 * when cascading from a drop of some other object, we may not have any
-	 * lock.)
+	 * dropping this column, ATExecDropColumn already did this ... but when
+	 * cascading from a drop of some other object, we may not have any lock.)
 	 */
 	rel = relation_open(relid, AccessExclusiveLock);
 
@@ -3150,8 +3179,15 @@ RelationTruncateIndexes(Relation heapRelation)
 		/* Open the index relation; use exclusive lock, just to be sure */
 		currentIndex = index_open(indexId, AccessExclusiveLock);
 
-		/* Fetch info needed for index_build */
-		indexInfo = BuildIndexInfo(currentIndex);
+		/*
+		 * Fetch info needed for index_build.  Since we know there are no
+		 * tuples that actually need indexing, we can use a dummy IndexInfo.
+		 * This is slightly cheaper to build, but the real point is to avoid
+		 * possibly running user-defined code in index expressions or
+		 * predicates.  We might be getting invoked during ON COMMIT
+		 * processing, and we don't want to run any such code then.
+		 */
+		indexInfo = BuildDummyIndexInfo(currentIndex);
 
 		/*
 		 * Now truncate the actual file (and discard buffers).
@@ -3385,55 +3421,19 @@ heap_truncate_find_FKs(List *relationIds)
 		if (!list_member_oid(relationIds, con->confrelid))
 			continue;
 
-		/* Add referencer unless already in input or result list */
+		/* Add referencer to result, unless present in input list */
 		if (!list_member_oid(relationIds, con->conrelid))
-			result = insert_ordered_unique_oid(result, con->conrelid);
+			result = lappend_oid(result, con->conrelid);
 	}
 
 	systable_endscan(fkeyScan);
 	table_close(fkeyRel, AccessShareLock);
 
+	/* Now sort and de-duplicate the result list */
+	list_sort(result, list_oid_cmp);
+	list_deduplicate_oid(result);
+
 	return result;
-}
-
-/*
- * insert_ordered_unique_oid
- *		Insert a new Oid into a sorted list of Oids, preserving ordering,
- *		and eliminating duplicates
- *
- * Building the ordered list this way is O(N^2), but with a pretty small
- * constant, so for the number of entries we expect it will probably be
- * faster than trying to apply qsort().  It seems unlikely someone would be
- * trying to truncate a table with thousands of dependent tables ...
- */
-static List *
-insert_ordered_unique_oid(List *list, Oid datum)
-{
-	ListCell   *prev;
-
-	/* Does the datum belong at the front? */
-	if (list == NIL || datum < linitial_oid(list))
-		return lcons_oid(datum, list);
-	/* Does it match the first entry? */
-	if (datum == linitial_oid(list))
-		return list;			/* duplicate, so don't insert */
-	/* No, so find the entry it belongs after */
-	prev = list_head(list);
-	for (;;)
-	{
-		ListCell   *curr = lnext(prev);
-
-		if (curr == NULL || datum < lfirst_oid(curr))
-			break;				/* it belongs after 'prev', before 'curr' */
-
-		if (datum == lfirst_oid(curr))
-			return list;		/* duplicate, so don't insert */
-
-		prev = curr;
-	}
-	/* Insert datum into list after 'prev' */
-	lappend_cell_oid(list, prev, datum);
-	return list;
 }
 
 /*
@@ -3529,16 +3529,36 @@ StorePartitionKey(Relation rel,
 	}
 
 	/*
-	 * Anything mentioned in the expressions.  We must ignore the column
-	 * references, which will depend on the table itself; there is no separate
-	 * partition key object.
+	 * The partitioning columns are made internally dependent on the table,
+	 * because we cannot drop any of them without dropping the whole table.
+	 * (ATExecDropColumn independently enforces that, but it's not bulletproof
+	 * so we need the dependencies too.)
+	 */
+	for (i = 0; i < partnatts; i++)
+	{
+		if (partattrs[i] == 0)
+			continue;			/* ignore expressions here */
+
+		referenced.classId = RelationRelationId;
+		referenced.objectId = RelationGetRelid(rel);
+		referenced.objectSubId = partattrs[i];
+
+		recordDependencyOn(&referenced, &myself, DEPENDENCY_INTERNAL);
+	}
+
+	/*
+	 * Also consider anything mentioned in partition expressions.  External
+	 * references (e.g. functions) get NORMAL dependencies.  Table columns
+	 * mentioned in the expressions are handled the same as plain partitioning
+	 * columns, i.e. they become internally dependent on the whole table.
 	 */
 	if (partexprs)
 		recordDependencyOnSingleRelExpr(&myself,
 										(Node *) partexprs,
 										RelationGetRelid(rel),
 										DEPENDENCY_NORMAL,
-										DEPENDENCY_AUTO, true);
+										DEPENDENCY_INTERNAL,
+										true /* reverse the self-deps */ );
 
 	/*
 	 * We must invalidate the relcache so that the next

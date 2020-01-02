@@ -20,7 +20,7 @@
  * appropriate value for a free lock.  The meaning of the variable is up to
  * the caller, the lightweight lock code just assigns and compares it.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -77,8 +77,8 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
-#include "pgstat.h"
 #include "pg_trace.h"
+#include "pgstat.h"
 #include "postmaster/postmaster.h"
 #include "replication/slot.h"
 #include "storage/ipc.h"
@@ -232,7 +232,7 @@ LOG_LWDEBUG(const char *where, LWLock *lock, const char *msg)
 
 static void init_lwlock_stats(void);
 static void print_lwlock_stats(int code, Datum arg);
-static lwlock_stats * get_lwlock_stats_entry(LWLock *lockid);
+static lwlock_stats * get_lwlock_stats_entry(LWLock *lock);
 
 static void
 init_lwlock_stats(void)
@@ -1075,8 +1075,8 @@ LWLockDequeueSelf(LWLock *lock)
 		 */
 
 		/*
-		 * Reset releaseOk if somebody woke us before we removed ourselves -
-		 * they'll have set it to false.
+		 * Reset RELEASE_OK flag if somebody woke us before we removed
+		 * ourselves - they'll have set it to false.
 		 */
 		pg_atomic_fetch_or_u32(&lock->state, LW_FLAG_RELEASE_OK);
 

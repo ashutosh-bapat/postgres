@@ -3,7 +3,7 @@
  * trigger.c
  *	  PostgreSQL TRIGGERs support code.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -179,7 +179,6 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	ScanKeyData key;
 	Relation	pgrel;
 	HeapTuple	tuple;
-	Oid			fargtypes[1];	/* dummy */
 	Oid			funcrettype;
 	Oid			trigoid;
 	char		internaltrigname[NAMEDATALEN];
@@ -690,7 +689,7 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	 * Find and validate the trigger function.
 	 */
 	if (!OidIsValid(funcoid))
-		funcoid = LookupFuncName(stmt->funcname, 0, fargtypes, false);
+		funcoid = LookupFuncName(stmt->funcname, 0, NULL, false);
 	if (!isInternal)
 	{
 		aclresult = pg_proc_aclcheck(funcoid, GetUserId(), ACL_EXECUTE);
@@ -775,7 +774,7 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 											  NULL,
 											  true, /* islocal */
 											  0,	/* inhcount */
-											  true, /* isnoinherit */
+											  true, /* noinherit */
 											  isInternal);	/* is_internal */
 	}
 
@@ -1145,7 +1144,6 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 			CreateTrigStmt *childStmt;
 			Relation	childTbl;
 			Node	   *qual;
-			bool		found_whole_row;
 
 			childTbl = table_open(partdesc->oids[i], ShareRowExclusiveLock);
 
@@ -1172,23 +1170,16 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 			 */
 			childStmt = (CreateTrigStmt *) copyObject(stmt);
 			childStmt->funcname = NIL;
-			childStmt->args = NIL;
 			childStmt->whenClause = NULL;
 
 			/* If there is a WHEN clause, create a modified copy of it */
 			qual = copyObject(whenClause);
 			qual = (Node *)
 				map_partition_varattnos((List *) qual, PRS2_OLD_VARNO,
-										childTbl, rel,
-										&found_whole_row);
-			if (found_whole_row)
-				elog(ERROR, "unexpected whole-row reference found in trigger WHEN clause");
+										childTbl, rel);
 			qual = (Node *)
 				map_partition_varattnos((List *) qual, PRS2_NEW_VARNO,
-										childTbl, rel,
-										&found_whole_row);
-			if (found_whole_row)
-				elog(ERROR, "unexpected whole-row reference found in trigger WHEN clause");
+										childTbl, rel);
 
 			CreateTrigger(childStmt, queryString,
 						  partdesc->oids[i], refRelOid,
@@ -2432,13 +2423,11 @@ ExecCallTriggerFunc(TriggerData *trigdata,
 	{
 		result = FunctionCallInvoke(fcinfo);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		MyTriggerDepth--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	MyTriggerDepth--;
 
 	pgstat_end_function_usage(&fcusage, true);
 
@@ -2537,7 +2526,7 @@ ExecBRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 					 TupleTableSlot *slot)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
-	HeapTuple	newtuple = false;
+	HeapTuple	newtuple = NULL;
 	bool		should_free;
 	TriggerData LocTriggerData;
 	int			i;
@@ -2774,10 +2763,10 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 	Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
 	if (fdw_trigtuple == NULL)
 	{
-		TupleTableSlot *newSlot;
+		TupleTableSlot *epqslot_candidate = NULL;
 
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
-								LockTupleExclusive, slot, &newSlot))
+								LockTupleExclusive, slot, &epqslot_candidate))
 			return false;
 
 		/*
@@ -2785,9 +2774,9 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 		 * function requested for the updated tuple, skip the trigger
 		 * execution.
 		 */
-		if (newSlot != NULL && epqslot != NULL)
+		if (epqslot_candidate != NULL && epqslot != NULL)
 		{
-			*epqslot = newSlot;
+			*epqslot = epqslot_candidate;
 			return false;
 		}
 
@@ -3027,18 +3016,18 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 	Assert(HeapTupleIsValid(fdw_trigtuple) ^ ItemPointerIsValid(tupleid));
 	if (fdw_trigtuple == NULL)
 	{
-		TupleTableSlot *newSlot = NULL;
+		TupleTableSlot *epqslot_candidate = NULL;
 
 		/* get a copy of the on-disk tuple we are planning to update */
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
-								lockmode, oldslot, &newSlot))
+								lockmode, oldslot, &epqslot_candidate))
 			return false;		/* cancel the update action */
 
 		/*
 		 * In READ COMMITTED isolation level it's possible that target tuple
 		 * was changed due to concurrent update.  In that case we have a raw
-		 * subplan output tuple in newSlot, and need to run it through the
-		 * junk filter to produce an insertable tuple.
+		 * subplan output tuple in epqslot_candidate, and need to run it
+		 * through the junk filter to produce an insertable tuple.
 		 *
 		 * Caution: more than likely, the passed-in slot is the same as the
 		 * junkfilter's output slot, so we are clobbering the original value
@@ -3046,11 +3035,14 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 		 * nor our caller have any more interest in the prior contents of that
 		 * slot.
 		 */
-		if (newSlot != NULL)
+		if (epqslot_candidate != NULL)
 		{
-			TupleTableSlot *slot = ExecFilterJunk(relinfo->ri_junkFilter, newSlot);
+			TupleTableSlot *epqslot_clean;
 
-			ExecCopySlot(newslot, slot);
+			epqslot_clean = ExecFilterJunk(relinfo->ri_junkFilter, epqslot_candidate);
+
+			if (newslot != epqslot_clean)
+				ExecCopySlot(newslot, epqslot_clean);
 		}
 
 		trigtuple = ExecFetchSlotHeapTuple(oldslot, true, &should_free_trig);
@@ -3179,7 +3171,7 @@ ExecIRUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
-	HeapTuple	newtuple = false;
+	HeapTuple	newtuple = NULL;
 	bool		should_free;
 	TriggerData LocTriggerData;
 	int			i;
@@ -3312,17 +3304,17 @@ GetTupleForTrigger(EState *estate,
 				   ItemPointer tid,
 				   LockTupleMode lockmode,
 				   TupleTableSlot *oldslot,
-				   TupleTableSlot **newSlot)
+				   TupleTableSlot **epqslot)
 {
 	Relation	relation = relinfo->ri_RelationDesc;
 
-	if (newSlot != NULL)
+	if (epqslot != NULL)
 	{
 		TM_Result	test;
 		TM_FailureData tmfd;
 		int			lockflags = 0;
 
-		*newSlot = NULL;
+		*epqslot = NULL;
 
 		/* caller must pass an epqstate if EvalPlanQual is possible */
 		Assert(epqstate != NULL);
@@ -3332,7 +3324,7 @@ GetTupleForTrigger(EState *estate,
 		 */
 		if (!IsolationUsesXactSnapshot())
 			lockflags |= TUPLE_LOCK_FLAG_FIND_LAST_VERSION;
-		test = table_lock_tuple(relation, tid, estate->es_snapshot, oldslot,
+		test = table_tuple_lock(relation, tid, estate->es_snapshot, oldslot,
 								estate->es_output_cid,
 								lockmode, LockWaitBlock,
 								lockflags,
@@ -3362,22 +3354,20 @@ GetTupleForTrigger(EState *estate,
 			case TM_Ok:
 				if (tmfd.traversed)
 				{
-					TupleTableSlot *epqslot;
-
-					epqslot = EvalPlanQual(estate,
-										   epqstate,
-										   relation,
-										   relinfo->ri_RangeTableIndex,
-										   oldslot);
+					*epqslot = EvalPlanQual(epqstate,
+											relation,
+											relinfo->ri_RangeTableIndex,
+											oldslot);
 
 					/*
 					 * If PlanQual failed for updated tuple - we must not
 					 * process this tuple!
 					 */
-					if (TupIsNull(epqslot))
+					if (TupIsNull(*epqslot))
+					{
+						*epqslot = NULL;
 						return false;
-
-					*newSlot = epqslot;
+					}
 				}
 				break;
 
@@ -3386,7 +3376,7 @@ GetTupleForTrigger(EState *estate,
 					ereport(ERROR,
 							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
 							 errmsg("could not serialize access due to concurrent update")));
-				elog(ERROR, "unexpected table_lock_tuple status: %u", test);
+				elog(ERROR, "unexpected table_tuple_lock status: %u", test);
 				break;
 
 			case TM_Deleted:
@@ -3402,7 +3392,7 @@ GetTupleForTrigger(EState *estate,
 				break;
 
 			default:
-				elog(ERROR, "unrecognized table_lock_tuple status: %u", test);
+				elog(ERROR, "unrecognized table_tuple_lock status: %u", test);
 				return false;	/* keep compiler quiet */
 		}
 	}
@@ -3412,7 +3402,8 @@ GetTupleForTrigger(EState *estate,
 		 * We expect the tuple to be present, thus very simple error handling
 		 * suffices.
 		 */
-		if (!table_fetch_row_version(relation, tid, SnapshotAny, oldslot))
+		if (!table_tuple_fetch_row_version(relation, tid, SnapshotAny,
+										   oldslot))
 			elog(ERROR, "failed to fetch tuple for trigger");
 	}
 
@@ -4257,12 +4248,17 @@ AfterTriggerExecute(EState *estate,
 			LocTriggerData.tg_trigtuple =
 				ExecFetchSlotHeapTuple(trig_tuple_slot1, true, &should_free_trig);
 
-			LocTriggerData.tg_newslot = trig_tuple_slot2;
-			LocTriggerData.tg_newtuple =
-				((evtshared->ats_event & TRIGGER_EVENT_OPMASK) ==
-				 TRIGGER_EVENT_UPDATE) ?
-				ExecFetchSlotHeapTuple(trig_tuple_slot2, true, &should_free_new) : NULL;
-
+			if ((evtshared->ats_event & TRIGGER_EVENT_OPMASK) ==
+				TRIGGER_EVENT_UPDATE)
+			{
+				LocTriggerData.tg_newslot = trig_tuple_slot2;
+				LocTriggerData.tg_newtuple =
+					ExecFetchSlotHeapTuple(trig_tuple_slot2, true, &should_free_new);
+			}
+			else
+			{
+				LocTriggerData.tg_newtuple = NULL;
+			}
 			break;
 
 		default:
@@ -4270,7 +4266,9 @@ AfterTriggerExecute(EState *estate,
 			{
 				LocTriggerData.tg_trigslot = ExecGetTriggerOldSlot(estate, relInfo);
 
-				if (!table_fetch_row_version(rel, &(event->ate_ctid1), SnapshotAny, LocTriggerData.tg_trigslot))
+				if (!table_tuple_fetch_row_version(rel, &(event->ate_ctid1),
+												   SnapshotAny,
+												   LocTriggerData.tg_trigslot))
 					elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
 				LocTriggerData.tg_trigtuple =
 					ExecFetchSlotHeapTuple(LocTriggerData.tg_trigslot, false, &should_free_trig);
@@ -4287,7 +4285,9 @@ AfterTriggerExecute(EState *estate,
 			{
 				LocTriggerData.tg_newslot = ExecGetTriggerNewSlot(estate, relInfo);
 
-				if (!table_fetch_row_version(rel, &(event->ate_ctid2), SnapshotAny, LocTriggerData.tg_newslot))
+				if (!table_tuple_fetch_row_version(rel, &(event->ate_ctid2),
+												   SnapshotAny,
+												   LocTriggerData.tg_newslot))
 					elog(ERROR, "failed to fetch tuple2 for AFTER trigger");
 				LocTriggerData.tg_newtuple =
 					ExecFetchSlotHeapTuple(LocTriggerData.tg_newslot, false, &should_free_new);
@@ -4353,10 +4353,14 @@ AfterTriggerExecute(EState *estate,
 	if (should_free_new)
 		heap_freetuple(LocTriggerData.tg_newtuple);
 
-	if (LocTriggerData.tg_trigslot)
-		ExecClearTuple(LocTriggerData.tg_trigslot);
-	if (LocTriggerData.tg_newslot)
-		ExecClearTuple(LocTriggerData.tg_newslot);
+	/* don't clear slots' contents if foreign table */
+	if (trig_tuple_slot1 == NULL)
+	{
+		if (LocTriggerData.tg_trigslot)
+			ExecClearTuple(LocTriggerData.tg_trigslot);
+		if (LocTriggerData.tg_newslot)
+			ExecClearTuple(LocTriggerData.tg_newslot);
+	}
 
 	/*
 	 * If doing EXPLAIN ANALYZE, stop charging time to this trigger, and count
@@ -4510,13 +4514,14 @@ afterTriggerInvokeEvents(AfterTriggerEventList *events,
 					trigdesc = rInfo->ri_TrigDesc;
 					finfo = rInfo->ri_TrigFunctions;
 					instr = rInfo->ri_TrigInstrument;
+					if (slot1 != NULL)
+					{
+						ExecDropSingleTupleTableSlot(slot1);
+						ExecDropSingleTupleTableSlot(slot2);
+						slot1 = slot2 = NULL;
+					}
 					if (rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
 					{
-						if (slot1 != NULL)
-						{
-							ExecDropSingleTupleTableSlot(slot1);
-							ExecDropSingleTupleTableSlot(slot2);
-						}
 						slot1 = MakeSingleTupleTableSlot(rel->rd_att,
 														 &TTSOpsMinimalTuple);
 						slot2 = MakeSingleTupleTableSlot(rel->rd_att,
@@ -5507,12 +5512,9 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 		foreach(lc, conoidlist)
 		{
 			Oid			conoid = lfirst_oid(lc);
-			bool		found;
 			ScanKeyData skey;
 			SysScanDesc tgscan;
 			HeapTuple	htup;
-
-			found = false;
 
 			ScanKeyInit(&skey,
 						Anum_pg_trigger_tgconstraint,
@@ -5534,16 +5536,9 @@ AfterTriggerSetState(ConstraintsSetStmt *stmt)
 				 */
 				if (pg_trigger->tgdeferrable)
 					tgoidlist = lappend_oid(tgoidlist, pg_trigger->oid);
-
-				found = true;
 			}
 
 			systable_endscan(tgscan);
-
-			/* Safety check: a deferrable constraint should have triggers */
-			if (!found)
-				elog(ERROR, "no triggers found for constraint with OID %u",
-					 conoid);
 		}
 
 		table_close(tgrel, AccessShareLock);

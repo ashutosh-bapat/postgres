@@ -3,7 +3,7 @@
  * snapshot.h
  *	  POSTGRES snapshot definition
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/snapshot.h
@@ -69,7 +69,7 @@ typedef enum SnapshotType
 	SNAPSHOT_ANY,
 
 	/*
-	 * A tuple is visible iff the tuple tuple is valid as a TOAST row.
+	 * A tuple is visible iff the tuple is valid as a TOAST row.
 	 */
 	SNAPSHOT_TOAST,
 

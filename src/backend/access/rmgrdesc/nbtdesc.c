@@ -3,7 +3,7 @@
  * nbtdesc.c
  *	  rmgr descriptor routines for access/nbtree/nbtxlog.c
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -38,16 +38,15 @@ btree_desc(StringInfo buf, XLogReaderState *record)
 			{
 				xl_btree_split *xlrec = (xl_btree_split *) rec;
 
-				appendStringInfo(buf, "level %u, firstright %d",
-								 xlrec->level, xlrec->firstright);
+				appendStringInfo(buf, "level %u, firstright %d, newitemoff %d",
+								 xlrec->level, xlrec->firstright, xlrec->newitemoff);
 				break;
 			}
 		case XLOG_BTREE_VACUUM:
 			{
 				xl_btree_vacuum *xlrec = (xl_btree_vacuum *) rec;
 
-				appendStringInfo(buf, "lastBlockVacuumed %u",
-								 xlrec->lastBlockVacuumed);
+				appendStringInfo(buf, "ndeleted %u", xlrec->ndeleted);
 				break;
 			}
 		case XLOG_BTREE_DELETE:
@@ -97,8 +96,10 @@ btree_desc(StringInfo buf, XLogReaderState *record)
 			}
 		case XLOG_BTREE_META_CLEANUP:
 			{
-				xl_btree_metadata *xlrec = (xl_btree_metadata *) rec;
+				xl_btree_metadata *xlrec;
 
+				xlrec = (xl_btree_metadata *) XLogRecGetBlockData(record, 0,
+																  NULL);
 				appendStringInfo(buf, "oldest_btpo_xact %u; last_cleanup_num_heap_tuples: %f",
 								 xlrec->oldest_btpo_xact,
 								 xlrec->last_cleanup_num_heap_tuples);

@@ -1,12 +1,11 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2020, PostgreSQL Global Development Group
  *
  * src/bin/psql/copy.c
  */
 #include "postgres_fe.h"
-#include "copy.h"
 
 #include <signal.h>
 #include <sys/stat.h>
@@ -16,15 +15,14 @@
 #include <io.h>					/* I think */
 #endif
 
+#include "common.h"
+#include "common/logging.h"
+#include "copy.h"
 #include "libpq-fe.h"
 #include "pqexpbuffer.h"
-
-#include "settings.h"
-#include "common.h"
 #include "prompt.h"
+#include "settings.h"
 #include "stringutils.h"
-
-#include "common/logging.h"
 
 /*
  * parse_slash_copy

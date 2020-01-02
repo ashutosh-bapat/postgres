@@ -181,7 +181,7 @@
  * 7) Mark state 3 final because state 5 of source NFA is marked as final.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -191,18 +191,16 @@
  */
 #include "postgres.h"
 
-#include "trgm.h"
-
 #include "regex/regexport.h"
+#include "trgm.h"
 #include "tsearch/ts_locale.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 
-
 /*
  * Uncomment (or use -DTRGM_REGEXP_DEBUG) to print debug info,
  * for exploring and debugging the algorithm implementation.
- * This produces three graph files in /tmp, in Graphviz .dot format.
+ * This produces three graph files in /tmp, in Graphviz .gv format.
  * Some progress information is also printed to postmaster stderr.
  */
 /* #define TRGM_REGEXP_DEBUG */
@@ -441,9 +439,9 @@ typedef struct
 struct TrgmPackedGraph
 {
 	/*
-	 * colorTrigramsCount and colorTrigramsGroups contain information about
-	 * how trigrams are grouped into color trigrams.  "colorTrigramsCount" is
-	 * the count of color trigrams and "colorTrigramGroups" contains number of
+	 * colorTrigramsCount and colorTrigramGroups contain information about how
+	 * trigrams are grouped into color trigrams.  "colorTrigramsCount" is the
+	 * count of color trigrams and "colorTrigramGroups" contains number of
 	 * simple trigrams for each color trigram.  The array of simple trigrams
 	 * (stored separately from this struct) is ordered so that the simple
 	 * trigrams for each color trigram are consecutive, and they're in order
@@ -557,14 +555,11 @@ createTrgmNFA(text *text_re, Oid collation,
 	{
 		trg = createTrgmNFAInternal(&regex, graph, rcontext);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		pg_regfree(&regex);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	pg_regfree(&regex);
 
 	/* Clean up all the cruft we created */
 	MemoryContextSwitchTo(oldcontext);
@@ -1013,9 +1008,7 @@ addKey(TrgmNFA *trgmNFA, TrgmState *state, TrgmStateKey *key)
 {
 	regex_arc_t *arcs;
 	TrgmStateKey destKey;
-	ListCell   *cell,
-			   *prev,
-			   *next;
+	ListCell   *cell;
 	int			i,
 				arcsCount;
 
@@ -1030,13 +1023,10 @@ addKey(TrgmNFA *trgmNFA, TrgmState *state, TrgmStateKey *key)
 	 * redundancy.  We can drop either old key(s) or the new key if we find
 	 * redundancy.
 	 */
-	prev = NULL;
-	cell = list_head(state->enterKeys);
-	while (cell)
+	foreach(cell, state->enterKeys)
 	{
 		TrgmStateKey *existingKey = (TrgmStateKey *) lfirst(cell);
 
-		next = lnext(cell);
 		if (existingKey->nstate == key->nstate)
 		{
 			if (prefixContains(&existingKey->prefix, &key->prefix))
@@ -1050,15 +1040,10 @@ addKey(TrgmNFA *trgmNFA, TrgmState *state, TrgmStateKey *key)
 				 * The new key covers this old key. Remove the old key, it's
 				 * no longer needed once we add this key to the list.
 				 */
-				state->enterKeys = list_delete_cell(state->enterKeys,
-													cell, prev);
+				state->enterKeys = foreach_delete_current(state->enterKeys,
+														  cell);
 			}
-			else
-				prev = cell;
 		}
-		else
-			prev = cell;
-		cell = next;
 	}
 
 	/* No redundancy, so add this key to the state's list */
@@ -2187,8 +2172,8 @@ printSourceNFA(regex_t *regex, TrgmColorInfo *colors, int ncolors)
 	appendStringInfoString(&buf, "}\n");
 
 	{
-		/* dot -Tpng -o /tmp/source.png < /tmp/source.dot */
-		FILE	   *fp = fopen("/tmp/source.dot", "w");
+		/* dot -Tpng -o /tmp/source.png < /tmp/source.gv */
+		FILE	   *fp = fopen("/tmp/source.gv", "w");
 
 		fprintf(fp, "%s", buf.data);
 		fclose(fp);
@@ -2249,8 +2234,8 @@ printTrgmNFA(TrgmNFA *trgmNFA)
 	appendStringInfoString(&buf, "}\n");
 
 	{
-		/* dot -Tpng -o /tmp/transformed.png < /tmp/transformed.dot */
-		FILE	   *fp = fopen("/tmp/transformed.dot", "w");
+		/* dot -Tpng -o /tmp/transformed.png < /tmp/transformed.gv */
+		FILE	   *fp = fopen("/tmp/transformed.gv", "w");
 
 		fprintf(fp, "%s", buf.data);
 		fclose(fp);
@@ -2340,8 +2325,8 @@ printTrgmPackedGraph(TrgmPackedGraph *packedGraph, TRGM *trigrams)
 	appendStringInfoString(&buf, "}\n");
 
 	{
-		/* dot -Tpng -o /tmp/packed.png < /tmp/packed.dot */
-		FILE	   *fp = fopen("/tmp/packed.dot", "w");
+		/* dot -Tpng -o /tmp/packed.png < /tmp/packed.gv */
+		FILE	   *fp = fopen("/tmp/packed.gv", "w");
 
 		fprintf(fp, "%s", buf.data);
 		fclose(fp);

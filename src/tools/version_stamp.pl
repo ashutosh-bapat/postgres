@@ -3,7 +3,7 @@
 #################################################################
 # version_stamp.pl -- update version stamps throughout the source tree
 #
-# Copyright (c) 2008-2019, PostgreSQL Global Development Group
+# Copyright (c) 2008-2020, PostgreSQL Global Development Group
 #
 # src/tools/version_stamp.pl
 #################################################################
@@ -24,7 +24,7 @@ use strict;
 
 # Major version is hard-wired into the script.  We update it when we branch
 # a new development version.
-my $majorversion = 12;
+my $majorversion = 13;
 
 # Validate argument and compute derived variables
 my $minor = shift;
@@ -100,13 +100,6 @@ my $fixedfiles = "";
 
 sed_file("configure.in",
 	"-e 's/AC_INIT(\\[PostgreSQL\\], \\[[0-9a-z.]*\\]/AC_INIT([PostgreSQL], [$fullversion]/'"
-);
-
-sed_file("src/include/pg_config.h.win32",
-	"-e 's/#define PACKAGE_STRING \"PostgreSQL .*\"/#define PACKAGE_STRING \"PostgreSQL $fullversion\"/' "
-	  . "-e 's/#define PACKAGE_VERSION \".*\"/#define PACKAGE_VERSION \"$fullversion\"/' "
-	  . "-e 's/#define PG_VERSION \".*\"/#define PG_VERSION \"$fullversion\"/' "
-	  . "-e 's/#define PG_VERSION_NUM .*/#define PG_VERSION_NUM $padnumericversion/'"
 );
 
 sed_file("src/interfaces/libpq/libpq.rc.in",

@@ -13,7 +13,7 @@
  * use the Windows native routines, but if not, we use our own.
  *
  *
- * Copyright (c) 2003-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/getaddrinfo.c
@@ -49,8 +49,8 @@ typedef void (__stdcall * freeaddrinfo_ptr_t) (struct addrinfo *ai);
 
 typedef int (__stdcall * getnameinfo_ptr_t) (const struct sockaddr *sa,
 											 int salen,
-											 char *host, int hostlen,
-											 char *serv, int servlen,
+											 char *node, int nodelen,
+											 char *service, int servicelen,
 											 int flags);
 
 /* static pointers to the native routines, so we only do the lookup once. */
@@ -387,9 +387,10 @@ getnameinfo(const struct sockaddr *sa, int salen,
 	{
 		if (sa->sa_family == AF_INET)
 		{
-			if (inet_net_ntop(AF_INET, &((struct sockaddr_in *) sa)->sin_addr,
-							  sa->sa_family == AF_INET ? 32 : 128,
-							  node, nodelen) == NULL)
+			if (pg_inet_net_ntop(AF_INET,
+								 &((struct sockaddr_in *) sa)->sin_addr,
+								 sa->sa_family == AF_INET ? 32 : 128,
+								 node, nodelen) == NULL)
 				return EAI_MEMORY;
 		}
 		else

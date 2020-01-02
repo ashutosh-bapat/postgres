@@ -8,7 +8,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/pg_regress.c
@@ -29,14 +29,13 @@
 #include <sys/resource.h>
 #endif
 
-#include "pg_regress.h"
-
 #include "common/logging.h"
 #include "common/restricted_token.h"
 #include "common/username.h"
 #include "getopt_long.h"
 #include "libpq/pqcomm.h"		/* needed for UNIXSOCK_PATH() */
 #include "pg_config_paths.h"
+#include "pg_regress.h"
 #include "portability/instr_time.h"
 
 /* for resultmap we need a list of pairs of strings */
@@ -726,6 +725,10 @@ doputenv(const char *var, const char *val)
 static void
 initialize_environment(void)
 {
+	/*
+	 * Set default application_name.  (The test_function may choose to
+	 * override this, but if it doesn't, we have something useful in place.)
+	 */
 	putenv("PGAPPNAME=pg_regress");
 
 	if (nolocale)
@@ -858,6 +861,14 @@ initialize_environment(void)
 			doputenv("PGUSER", user);
 
 		/*
+		 * However, we *don't* honor PGDATABASE, since we certainly don't wish
+		 * to connect to whatever database the user might like as default.
+		 * (Most tests override PGDATABASE anyway, but there are some ECPG
+		 * test cases that don't.)
+		 */
+		unsetenv("PGDATABASE");
+
+		/*
 		 * Report what we're connecting to
 		 */
 		pghost = getenv("PGHOST");
@@ -965,13 +976,15 @@ current_windows_user(const char **acct, const char **dom)
  * Rewrite pg_hba.conf and pg_ident.conf to use SSPI authentication.  Permit
  * the current OS user to authenticate as the bootstrap superuser and as any
  * user named in a --create-role option.
+ *
+ * In --config-auth mode, the --user switch can be used to specify the
+ * bootstrap superuser's name, otherwise we assume it is the default.
  */
 static void
-config_sspi_auth(const char *pgdata)
+config_sspi_auth(const char *pgdata, const char *superuser_name)
 {
 	const char *accountname,
 			   *domainname;
-	const char *username;
 	char	   *errstr;
 	bool		have_ipv6;
 	char		fname[MAXPGPATH];
@@ -980,17 +993,25 @@ config_sspi_auth(const char *pgdata)
 			   *ident;
 	_stringlist *sl;
 
-	/*
-	 * "username", the initdb-chosen bootstrap superuser name, may always
-	 * match "accountname", the value SSPI authentication discovers.  The
-	 * underlying system functions do not clearly guarantee that.
-	 */
+	/* Find out the name of the current OS user */
 	current_windows_user(&accountname, &domainname);
-	username = get_user_name(&errstr);
-	if (username == NULL)
+
+	/* Determine the bootstrap superuser's name */
+	if (superuser_name == NULL)
 	{
-		fprintf(stderr, "%s: %s\n", progname, errstr);
-		exit(2);
+		/*
+		 * Compute the default superuser name the same way initdb does.
+		 *
+		 * It's possible that this result always matches "accountname", the
+		 * value SSPI authentication discovers.  But the underlying system
+		 * functions do not clearly guarantee that.
+		 */
+		superuser_name = get_user_name(&errstr);
+		if (superuser_name == NULL)
+		{
+			fprintf(stderr, "%s: %s\n", progname, errstr);
+			exit(2);
+		}
 	}
 
 	/*
@@ -1067,7 +1088,7 @@ config_sspi_auth(const char *pgdata)
 	 * bother escaping embedded double-quote characters.
 	 */
 	CW(fprintf(ident, "regress  \"%s@%s\"  %s\n",
-			   accountname, domainname, fmtHba(username)) >= 0);
+			   accountname, domainname, fmtHba(superuser_name)) >= 0);
 	for (sl = extraroles; sl; sl = sl->next)
 		CW(fprintf(ident, "regress  \"%s@%s\"  %s\n",
 				   accountname, domainname, fmtHba(sl->str)) >= 0);
@@ -1172,9 +1193,15 @@ spawn_process(const char *cmdline)
 	PROCESS_INFORMATION pi;
 	char	   *cmdline2;
 	HANDLE		restrictedToken;
+	const char *comspec;
+
+	/* Find CMD.EXE location using COMSPEC, if it's set */
+	comspec = getenv("COMSPEC");
+	if (comspec == NULL)
+		comspec = "CMD";
 
 	memset(&pi, 0, sizeof(pi));
-	cmdline2 = psprintf("cmd /c \"%s\"", cmdline);
+	cmdline2 = psprintf("\"%s\" /c \"%s\"", comspec, cmdline);
 
 	if ((restrictedToken =
 		 CreateRestrictedProcess(cmdline2, &pi)) == 0)
@@ -2227,7 +2254,7 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 	if (config_auth_datadir)
 	{
 #ifdef ENABLE_SSPI
-		config_sspi_auth(config_auth_datadir);
+		config_sspi_auth(config_auth_datadir, user);
 #endif
 		exit(0);
 	}
@@ -2354,7 +2381,7 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 		 * "initdb" command, this can't truncate.
 		 */
 		snprintf(buf, sizeof(buf), "%s/data", temp_instance);
-		config_sspi_auth(buf);
+		config_sspi_auth(buf, NULL);
 #elif !defined(HAVE_UNIX_SOCKETS)
 #error Platform has no means to secure the test installation.
 #endif

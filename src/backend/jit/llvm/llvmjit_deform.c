@@ -7,7 +7,7 @@
  * knowledge of the tuple descriptor. Fixed column widths, NOT NULLness, etc
  * can be taken advantage of.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -202,7 +202,7 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 			LLVMBuildBitCast(b,
 							 v_slot,
 							 l_ptr(StructMinimalTupleTableSlot),
-							 "minimalslotslot");
+							 "minimalslot");
 		v_slotoffp = LLVMBuildStructGEP(b, v_minimalslot, FIELDNO_MINIMALTUPLETABLESLOT_OFF, "");
 		v_tupleheaderp =
 			l_load_struct_gep(b, v_minimalslot, FIELDNO_MINIMALTUPLETABLESLOT_TUPLE,

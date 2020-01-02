@@ -3,7 +3,7 @@
  * test_integerset.c
  *		Test integer set data structure.
  *
- * Copyright (c) 2019, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_integerset/test_integerset.c
@@ -14,12 +14,12 @@
 
 #include "fmgr.h"
 #include "lib/integerset.h"
+#include "miscadmin.h"
 #include "nodes/bitmapset.h"
-#include "utils/memutils.h"
-#include "utils/timestamp.h"
 #include "storage/block.h"
 #include "storage/itemptr.h"
-#include "miscadmin.h"
+#include "utils/memutils.h"
+#include "utils/timestamp.h"
 
 /*
  * If you enable this, the "pattern" tests will print information about
@@ -246,7 +246,7 @@ test_pattern(const test_spec *spec)
 		 * last integer that we added to the set, plus an arbitrary constant
 		 * (1000).  There's no point in probing the whole 0 - 2^64 range, if
 		 * only a small part of the integer space is used.  We would very
-		 * rarely hit hit values that are actually in the set.
+		 * rarely hit values that are actually in the set.
 		 */
 		x = (pg_lrand48() << 31) | pg_lrand48();
 		x = x % (last_int + 1000);
@@ -337,8 +337,8 @@ test_single_value(uint64 value)
 		elog(ERROR, "intset_num_entries returned " UINT64_FORMAT ", expected 1", num_entries);
 
 	/*
-	 * Test intset_is_member() at various special values, like 0 and and
-	 * maximum possible 64-bit integer, as well as the value itself.
+	 * Test intset_is_member() at various special values, like 0 and maximum
+	 * possible 64-bit integer, as well as the value itself.
 	 */
 	if (intset_is_member(intset, 0) != (value == 0))
 		elog(ERROR, "intset_is_member failed for 0");
@@ -581,7 +581,7 @@ test_huge_distances(void)
 		intset_add_member(intset, values[i]);
 
 	/*
-	 * Test iterset_is_member() around each of these values
+	 * Test intset_is_member() around each of these values
 	 */
 	for (int i = 0; i < num_values; i++)
 	{

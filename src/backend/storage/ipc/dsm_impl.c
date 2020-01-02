@@ -36,7 +36,7 @@
  *
  * As ever, Windows requires its own implementation.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -47,7 +47,6 @@
  */
 
 #include "postgres.h"
-#include "miscadmin.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -61,15 +60,16 @@
 #ifdef HAVE_SYS_SHM_H
 #include <sys/shm.h>
 #endif
-#include "common/file_perm.h"
-#include "pgstat.h"
 
+#include "common/file_perm.h"
+#include "miscadmin.h"
+#include "pgstat.h"
 #include "portability/mem.h"
+#include "postmaster/postmaster.h"
 #include "storage/dsm_impl.h"
 #include "storage/fd.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
-#include "postmaster/postmaster.h"
 
 #ifdef USE_DSM_POSIX
 static bool dsm_impl_posix(dsm_op op, dsm_handle handle, Size request_size,
@@ -917,7 +917,7 @@ dsm_impl_mmap(dsm_op op, dsm_handle handle, Size request_size,
 	*mapped_address = address;
 	*mapped_size = request_size;
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 	{
 		ereport(elevel,
 				(errcode_for_file_access(),

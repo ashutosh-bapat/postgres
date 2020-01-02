@@ -13,7 +13,7 @@
  * - circle
  * - polygon
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2348,6 +2348,17 @@ dist_pl(PG_FUNCTION_ARGS)
 	PG_RETURN_FLOAT8(line_closept_point(NULL, line, pt));
 }
 
+/*
+ * Distance from a line to a point
+ */
+Datum
+dist_lp(PG_FUNCTION_ARGS)
+{
+	LINE	   *line = PG_GETARG_LINE_P(0);
+	Point	   *pt = PG_GETARG_POINT_P(1);
+
+	PG_RETURN_FLOAT8(line_closept_point(NULL, line, pt));
+}
 
 /*
  * Distance from a point to a lseg
@@ -2362,13 +2373,20 @@ dist_ps(PG_FUNCTION_ARGS)
 }
 
 /*
- * Distance from a point to a path
+ * Distance from a lseg to a point
  */
 Datum
-dist_ppath(PG_FUNCTION_ARGS)
+dist_sp(PG_FUNCTION_ARGS)
 {
-	Point	   *pt = PG_GETARG_POINT_P(0);
-	PATH	   *path = PG_GETARG_PATH_P(1);
+	LSEG	   *lseg = PG_GETARG_LSEG_P(0);
+	Point	   *pt = PG_GETARG_POINT_P(1);
+
+	PG_RETURN_FLOAT8(lseg_closept_point(NULL, lseg, pt));
+}
+
+static float8
+dist_ppath_internal(Point *pt, PATH *path)
+{
 	float8		result = 0.0;	/* keep compiler quiet */
 	bool		have_min = false;
 	float8		tmp;
@@ -2403,7 +2421,31 @@ dist_ppath(PG_FUNCTION_ARGS)
 		}
 	}
 
-	PG_RETURN_FLOAT8(result);
+	return result;
+}
+
+/*
+ * Distance from a point to a path
+ */
+Datum
+dist_ppath(PG_FUNCTION_ARGS)
+{
+	Point	   *pt = PG_GETARG_POINT_P(0);
+	PATH	   *path = PG_GETARG_PATH_P(1);
+
+	PG_RETURN_FLOAT8(dist_ppath_internal(pt, path));
+}
+
+/*
+ * Distance from a path to a point
+ */
+Datum
+dist_pathp(PG_FUNCTION_ARGS)
+{
+	PATH	   *path = PG_GETARG_PATH_P(0);
+	Point	   *pt = PG_GETARG_POINT_P(1);
+
+	PG_RETURN_FLOAT8(dist_ppath_internal(pt, path));
 }
 
 /*
@@ -2414,6 +2456,18 @@ dist_pb(PG_FUNCTION_ARGS)
 {
 	Point	   *pt = PG_GETARG_POINT_P(0);
 	BOX		   *box = PG_GETARG_BOX_P(1);
+
+	PG_RETURN_FLOAT8(box_closept_point(NULL, box, pt));
+}
+
+/*
+ * Distance from a box to a point
+ */
+Datum
+dist_bp(PG_FUNCTION_ARGS)
+{
+	BOX		   *box = PG_GETARG_BOX_P(0);
+	Point	   *pt = PG_GETARG_POINT_P(1);
 
 	PG_RETURN_FLOAT8(box_closept_point(NULL, box, pt));
 }
@@ -2431,6 +2485,18 @@ dist_sl(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Distance from a line to a lseg
+ */
+Datum
+dist_ls(PG_FUNCTION_ARGS)
+{
+	LINE	   *line = PG_GETARG_LINE_P(0);
+	LSEG	   *lseg = PG_GETARG_LSEG_P(1);
+
+	PG_RETURN_FLOAT8(lseg_closept_line(NULL, lseg, line));
+}
+
+/*
  * Distance from a lseg to a box
  */
 Datum
@@ -2438,6 +2504,18 @@ dist_sb(PG_FUNCTION_ARGS)
 {
 	LSEG	   *lseg = PG_GETARG_LSEG_P(0);
 	BOX		   *box = PG_GETARG_BOX_P(1);
+
+	PG_RETURN_FLOAT8(box_closept_lseg(NULL, box, lseg));
+}
+
+/*
+ * Distance from a box to a lseg
+ */
+Datum
+dist_bs(PG_FUNCTION_ARGS)
+{
+	BOX		   *box = PG_GETARG_BOX_P(0);
+	LSEG	   *lseg = PG_GETARG_LSEG_P(1);
 
 	PG_RETURN_FLOAT8(box_closept_lseg(NULL, box, lseg));
 }
@@ -2462,13 +2540,27 @@ dist_lb(PG_FUNCTION_ARGS)
 }
 
 /*
- * Distance from a circle to a polygon
+ * Distance from a box to a line
  */
 Datum
-dist_cpoly(PG_FUNCTION_ARGS)
+dist_bl(PG_FUNCTION_ARGS)
 {
-	CIRCLE	   *circle = PG_GETARG_CIRCLE_P(0);
-	POLYGON    *poly = PG_GETARG_POLYGON_P(1);
+#ifdef NOT_USED
+	BOX		   *box = PG_GETARG_BOX_P(0);
+	LINE	   *line = PG_GETARG_LINE_P(1);
+#endif
+
+	/* need to think about this one for a while */
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"dist_bl\" not implemented")));
+
+	PG_RETURN_NULL();
+}
+
+static float8
+dist_cpoly_internal(CIRCLE *circle, POLYGON *poly)
+{
 	float8		result;
 
 	/* calculate distance to center, and subtract radius */
@@ -2477,7 +2569,31 @@ dist_cpoly(PG_FUNCTION_ARGS)
 	if (result < 0.0)
 		result = 0.0;
 
-	PG_RETURN_FLOAT8(result);
+	return result;
+}
+
+/*
+ * Distance from a circle to a polygon
+ */
+Datum
+dist_cpoly(PG_FUNCTION_ARGS)
+{
+	CIRCLE	   *circle = PG_GETARG_CIRCLE_P(0);
+	POLYGON    *poly = PG_GETARG_POLYGON_P(1);
+
+	PG_RETURN_FLOAT8(dist_cpoly_internal(circle, poly));
+}
+
+/*
+ * Distance from a polygon to a circle
+ */
+Datum
+dist_polyc(PG_FUNCTION_ARGS)
+{
+	POLYGON    *poly = PG_GETARG_POLYGON_P(0);
+	CIRCLE	   *circle = PG_GETARG_CIRCLE_P(1);
+
+	PG_RETURN_FLOAT8(dist_cpoly_internal(circle, poly));
 }
 
 /*
@@ -5315,7 +5431,7 @@ lseg_crossing(float8 x, float8 y, float8 prev_x, float8 prev_y)
 				/* both non-positive so do not cross positive X-axis */
 				return 0;
 
-			/* x and y cross axises, see URL above point_inside() */
+			/* x and y cross axes, see URL above point_inside() */
 			z = float8_mi(float8_mul(float8_mi(x, prev_x), y),
 						  float8_mul(float8_mi(y, prev_y), x));
 			if (FPzero(z))

@@ -7,14 +7,10 @@
 #include "postgres.h"
 
 #include "access/xact.h"
-#include "utils/memutils.h"
-
-#include "plpython.h"
-
-#include "plpy_subxactobject.h"
-
 #include "plpy_elog.h"
-
+#include "plpy_subxactobject.h"
+#include "plpython.h"
+#include "utils/memutils.h"
 
 List	   *explicit_subtransactions = NIL;
 
@@ -132,7 +128,7 @@ PLy_subtransaction_enter(PyObject *self, PyObject *unused)
  *
  * Exit an explicit subtransaction. exc_type is an exception type, exc
  * is the exception object, tb is the traceback.  If exc_type is None,
- * commit the subtransactiony, if not abort it.
+ * commit the subtransaction, if not abort it.
  *
  * The method signature is chosen to allow subtransaction objects to
  * be used as context managers as described in

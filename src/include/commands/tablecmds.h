@@ -4,7 +4,7 @@
  *	  prototypes for tablecmds.c.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/tablecmds.h
@@ -60,8 +60,6 @@ extern void SetRelationHasSubclass(Oid relationId, bool relhassubclass);
 
 extern ObjectAddress renameatt(RenameStmt *stmt);
 
-extern ObjectAddress renameatt_type(RenameStmt *stmt);
-
 extern ObjectAddress RenameConstraint(RenameStmt *stmt);
 
 extern ObjectAddress RenameRelation(RenameStmt *stmt);
@@ -89,7 +87,7 @@ extern void RangeVarCallbackOwnsTable(const RangeVar *relation,
 									  Oid relId, Oid oldRelId, void *arg);
 
 extern void RangeVarCallbackOwnsRelation(const RangeVar *relation,
-										 Oid relId, Oid oldRelId, void *noCatalogs);
+										 Oid relId, Oid oldRelId, void *arg);
 extern bool PartConstraintImpliedByRelConstraint(Relation scanrel,
 												 List *partConstraint);
 

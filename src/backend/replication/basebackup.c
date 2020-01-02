@@ -3,7 +3,7 @@
  * basebackup.c
  *	  code for taking a base backup and streaming it to a standby
  *
- * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/basebackup.c
@@ -24,8 +24,8 @@
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "nodes/pg_list.h"
-#include "pgtar.h"
 #include "pgstat.h"
+#include "pgtar.h"
 #include "port.h"
 #include "postmaster/syslogger.h"
 #include "replication/basebackup.h"
@@ -41,7 +41,6 @@
 #include "utils/ps_status.h"
 #include "utils/relcache.h"
 #include "utils/timestamp.h"
-
 
 typedef struct
 {
@@ -66,11 +65,10 @@ static int64 _tarWriteDir(const char *pathbuf, int basepathlen, struct stat *sta
 						  bool sizeonly);
 static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
-static void base_backup_cleanup(int code, Datum arg);
 static void perform_base_backup(basebackup_options *opt);
 static void parse_basebackup_options(List *options, basebackup_options *opt);
 static void SendXlogRecPtrResult(XLogRecPtr ptr, TimeLineID tli);
-static int	compareWalFileNames(const void *a, const void *b);
+static int	compareWalFileNames(const ListCell *a, const ListCell *b);
 static void throttle(size_t increment);
 static bool is_checksummed_file(const char *fullpath, const char *filename);
 
@@ -90,6 +88,18 @@ static char *statrelpath = NULL;
  */
 #define THROTTLING_FREQUENCY	8
 
+/*
+ * Checks whether we encountered any error in fread().  fread() doesn't give
+ * any clue what has happened, so we check with ferror().  Also, neither
+ * fread() nor ferror() set errno, so we just throw a generic error.
+ */
+#define CHECK_FREAD_ERROR(fp, filename) \
+do { \
+	if (ferror(fp)) \
+		ereport(ERROR, \
+				(errmsg("could not read from file \"%s\"", filename))); \
+} while (0)
+
 /* The actual number of bytes, transfer of which may cause sleep. */
 static uint64 throttling_sample;
 
@@ -106,7 +116,7 @@ static TimestampTz throttled_last;
 static XLogRecPtr startptr;
 
 /* Total number of checksum failures during base backup. */
-static int64 total_checksum_failures;
+static long long int total_checksum_failures;
 
 /* Do not verify checksums. */
 static bool noverify_checksums = false;
@@ -119,7 +129,7 @@ static bool noverify_checksums = false;
  * Note: this list should be kept in sync with the filter lists in pg_rewind's
  * filemap.c.
  */
-static const char *excludeDirContents[] =
+static const char *const excludeDirContents[] =
 {
 	/*
 	 * Skip temporary statistics files. PG_STAT_TMP_DIR must be skipped even
@@ -160,7 +170,7 @@ static const char *excludeDirContents[] =
 /*
  * List of files excluded from backups.
  */
-static const char *excludeFiles[] =
+static const char *const excludeFiles[] =
 {
 	/* Skip auto conf temporary file. */
 	PG_AUTOCONF_FILENAME ".tmp",
@@ -205,17 +215,6 @@ static const char *const noChecksumFiles[] = {
 	NULL,
 };
 
-
-/*
- * Called when ERROR or FATAL happens in perform_base_backup() after
- * we have started the backup - make sure we end it!
- */
-static void
-base_backup_cleanup(int code, Datum arg)
-{
-	do_pg_abort_backup();
-}
-
 /*
  * Actually do a base backup for the specified tablespaces.
  *
@@ -254,7 +253,7 @@ perform_base_backup(basebackup_options *opt)
 	 * do_pg_stop_backup() should be inside the error cleanup block!
 	 */
 
-	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
+	PG_ENSURE_ERROR_CLEANUP(do_pg_abort_backup, BoolGetDatum(false));
 	{
 		ListCell   *lc;
 		tablespaceinfo *ti;
@@ -355,7 +354,7 @@ perform_base_backup(basebackup_options *opt)
 			 */
 			if (opt->includewal && ti->path == NULL)
 			{
-				Assert(lnext(lc) == NULL);
+				Assert(lnext(tablespaces, lc) == NULL);
 			}
 			else
 				pq_putemptymessage('c');	/* CopyDone */
@@ -363,7 +362,7 @@ perform_base_backup(basebackup_options *opt)
 
 		endptr = do_pg_stop_backup(labelfile->data, !opt->nowait, &endtli);
 	}
-	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
+	PG_END_ENSURE_ERROR_CLEANUP(do_pg_abort_backup, BoolGetDatum(false));
 
 
 	if (opt->includewal)
@@ -379,13 +378,10 @@ perform_base_backup(basebackup_options *opt)
 		struct stat statbuf;
 		List	   *historyFileList = NIL;
 		List	   *walFileList = NIL;
-		char	  **walFiles;
-		int			nWalFiles;
 		char		firstoff[MAXFNAMELEN];
 		char		lastoff[MAXFNAMELEN];
 		DIR		   *dir;
 		struct dirent *de;
-		int			i;
 		ListCell   *lc;
 		TimeLineID	tli;
 
@@ -428,24 +424,17 @@ perform_base_backup(basebackup_options *opt)
 		CheckXLogRemoved(startsegno, ThisTimeLineID);
 
 		/*
-		 * Put the WAL filenames into an array, and sort. We send the files in
-		 * order from oldest to newest, to reduce the chance that a file is
-		 * recycled before we get a chance to send it over.
+		 * Sort the WAL filenames.  We want to send the files in order from
+		 * oldest to newest, to reduce the chance that a file is recycled
+		 * before we get a chance to send it over.
 		 */
-		nWalFiles = list_length(walFileList);
-		walFiles = palloc(nWalFiles * sizeof(char *));
-		i = 0;
-		foreach(lc, walFileList)
-		{
-			walFiles[i++] = lfirst(lc);
-		}
-		qsort(walFiles, nWalFiles, sizeof(char *), compareWalFileNames);
+		list_sort(walFileList, compareWalFileNames);
 
 		/*
 		 * There must be at least one xlog file in the pg_wal directory, since
 		 * we are doing backup-including-xlog.
 		 */
-		if (nWalFiles < 1)
+		if (walFileList == NIL)
 			ereport(ERROR,
 					(errmsg("could not find any WAL files")));
 
@@ -453,7 +442,8 @@ perform_base_backup(basebackup_options *opt)
 		 * Sanity check: the first and last segment should cover startptr and
 		 * endptr, with no gaps in between.
 		 */
-		XLogFromFileName(walFiles[0], &tli, &segno, wal_segment_size);
+		XLogFromFileName((char *) linitial(walFileList),
+						 &tli, &segno, wal_segment_size);
 		if (segno != startsegno)
 		{
 			char		startfname[MAXFNAMELEN];
@@ -463,12 +453,13 @@ perform_base_backup(basebackup_options *opt)
 			ereport(ERROR,
 					(errmsg("could not find WAL file \"%s\"", startfname)));
 		}
-		for (i = 0; i < nWalFiles; i++)
+		foreach(lc, walFileList)
 		{
+			char	   *walFileName = (char *) lfirst(lc);
 			XLogSegNo	currsegno = segno;
 			XLogSegNo	nextsegno = segno + 1;
 
-			XLogFromFileName(walFiles[i], &tli, &segno, wal_segment_size);
+			XLogFromFileName(walFileName, &tli, &segno, wal_segment_size);
 			if (!(nextsegno == segno || currsegno == segno))
 			{
 				char		nextfname[MAXFNAMELEN];
@@ -489,15 +480,16 @@ perform_base_backup(basebackup_options *opt)
 		}
 
 		/* Ok, we have everything we need. Send the WAL files. */
-		for (i = 0; i < nWalFiles; i++)
+		foreach(lc, walFileList)
 		{
+			char	   *walFileName = (char *) lfirst(lc);
 			FILE	   *fp;
 			char		buf[TAR_SEND_SIZE];
 			size_t		cnt;
 			pgoff_t		len = 0;
 
-			snprintf(pathbuf, MAXPGPATH, XLOGDIR "/%s", walFiles[i]);
-			XLogFromFileName(walFiles[i], &tli, &segno, wal_segment_size);
+			snprintf(pathbuf, MAXPGPATH, XLOGDIR "/%s", walFileName);
+			XLogFromFileName(walFileName, &tli, &segno, wal_segment_size);
 
 			fp = AllocateFile(pathbuf, "rb");
 			if (fp == NULL)
@@ -527,7 +519,7 @@ perform_base_backup(basebackup_options *opt)
 				CheckXLogRemoved(segno, tli);
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("unexpected WAL file size \"%s\"", walFiles[i])));
+						 errmsg("unexpected WAL file size \"%s\"", walFileName)));
 			}
 
 			/* send the WAL file itself */
@@ -550,12 +542,14 @@ perform_base_backup(basebackup_options *opt)
 					break;
 			}
 
+			CHECK_FREAD_ERROR(fp, pathbuf);
+
 			if (len != wal_segment_size)
 			{
 				CheckXLogRemoved(segno, tli);
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("unexpected WAL file size \"%s\"", walFiles[i])));
+						 errmsg("unexpected WAL file size \"%s\"", walFileName)));
 			}
 
 			/* wal_segment_size is a multiple of 512, so no need for padding */
@@ -568,7 +562,7 @@ perform_base_backup(basebackup_options *opt)
 			 * walreceiver.c always doing an XLogArchiveForceDone() after a
 			 * complete segment.
 			 */
-			StatusFilePath(pathbuf, walFiles[i], ".done");
+			StatusFilePath(pathbuf, walFileName, ".done");
 			sendFileWithContent(pathbuf, "");
 		}
 
@@ -607,14 +601,9 @@ perform_base_backup(basebackup_options *opt)
 	if (total_checksum_failures)
 	{
 		if (total_checksum_failures > 1)
-		{
-			char		buf[64];
-
-			snprintf(buf, sizeof(buf), INT64_FORMAT, total_checksum_failures);
-
 			ereport(WARNING,
-					(errmsg("%s total checksum verification failures", buf)));
-		}
+					(errmsg("%lld total checksum verification failures", total_checksum_failures)));
+
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("checksum verification failure during base backup")));
@@ -623,14 +612,14 @@ perform_base_backup(basebackup_options *opt)
 }
 
 /*
- * qsort comparison function, to compare log/seg portion of WAL segment
+ * list_sort comparison function, to compare log/seg portion of WAL segment
  * filenames, ignoring the timeline portion.
  */
 static int
-compareWalFileNames(const void *a, const void *b)
+compareWalFileNames(const ListCell *a, const ListCell *b)
 {
-	char	   *fna = *((char **) a);
-	char	   *fnb = *((char **) b);
+	char	   *fna = (char *) lfirst(a);
+	char	   *fnb = (char *) lfirst(b);
 
 	return strcmp(fna + 8, fnb + 8);
 }
@@ -804,7 +793,7 @@ SendBackupHeader(List *tablespaces)
 	pq_sendint32(&buf, 0);		/* typmod */
 	pq_sendint16(&buf, 0);		/* format code */
 
-	/* Second field - spcpath */
+	/* Second field - spclocation */
 	pq_sendstring(&buf, "spclocation");
 	pq_sendint32(&buf, 0);
 	pq_sendint16(&buf, 0);
@@ -1079,7 +1068,7 @@ sendDir(const char *path, int basepathlen, bool sizeonly, List *tablespaces,
 		 * error in that case. The error handler further up will call
 		 * do_pg_abort_backup() for us. Also check that if the backup was
 		 * started while still in recovery, the server wasn't promoted.
-		 * dp_pg_stop_backup() will check that too, but it's better to stop
+		 * do_pg_stop_backup() will check that too, but it's better to stop
 		 * the backup early than continue to the end and fail there.
 		 */
 		CHECK_FOR_INTERRUPTS();
@@ -1440,7 +1429,7 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 		if (verify_checksum && (cnt % BLCKSZ != 0))
 		{
 			ereport(WARNING,
-					(errmsg("cannot verify checksum in file \"%s\", block "
+					(errmsg("could not verify checksum in file \"%s\", block "
 							"%d: read buffer size %d and page size %d "
 							"differ",
 							readfilename, blkno, (int) cnt, BLCKSZ)));
@@ -1490,6 +1479,20 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 
 							if (fread(buf + BLCKSZ * i, 1, BLCKSZ, fp) != BLCKSZ)
 							{
+								/*
+								 * If we hit end-of-file, a concurrent
+								 * truncation must have occurred, so break out
+								 * of this loop just as if the initial fread()
+								 * returned 0. We'll drop through to the same
+								 * code that handles that case. (We must fix
+								 * up cnt first, though.)
+								 */
+								if (feof(fp))
+								{
+									cnt = BLCKSZ * i;
+									break;
+								}
+
 								ereport(ERROR,
 										(errcode_for_file_access(),
 										 errmsg("could not reread block %d of file \"%s\": %m",
@@ -1541,7 +1544,7 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 		len += cnt;
 		throttle(cnt);
 
-		if (len >= statbuf->st_size)
+		if (feof(fp) || len >= statbuf->st_size)
 		{
 			/*
 			 * Reached end of file. The file could be longer, if it was
@@ -1551,6 +1554,8 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 			break;
 		}
 	}
+
+	CHECK_FREAD_ERROR(fp, readfilename);
 
 	/* If the file was truncated while we were sending it, pad it with zeros */
 	if (len < statbuf->st_size)
@@ -1581,8 +1586,10 @@ sendFile(const char *readfilename, const char *tarfilename, struct stat *statbuf
 	if (checksum_failures > 1)
 	{
 		ereport(WARNING,
-				(errmsg("file \"%s\" has a total of %d checksum verification "
-						"failures", readfilename, checksum_failures)));
+				(errmsg_plural("file \"%s\" has a total of %d checksum verification failure",
+							   "file \"%s\" has a total of %d checksum verification failures",
+							   checksum_failures,
+							   readfilename, checksum_failures)));
 
 		pgstat_report_checksum_failures_in_db(dboid, checksum_failures);
 	}

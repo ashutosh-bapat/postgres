@@ -4,15 +4,10 @@
  *	  prototypes for postgres.c.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/tcopprot.h
- *
- * OLD COMMENTS
- *	  This file was created so that other c files could get the two
- *	  function prototypes without having to include tcop.h which single
- *	  handedly includes the whole f*cking tree -- mer 5 Nov. 1991
  *
  *-------------------------------------------------------------------------
  */

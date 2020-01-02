@@ -9,7 +9,7 @@
  * there's hardly any use case for using these without superuser-rights
  * anyway.
  *
- * Copyright (c) 2007-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/fsmfuncs.c
@@ -19,11 +19,10 @@
 
 #include "postgres.h"
 
-#include "pageinspect.h"
-
 #include "funcapi.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
+#include "pageinspect.h"
 #include "storage/fsm_internals.h"
 #include "utils/builtins.h"
 

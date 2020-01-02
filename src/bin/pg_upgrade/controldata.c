@@ -3,15 +3,15 @@
  *
  *	controldata functions
  *
- *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/controldata.c
  */
 
 #include "postgres_fe.h"
 
-#include "pg_upgrade.h"
-
 #include <ctype.h>
+
+#include "pg_upgrade.h"
 
 /*
  * get_control_data()
@@ -105,7 +105,7 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 #ifndef WIN32
 	pg_putenv("LANG", NULL);
 #else
-	/* On Windows the default locale cannot be English, so force it */
+	/* On Windows the default locale may not be English, so force it */
 	pg_putenv("LANG", "en");
 #endif
 	pg_putenv("LANGUAGE", NULL);

@@ -3,17 +3,15 @@
  *
  *	server-side function support
  *
- *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/function.c
  */
 
 #include "postgres_fe.h"
 
-#include "pg_upgrade.h"
-
 #include "access/transam.h"
 #include "catalog/pg_language_d.h"
-
+#include "pg_upgrade.h"
 
 /*
  * qsort comparator for pointers to library names
@@ -256,7 +254,7 @@ check_loadable_libraries(void)
 		}
 
 		if (was_load_failure)
-			fprintf(script, _("Database: %s\n"),
+			fprintf(script, _("In database: %s\n"),
 					old_cluster.dbarr.dbs[os_info.libraries[libnum].dbnum].db_name);
 	}
 

@@ -4,7 +4,7 @@
  * Postgres write-ahead log manager record pointer and
  * timeline number definitions
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlogdefs.h
@@ -22,7 +22,7 @@ typedef uint64 XLogRecPtr;
 
 /*
  * Zero is used indicate an invalid pointer. Bootstrap skips the first possible
- * WAL segment, initializing the first WAL page at XLOG_SEG_SIZE, so no XLOG
+ * WAL segment, initializing the first WAL page at WAL segment size, so no XLOG
  * record can begin at zero.
  */
 #define InvalidXLogRecPtr	0

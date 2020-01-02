@@ -193,11 +193,33 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
           </listitem>
          </varlistentry>
          <varlistentry>
-          <term><literal>g</literal> (Generate data)</term>
+          <term><literal>g</literal> or <literal>G</literal> (Generate data, client-side or server-side)</term>
           <listitem>
            <para>
             Generate data and load it into the standard tables,
             replacing any data already present.
+           </para>
+           <para>
+            With <literal>g</literal> (client-side data generation),
+            data is generated in <command>pgbench</command> client and then
+            sent to the server. This uses the client/server bandwidth
+            extensively through a <command>COPY</command>.
+            Using <literal>g</literal> causes logging to print one message
+            every 100,000 rows when generating data into
+            <structname>pgbench_accounts</structname> table.
+           </para>
+           <para>
+            With <literal>G</literal> (server-side data generation),
+            only limited queries are sent from <command>pgbench</command>
+            client and then data is actually generated in the server.
+            No significant bandwidth is required for this variant, but
+            the server will do more work.
+            Using <literal>G</literal> causes logging not to print any progress
+            message when generating data into
+            <structname>pgbench_accounts</structname> table.
+           </para>
+           <para>
+            
            </para>
           </listitem>
          </varlistentry>
@@ -262,8 +284,12 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
       <listitem>
        <para>
         Switch logging to quiet mode, producing only one progress message per 5
-        seconds. The default logging prints one message each 100000 rows, which
+        seconds. The default logging prints one message each 100,000 rows, which
         often outputs many lines per second (especially on good hardware).
+       </para>
+       <para>
+        This setting has no effect if <literal>G</literal> is specified
+        in <option>-I</option>.
        </para>
       </listitem>
      </varlistentry>
@@ -302,6 +328,31 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        <para>
         Create indexes in the specified tablespace, rather than the default
         tablespace.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--partitions=<replaceable>NUM</replaceable></option></term>
+      <listitem>
+       <para>
+        Create a partitioned <literal>pgbench_accounts</literal> table with
+        <replaceable>NUM</replaceable> partitions of nearly equal size for
+        the scaled number of accounts.
+        Default is <literal>0</literal>, meaning no partitioning.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--partition-method=<replaceable>NAME</replaceable></option></term>
+      <listitem>
+       <para>
+        Create a partitioned <literal>pgbench_accounts</literal> table with
+        <replaceable>NAME</replaceable> method.
+        Expected values are <literal>range</literal> or <literal>hash</literal>.
+        This option requires that <option>--partitions</option> is set to non-zero.
+        If unspecified, default is <literal>range</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -354,7 +405,6 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        </para>
       </listitem>
      </varlistentry>
-
 
      <varlistentry>
       <term><option>-c</option> <replaceable>clients</replaceable></term>
@@ -474,10 +524,10 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
            </listitem>
           </itemizedlist>
 
-        Because in "prepared" mode <application>pgbench</application> reuses
-        the parse analysis result for the second and subsequent query
-        iteration, <application>pgbench</application> runs faster in the
-        prepared mode than in other modes.
+        In the <literal>prepared</literal> mode, <application>pgbench</application>
+        reuses the parse analysis result starting from the second query
+        iteration, so <application>pgbench</application> runs faster
+        than in other modes.
        </para>
        <para>
         The default is simple query protocol.  (See <xref linkend="protocol"/>
@@ -613,6 +663,16 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
        <para>
         Run built-in select-only script.
         Shorthand for <option>-b select-only</option>.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--show-script</option><replaceable>scriptname</replaceable></term>
+      <listitem>
+       <para>
+        Show the actual code of builtin script <replaceable>scriptname</replaceable>
+        on stderr, and exit immediately.
        </para>
       </listitem>
      </varlistentry>
@@ -827,7 +887,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
   <title>Notes</title>
 
  <refsect2>
-  <title>What is the <quote>Transaction</quote> Actually Performed in <application>pgbench</application>?</title>
+  <title>What Is the <quote>Transaction</quote> Actually Performed in <application>pgbench</application>?</title>
 
   <para>
    <application>pgbench</application> executes test scripts chosen randomly
@@ -843,7 +903,7 @@ pgbench <optional> <replaceable>options</replaceable> </optional> <replaceable>d
   <para>
    The default built-in transaction script (also invoked with <option>-b tpcb-like</option>)
    issues seven commands per transaction over randomly chosen <literal>aid</literal>,
-   <literal>tid</literal>, <literal>bid</literal> and <literal>balance</literal>.
+   <literal>tid</literal>, <literal>bid</literal> and <literal>delta</literal>.
    The scenario is inspired by the TPC-B benchmark, but is not actually TPC-B,
    hence the name.
   </para>
@@ -1142,7 +1202,7 @@ SELECT 2 AS two, 3 AS three \gset p_
  </refsect2>
 
  <refsect2 id="pgbench-builtin-operators">
-  <title>Built-In Operators</title>
+  <title>Built-in Operators</title>
 
   <para>
    The arithmetic, bitwise, comparison and logical operators listed in
@@ -1152,7 +1212,7 @@ SELECT 2 AS two, 3 AS three \gset p_
   </para>
 
   <table id="pgbench-operators">
-   <title>pgbench Operators by increasing precedence</title>
+   <title>pgbench Operators by Increasing Precedence</title>
    <tgroup cols="4">
     <thead>
      <row>
@@ -1561,7 +1621,7 @@ f(x) = PHI(2.0 * parameter * (x - mu) / (max - min + 1)) /
       For example, <literal>random_zipfian(1, ..., 2.5)</literal> produces
       the value <literal>1</literal> about <literal>(2/1)**2.5 =
       5.66</literal> times more frequently than <literal>2</literal>, which
-      itself is produced <literal>(3/2)*2.5 = 2.76</literal> times more
+      itself is produced <literal>(3/2)**2.5 = 2.76</literal> times more
       frequently than <literal>3</literal>, and so on.
      </para>
      <para>

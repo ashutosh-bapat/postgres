@@ -9,7 +9,7 @@
  * Shridhar Daithankar <shridhar_daithankar@persistent.co.in>
  *
  * contrib/dblink/dblink.c
- * Copyright (c) 2001-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2020, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -34,8 +34,6 @@
 
 #include <limits.h>
 
-#include "libpq-fe.h"
-
 #include "access/htup_details.h"
 #include "access/relation.h"
 #include "access/reloptions.h"
@@ -50,6 +48,7 @@
 #include "foreign/foreign.h"
 #include "funcapi.h"
 #include "lib/stringinfo.h"
+#include "libpq-fe.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "parser/scansup.h"
@@ -777,18 +776,13 @@ dblink_record_internal(FunctionCallInfo fcinfo, bool is_async)
 			}
 		}
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		/* if needed, close the connection to the database */
 		if (freeconn)
 			PQfinish(conn);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	/* if needed, close the connection to the database */
-	if (freeconn)
-		PQfinish(conn);
 
 	return (Datum) 0;
 }
@@ -953,14 +947,11 @@ materializeResult(FunctionCallInfo fcinfo, PGconn *conn, PGresult *res)
 			/* clean up and return the tuplestore */
 			tuplestore_donestoring(tupstore);
 		}
-
-		PQclear(res);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		/* be sure to release the libpq result */
 		PQclear(res);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 }
@@ -1465,18 +1456,13 @@ dblink_exec(PG_FUNCTION_ARGS)
 					 errmsg("statement returning results not allowed")));
 		}
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		/* if needed, close the connection to the database */
 		if (freeconn)
 			PQfinish(conn);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	/* if needed, close the connection to the database */
-	if (freeconn)
-		PQfinish(conn);
 
 	PG_RETURN_TEXT_P(sql_cmd_status);
 }
@@ -1653,8 +1639,7 @@ dblink_build_sql_insert(PG_FUNCTION_ARGS)
 	if (src_nitems != pknumatts)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("source key array length must match number of key " \
-						"attributes")));
+				 errmsg("source key array length must match number of key attributes")));
 
 	/*
 	 * Target array is made up of key values that will be used to build the
@@ -1668,8 +1653,7 @@ dblink_build_sql_insert(PG_FUNCTION_ARGS)
 	if (tgt_nitems != pknumatts)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("target key array length must match number of key " \
-						"attributes")));
+				 errmsg("target key array length must match number of key attributes")));
 
 	/*
 	 * Prep work is finally done. Go get the SQL string.
@@ -1741,8 +1725,7 @@ dblink_build_sql_delete(PG_FUNCTION_ARGS)
 	if (tgt_nitems != pknumatts)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("target key array length must match number of key " \
-						"attributes")));
+				 errmsg("target key array length must match number of key attributes")));
 
 	/*
 	 * Prep work is finally done. Go get the SQL string.
@@ -1821,8 +1804,7 @@ dblink_build_sql_update(PG_FUNCTION_ARGS)
 	if (src_nitems != pknumatts)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("source key array length must match number of key " \
-						"attributes")));
+				 errmsg("source key array length must match number of key attributes")));
 
 	/*
 	 * Target array is made up of key values that will be used to build the
@@ -1836,8 +1818,7 @@ dblink_build_sql_update(PG_FUNCTION_ARGS)
 	if (tgt_nitems != pknumatts)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("target key array length must match number of key " \
-						"attributes")));
+				 errmsg("target key array length must match number of key attributes")));
 
 	/*
 	 * Prep work is finally done. Go get the SQL string.

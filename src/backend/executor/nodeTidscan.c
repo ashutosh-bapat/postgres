@@ -3,7 +3,7 @@
  * nodeTidscan.c
  *	  Routines to support direct tid scans of relations
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,6 +27,7 @@
 #include "catalog/pg_type.h"
 #include "executor/execdebug.h"
 #include "executor/nodeTidscan.h"
+#include "lib/qunique.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "storage/bufmgr.h"
@@ -260,21 +261,13 @@ TidListEval(TidScanState *tidstate)
 	 */
 	if (numTids > 1)
 	{
-		int			lastTid;
-		int			i;
-
 		/* CurrentOfExpr could never appear OR'd with something else */
 		Assert(!tidstate->tss_isCurrentOf);
 
 		qsort((void *) tidList, numTids, sizeof(ItemPointerData),
 			  itemptr_comparator);
-		lastTid = 0;
-		for (i = 1; i < numTids; i++)
-		{
-			if (!ItemPointerEquals(&tidList[lastTid], &tidList[i]))
-				tidList[++lastTid] = tidList[i];
-		}
-		numTids = lastTid + 1;
+		numTids = qunique(tidList, numTids, sizeof(ItemPointerData),
+						  itemptr_comparator);
 	}
 
 	tidstate->tss_TidList = tidList;
@@ -381,9 +374,9 @@ TidNext(TidScanState *node)
 		 * current according to our snapshot.
 		 */
 		if (node->tss_isCurrentOf)
-			table_get_latest_tid(scan, &tid);
+			table_tuple_get_latest_tid(scan, &tid);
 
-		if (table_fetch_row_version(heapRelation, &tid, snapshot, slot))
+		if (table_tuple_fetch_row_version(heapRelation, &tid, snapshot, slot))
 			return slot;
 
 		/* Bad TID or failed snapshot qual; try next */
@@ -432,7 +425,7 @@ TidRecheck(TidScanState *node, TupleTableSlot *slot)
  *		Initial States:
  *		  -- the relation indicated is opened for scanning so that the
  *			 "cursor" is positioned before the first qualifying tuple.
- *		  -- tidPtr is -1.
+ *		  -- tss_TidPtr is -1.
  * ----------------------------------------------------------------
  */
 static TupleTableSlot *
@@ -498,7 +491,7 @@ ExecEndTidScan(TidScanState *node)
  *		scan keys, and opens the base and tid relations.
  *
  *		Parameters:
- *		  node: TidNode node produced by the planner.
+ *		  node: TidScan node produced by the planner.
  *		  estate: the execution state initialized in InitPlan.
  * ----------------------------------------------------------------
  */

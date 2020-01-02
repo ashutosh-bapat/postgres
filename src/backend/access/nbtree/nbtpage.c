@@ -4,7 +4,7 @@
  *	  BTree-specific page management code for the Postgres btree access
  *	  method.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,7 +33,6 @@
 #include "storage/predicate.h"
 #include "utils/snapmgr.h"
 
-static void _bt_cachemetadata(Relation rel, BTMetaPageData *input);
 static BTMetaPageData *_bt_getmeta(Relation rel, Buffer metabuf);
 static bool _bt_mark_page_halfdead(Relation rel, Buffer buf, BTStack stack);
 static bool _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf,
@@ -110,47 +109,12 @@ _bt_upgrademetapage(Page page)
 }
 
 /*
- * Cache metadata from input meta page to rel->rd_amcache.
- */
-static void
-_bt_cachemetadata(Relation rel, BTMetaPageData *input)
-{
-	BTMetaPageData *cached_metad;
-
-	/* We assume rel->rd_amcache was already freed by caller */
-	Assert(rel->rd_amcache == NULL);
-	rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
-										 sizeof(BTMetaPageData));
-
-	/* Meta page should be of supported version */
-	Assert(input->btm_version >= BTREE_MIN_VERSION &&
-		   input->btm_version <= BTREE_VERSION);
-
-	cached_metad = (BTMetaPageData *) rel->rd_amcache;
-	if (input->btm_version >= BTREE_NOVAC_VERSION)
-	{
-		/* Version with compatible meta-data, no need to upgrade */
-		memcpy(cached_metad, input, sizeof(BTMetaPageData));
-	}
-	else
-	{
-		/*
-		 * Upgrade meta-data: copy available information from meta-page and
-		 * fill new fields with default values.
-		 *
-		 * Note that we cannot upgrade to version 4+ without a REINDEX, since
-		 * extensive on-disk changes are required.
-		 */
-		memcpy(cached_metad, input, offsetof(BTMetaPageData, btm_oldest_btpo_xact));
-		cached_metad->btm_version = BTREE_NOVAC_VERSION;
-		cached_metad->btm_oldest_btpo_xact = InvalidTransactionId;
-		cached_metad->btm_last_cleanup_num_heap_tuples = -1.0;
-	}
-}
-
-/*
  * Get metadata from share-locked buffer containing metapage, while performing
- * standard sanity checks.  Sanity checks here must match _bt_getroot().
+ * standard sanity checks.
+ *
+ * Callers that cache data returned here in local cache should note that an
+ * on-the-fly upgrade using _bt_upgrademetapage() can change the version field
+ * and BTREE_NOVAC_VERSION specific fields without invalidating local cache.
  */
 static BTMetaPageData *
 _bt_getmeta(Relation rel, Buffer metabuf)
@@ -266,9 +230,7 @@ _bt_update_meta_cleanup_info(Relation rel, TransactionId oldestBtpoXact,
  *
  *		Since the root page can move around the btree file, we have to read
  *		its location from the metadata page, and then read the root page
- *		itself.  If no root page exists yet, we have to create one.  The
- *		standard class of race conditions exists here; I think I covered
- *		them all in the Hopi Indian rain dance of lock requests below.
+ *		itself.  If no root page exists yet, we have to create one.
  *
  *		The access type parameter (BT_READ or BT_WRITE) controls whether
  *		a new root page will be created or not.  If access = BT_READ,
@@ -293,8 +255,6 @@ Buffer
 _bt_getroot(Relation rel, int access)
 {
 	Buffer		metabuf;
-	Page		metapg;
-	BTPageOpaque metaopaque;
 	Buffer		rootbuf;
 	Page		rootpage;
 	BTPageOpaque rootopaque;
@@ -347,30 +307,13 @@ _bt_getroot(Relation rel, int access)
 	}
 
 	metabuf = _bt_getbuf(rel, BTREE_METAPAGE, BT_READ);
-	metapg = BufferGetPage(metabuf);
-	metaopaque = (BTPageOpaque) PageGetSpecialPointer(metapg);
-	metad = BTPageGetMeta(metapg);
-
-	/* sanity-check the metapage */
-	if (!P_ISMETA(metaopaque) ||
-		metad->btm_magic != BTREE_MAGIC)
-		ereport(ERROR,
-				(errcode(ERRCODE_INDEX_CORRUPTED),
-				 errmsg("index \"%s\" is not a btree",
-						RelationGetRelationName(rel))));
-
-	if (metad->btm_version < BTREE_MIN_VERSION ||
-		metad->btm_version > BTREE_VERSION)
-		ereport(ERROR,
-				(errcode(ERRCODE_INDEX_CORRUPTED),
-				 errmsg("version mismatch in index \"%s\": file version %d, "
-						"current version %d, minimal supported version %d",
-						RelationGetRelationName(rel),
-						metad->btm_version, BTREE_VERSION, BTREE_MIN_VERSION)));
+	metad = _bt_getmeta(rel, metabuf);
 
 	/* if no root page initialized yet, do it */
 	if (metad->btm_root == P_NONE)
 	{
+		Page		metapg;
+
 		/* If access = BT_READ, caller doesn't want us to create root yet */
 		if (access == BT_READ)
 		{
@@ -412,6 +355,8 @@ _bt_getroot(Relation rel, int access)
 		rootopaque->btpo_flags = (BTP_LEAF | BTP_ROOT);
 		rootopaque->btpo.level = 0;
 		rootopaque->btpo_cycleid = 0;
+		/* Get raw page pointer for metapage */
+		metapg = BufferGetPage(metabuf);
 
 		/* NO ELOG(ERROR) till meta is updated */
 		START_CRIT_SECTION();
@@ -473,7 +418,7 @@ _bt_getroot(Relation rel, int access)
 		LockBuffer(rootbuf, BUFFER_LOCK_UNLOCK);
 		LockBuffer(rootbuf, BT_READ);
 
-		/* okay, metadata is correct, release lock on it */
+		/* okay, metadata is correct, release lock on it without caching */
 		_bt_relbuf(rel, metabuf);
 	}
 	else
@@ -485,7 +430,9 @@ _bt_getroot(Relation rel, int access)
 		/*
 		 * Cache the metapage data for next time
 		 */
-		_bt_cachemetadata(rel, metad);
+		rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
+											 sizeof(BTMetaPageData));
+		memcpy(rel->rd_amcache, metad, sizeof(BTMetaPageData));
 
 		/*
 		 * We are done with the metapage; arrange to release it via first
@@ -659,16 +606,19 @@ _bt_getrootheight(Relation rel)
 		/*
 		 * Cache the metapage data for next time
 		 */
-		_bt_cachemetadata(rel, metad);
-		/* We shouldn't have cached it if any of these fail */
-		Assert(metad->btm_magic == BTREE_MAGIC);
-		Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-		Assert(metad->btm_fastroot != P_NONE);
+		rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
+											 sizeof(BTMetaPageData));
+		memcpy(rel->rd_amcache, metad, sizeof(BTMetaPageData));
 		_bt_relbuf(rel, metabuf);
 	}
 
 	/* Get cached page */
 	metad = (BTMetaPageData *) rel->rd_amcache;
+	/* We shouldn't have cached it if any of these fail */
+	Assert(metad->btm_magic == BTREE_MAGIC);
+	Assert(metad->btm_version >= BTREE_MIN_VERSION);
+	Assert(metad->btm_version <= BTREE_VERSION);
+	Assert(metad->btm_fastroot != P_NONE);
 
 	return metad->btm_fastlevel;
 }
@@ -709,17 +659,26 @@ _bt_heapkeyspace(Relation rel)
 
 		/*
 		 * Cache the metapage data for next time
+		 *
+		 * An on-the-fly version upgrade performed by _bt_upgrademetapage()
+		 * can change the nbtree version for an index without invalidating any
+		 * local cache.  This is okay because it can only happen when moving
+		 * from version 2 to version 3, both of which are !heapkeyspace
+		 * versions.
 		 */
-		_bt_cachemetadata(rel, metad);
-		/* We shouldn't have cached it if any of these fail */
-		Assert(metad->btm_magic == BTREE_MAGIC);
-		Assert(metad->btm_version >= BTREE_NOVAC_VERSION);
-		Assert(metad->btm_fastroot != P_NONE);
+		rel->rd_amcache = MemoryContextAlloc(rel->rd_indexcxt,
+											 sizeof(BTMetaPageData));
+		memcpy(rel->rd_amcache, metad, sizeof(BTMetaPageData));
 		_bt_relbuf(rel, metabuf);
 	}
 
 	/* Get cached page */
 	metad = (BTMetaPageData *) rel->rd_amcache;
+	/* We shouldn't have cached it if any of these fail */
+	Assert(metad->btm_magic == BTREE_MAGIC);
+	Assert(metad->btm_version >= BTREE_MIN_VERSION);
+	Assert(metad->btm_version <= BTREE_VERSION);
+	Assert(metad->btm_fastroot != P_NONE);
 
 	return metad->btm_version > BTREE_NOVAC_VERSION;
 }
@@ -1009,32 +968,28 @@ _bt_page_recyclable(Page page)
  * deleting the page it points to.
  *
  * This routine assumes that the caller has pinned and locked the buffer.
- * Also, the given itemnos *must* appear in increasing order in the array.
+ * Also, the given deletable array *must* be sorted in ascending order.
  *
- * We record VACUUMs and b-tree deletes differently in WAL. InHotStandby
- * we need to be able to pin all of the blocks in the btree in physical
- * order when replaying the effects of a VACUUM, just as we do for the
- * original VACUUM itself. lastBlockVacuumed allows us to tell whether an
- * intermediate range of blocks has had no changes at all by VACUUM,
- * and so must be scanned anyway during replay. We always write a WAL record
- * for the last block in the index, whether or not it contained any items
- * to be removed. This allows us to scan right up to end of index to
- * ensure correct locking.
+ * We record VACUUMs and b-tree deletes differently in WAL.  Deletes must
+ * generate recovery conflicts by accessing the heap inline, whereas VACUUMs
+ * can rely on the initial heap scan taking care of the problem (pruning would
+ * have generated the conflicts needed for hot standby already).
  */
 void
 _bt_delitems_vacuum(Relation rel, Buffer buf,
-					OffsetNumber *itemnos, int nitems,
-					BlockNumber lastBlockVacuumed)
+					OffsetNumber *deletable, int ndeletable)
 {
 	Page		page = BufferGetPage(buf);
 	BTPageOpaque opaque;
+
+	/* Shouldn't be called unless there's something to do */
+	Assert(ndeletable > 0);
 
 	/* No ereport(ERROR) until changes are logged */
 	START_CRIT_SECTION();
 
 	/* Fix the page */
-	if (nitems > 0)
-		PageIndexMultiDelete(page, itemnos, nitems);
+	PageIndexMultiDelete(page, deletable, ndeletable);
 
 	/*
 	 * We can clear the vacuum cycle ID since this page has certainly been
@@ -1046,9 +1001,16 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 	/*
 	 * Mark the page as not containing any LP_DEAD items.  This is not
 	 * certainly true (there might be some that have recently been marked, but
-	 * weren't included in our target-item list), but it will almost always be
-	 * true and it doesn't seem worth an additional page scan to check it.
-	 * Remember that BTP_HAS_GARBAGE is only a hint anyway.
+	 * weren't targeted by VACUUM's heap scan), but it will be true often
+	 * enough.  VACUUM does not delete items purely because they have their
+	 * LP_DEAD bit set, since doing so would necessitate explicitly logging a
+	 * latestRemovedXid cutoff (this is how _bt_delitems_delete works).
+	 *
+	 * The consequences of falsely unsetting BTP_HAS_GARBAGE should be fairly
+	 * limited, since we never falsely unset an LP_DEAD bit.  Workloads that
+	 * are particularly dependent on LP_DEAD bits being set quickly will
+	 * usually manage to set the BTP_HAS_GARBAGE flag before the page fills up
+	 * again anyway.
 	 */
 	opaque->btpo_flags &= ~BTP_HAS_GARBAGE;
 
@@ -1060,7 +1022,7 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 		XLogRecPtr	recptr;
 		xl_btree_vacuum xlrec_vacuum;
 
-		xlrec_vacuum.lastBlockVacuumed = lastBlockVacuumed;
+		xlrec_vacuum.ndeleted = ndeletable;
 
 		XLogBeginInsert();
 		XLogRegisterBuffer(0, buf, REGBUF_STANDARD);
@@ -1071,8 +1033,8 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
 		 * is.  When XLogInsert stores the whole buffer, the offsets array
 		 * need not be stored too.
 		 */
-		if (nitems > 0)
-			XLogRegisterBufData(0, (char *) itemnos, nitems * sizeof(OffsetNumber));
+		XLogRegisterBufData(0, (char *) deletable,
+							ndeletable * sizeof(OffsetNumber));
 
 		recptr = XLogInsert(RM_BTREE_ID, XLOG_BTREE_VACUUM);
 
@@ -1091,8 +1053,8 @@ _bt_delitems_vacuum(Relation rel, Buffer buf,
  * Also, the given itemnos *must* appear in increasing order in the array.
  *
  * This is nearly the same as _bt_delitems_vacuum as far as what it does to
- * the page, but the WAL logging considerations are quite different.  See
- * comments for _bt_delitems_vacuum.
+ * the page, but it needs to generate its own recovery conflicts by accessing
+ * the heap.  See comments for _bt_delitems_vacuum.
  */
 void
 _bt_delitems_delete(Relation rel, Buffer buf,
@@ -1119,15 +1081,8 @@ _bt_delitems_delete(Relation rel, Buffer buf,
 
 	/*
 	 * Unlike _bt_delitems_vacuum, we *must not* clear the vacuum cycle ID,
-	 * because this is not called by VACUUM.
-	 */
-
-	/*
-	 * Mark the page as not containing any LP_DEAD items.  This is not
-	 * certainly true (there might be some that have recently been marked, but
-	 * weren't included in our target-item list), but it will almost always be
-	 * true and it doesn't seem worth an additional page scan to check it.
-	 * Remember that BTP_HAS_GARBAGE is only a hint anyway.
+	 * because this is not called by VACUUM.  Just clear the BTP_HAS_GARBAGE
+	 * page flag, since we deleted all items with their LP_DEAD bit set.
 	 */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	opaque->btpo_flags &= ~BTP_HAS_GARBAGE;
@@ -1230,11 +1185,12 @@ _bt_lock_branch_parent(Relation rel, BlockNumber child, BTStack stack,
 	 * non-unique high keys in leaf level pages.  Even heapkeyspace indexes
 	 * can have a stale stack due to insertions into the parent.
 	 */
-	stack->bts_btentry = child;
-	pbuf = _bt_getstackbuf(rel, stack);
+	pbuf = _bt_getstackbuf(rel, stack, child);
 	if (pbuf == InvalidBuffer)
-		elog(ERROR, "failed to re-find parent key in index \"%s\" for deletion target page %u",
-			 RelationGetRelationName(rel), child);
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg_internal("failed to re-find parent key in index \"%s\" for deletion target page %u",
+								 RelationGetRelationName(rel), child)));
 	parent = stack->bts_blkno;
 	poffset = stack->bts_offset;
 
@@ -1645,16 +1601,18 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 #ifdef USE_ASSERT_CHECKING
 	itemid = PageGetItemId(page, topoff);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	Assert(BTreeInnerTupleGetDownLink(itup) == target);
+	Assert(BTreeTupleGetDownLink(itup) == target);
 #endif
 
 	nextoffset = OffsetNumberNext(topoff);
 	itemid = PageGetItemId(page, nextoffset);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	if (BTreeInnerTupleGetDownLink(itup) != rightsib)
-		elog(ERROR, "right sibling %u of block %u is not next child %u of block %u in index \"%s\"",
-			 rightsib, target, BTreeInnerTupleGetDownLink(itup),
-			 BufferGetBlockNumber(topparent), RelationGetRelationName(rel));
+	if (BTreeTupleGetDownLink(itup) != rightsib)
+		ereport(ERROR,
+					(errcode(ERRCODE_INDEX_CORRUPTED),
+					 errmsg_internal("right sibling %u of block %u is not next child %u of block %u in index \"%s\"",
+									 rightsib, target, BTreeTupleGetDownLink(itup),
+					 BufferGetBlockNumber(topparent), RelationGetRelationName(rel))));
 
 	/*
 	 * Any insert which would have gone on the leaf block will now go to its
@@ -1676,7 +1634,7 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 
 	itemid = PageGetItemId(page, topoff);
 	itup = (IndexTuple) PageGetItem(page, itemid);
-	BTreeInnerTupleSetDownLink(itup, rightsib);
+	BTreeTupleSetDownLink(itup, rightsib);
 
 	nextoffset = OffsetNumberNext(topoff);
 	PageIndexTupleDelete(page, nextoffset);
@@ -1690,8 +1648,7 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	opaque->btpo_flags |= BTP_HALF_DEAD;
 
-	PageIndexTupleDelete(page, P_HIKEY);
-	Assert(PageGetMaxOffsetNumber(page) == 0);
+	Assert(PageGetMaxOffsetNumber(page) == P_HIKEY);
 	MemSet(&trunctuple, 0, sizeof(IndexTupleData));
 	trunctuple.t_info = sizeof(IndexTupleData);
 	if (target != leafblkno)
@@ -1699,9 +1656,9 @@ _bt_mark_page_halfdead(Relation rel, Buffer leafbuf, BTStack stack)
 	else
 		BTreeTupleSetTopParent(&trunctuple, InvalidBlockNumber);
 
-	if (PageAddItem(page, (Item) &trunctuple, sizeof(IndexTupleData), P_HIKEY,
-					false, false) == InvalidOffsetNumber)
-		elog(ERROR, "could not add dummy high key to half-dead page");
+	if (!PageIndexTupleOverwrite(page, P_HIKEY, (Item) &trunctuple,
+								 IndexTupleSize(&trunctuple)))
+		elog(ERROR, "could not overwrite high key in half-dead page");
 
 	/* Must mark buffers dirty before XLogInsert */
 	MarkBufferDirty(topparent);
@@ -1919,8 +1876,10 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 			 target, RelationGetRelationName(rel));
 	}
 	if (opaque->btpo_prev != leftsib)
-		elog(ERROR, "left link changed unexpectedly in block %u of index \"%s\"",
-			 target, RelationGetRelationName(rel));
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg_internal("left link changed unexpectedly in block %u of index \"%s\"",
+								 target, RelationGetRelationName(rel))));
 
 	if (target == leafblkno)
 	{
@@ -1939,7 +1898,7 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 
 		/* remember the next non-leaf child down in the branch. */
 		itemid = PageGetItemId(page, P_FIRSTDATAKEY(opaque));
-		nextchild = BTreeInnerTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
+		nextchild = BTreeTupleGetDownLink((IndexTuple) PageGetItem(page, itemid));
 		if (nextchild == leafblkno)
 			nextchild = InvalidBlockNumber;
 	}
@@ -1952,10 +1911,12 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 	page = BufferGetPage(rbuf);
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	if (opaque->btpo_prev != target)
-		elog(ERROR, "right sibling's left-link doesn't match: "
-			 "block %u links to %u instead of expected %u in index \"%s\"",
-			 rightsib, opaque->btpo_prev, target,
-			 RelationGetRelationName(rel));
+		ereport(ERROR,
+				(errcode(ERRCODE_INDEX_CORRUPTED),
+				 errmsg_internal("right sibling's left-link doesn't match: "
+								 "block %u links to %u instead of expected %u in index \"%s\"",
+								 rightsib, opaque->btpo_prev, target,
+								 RelationGetRelationName(rel))));
 	rightsib_is_rightmost = P_RIGHTMOST(opaque);
 	*rightsib_empty = (P_FIRSTDATAKEY(opaque) > PageGetMaxOffsetNumber(page));
 
@@ -1964,9 +1925,6 @@ _bt_unlink_halfdead_page(Relation rel, Buffer leafbuf, bool *rightsib_empty)
 	 * the rightsib is a candidate to become the new fast root. (In theory, it
 	 * might be possible to push the fast root even further down, but the odds
 	 * of doing so are slim, and the locking considerations daunting.)
-	 *
-	 * We don't support handling this in the case where the parent is becoming
-	 * half-dead, even though it theoretically could occur.
 	 *
 	 * We can safely acquire a lock on the metapage here --- see comments for
 	 * _bt_newroot().

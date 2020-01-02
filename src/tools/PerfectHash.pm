@@ -20,7 +20,7 @@
 # not in the set.
 #
 #
-# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/tools/PerfectHash.pm
@@ -131,7 +131,7 @@ sub generate_hash_function
 	}
 	$f .= sprintf "\n" if ($nhash % 8 != 0);
 	$f .= sprintf "\t};\n\n";
-	$f .= sprintf "\tconst unsigned char *k = key;\n";
+	$f .= sprintf "\tconst unsigned char *k = (const unsigned char *) key;\n";
 	$f .= sprintf "\tsize_t\t\tkeylen = %d;\n", $options{fixed_key_length}
 	  if (defined $options{fixed_key_length});
 	$f .= sprintf "\tuint32\t\ta = %d;\n",   $hash_seed1;

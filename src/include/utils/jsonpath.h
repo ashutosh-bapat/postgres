@@ -3,7 +3,7 @@
  * jsonpath.h
  *	Definitions for jsonpath datatype
  *
- * Copyright (c) 2019, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	src/include/utils/jsonpath.h
@@ -15,8 +15,8 @@
 #define JSONPATH_H
 
 #include "fmgr.h"
-#include "utils/jsonb.h"
 #include "nodes/pg_list.h"
+#include "utils/jsonb.h"
 
 typedef struct
 {
@@ -79,6 +79,7 @@ typedef enum JsonPathItemType
 	jpiFloor,					/* .floor() item method */
 	jpiCeiling,					/* .ceiling() item method */
 	jpiDouble,					/* .double() item method */
+	jpiDatetime,				/* .datetime() item method */
 	jpiKeyValue,				/* .keyvalue() item method */
 	jpiSubscript,				/* array subscript: 'expr' or 'expr TO expr' */
 	jpiLast,					/* LAST array subscript */
@@ -88,15 +89,16 @@ typedef enum JsonPathItemType
 
 /* XQuery regex mode flags for LIKE_REGEX predicate */
 #define JSP_REGEX_ICASE		0x01	/* i flag, case insensitive */
-#define JSP_REGEX_SLINE		0x02	/* s flag, single-line mode */
-#define JSP_REGEX_MLINE		0x04	/* m flag, multi-line mode */
-#define JSP_REGEX_WSPACE	0x08	/* x flag, expanded syntax */
+#define JSP_REGEX_DOTALL	0x02	/* s flag, dot matches newline */
+#define JSP_REGEX_MLINE		0x04	/* m flag, ^/$ match at newlines */
+#define JSP_REGEX_WSPACE	0x08	/* x flag, ignore whitespace in pattern */
+#define JSP_REGEX_QUOTE		0x10	/* q flag, no special characters */
 
 /*
  * Support functions to parse/construct binary value.
  * Unlike many other representation of expression the first/main
  * node is not an operation but left operand of expression. That
- * allows to implement cheep follow-path descending in jsonb
+ * allows to implement cheap follow-path descending in jsonb
  * structure and then execute operator with right operand
  */
 
@@ -243,5 +245,7 @@ typedef struct JsonPathParseResult
 } JsonPathParseResult;
 
 extern JsonPathParseResult *parsejsonpath(const char *str, int len);
+
+extern int	jspConvertRegexFlags(uint32 xflags);
 
 #endif

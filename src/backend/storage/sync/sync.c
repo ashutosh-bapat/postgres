@@ -3,7 +3,7 @@
  * sync.c
  *	  File synchronization management code.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,19 +18,19 @@
 #include <fcntl.h>
 #include <sys/file.h>
 
+#include "access/xlog.h"
+#include "access/xlogutils.h"
+#include "commands/tablespace.h"
 #include "miscadmin.h"
 #include "pgstat.h"
-#include "access/xlogutils.h"
-#include "access/xlog.h"
-#include "commands/tablespace.h"
 #include "portability/instr_time.h"
 #include "postmaster/bgwriter.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
 #include "storage/md.h"
 #include "utils/hsearch.h"
-#include "utils/memutils.h"
 #include "utils/inval.h"
+#include "utils/memutils.h"
 
 static MemoryContext pendingOpsCxt; /* context for the pending ops state  */
 
@@ -452,9 +452,7 @@ RememberSyncRequest(const FileTag *ftag, SyncRequestType type)
 	{
 		HASH_SEQ_STATUS hstat;
 		PendingFsyncEntry *entry;
-		ListCell   *cell,
-				   *prev,
-				   *next;
+		ListCell   *cell;
 
 		/* Cancel matching fsync requests */
 		hash_seq_init(&hstat, pendingOps);
@@ -466,20 +464,16 @@ RememberSyncRequest(const FileTag *ftag, SyncRequestType type)
 		}
 
 		/* Remove matching unlink requests */
-		prev = NULL;
-		for (cell = list_head(pendingUnlinks); cell; cell = next)
+		foreach(cell, pendingUnlinks)
 		{
 			PendingUnlinkEntry *entry = (PendingUnlinkEntry *) lfirst(cell);
 
-			next = lnext(cell);
 			if (entry->tag.handler == ftag->handler &&
 				syncsw[ftag->handler].sync_filetagmatches(ftag, &entry->tag))
 			{
-				pendingUnlinks = list_delete_cell(pendingUnlinks, cell, prev);
+				pendingUnlinks = foreach_delete_current(pendingUnlinks, cell);
 				pfree(entry);
 			}
-			else
-				prev = cell;
 		}
 	}
 	else if (type == SYNC_UNLINK_REQUEST)

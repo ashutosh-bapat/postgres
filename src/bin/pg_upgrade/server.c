@@ -3,7 +3,7 @@
  *
  *	database server functions
  *
- *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/server.c
  */
 
@@ -12,7 +12,6 @@
 #include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
 #include "pg_upgrade.h"
-
 
 static PGconn *get_db_conn(ClusterInfo *cluster, const char *db_name);
 

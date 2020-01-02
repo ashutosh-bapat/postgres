@@ -3,7 +3,7 @@
  * typecmds.c
  *	  Routines for SQL commands that manipulate types (and domains).
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2999,7 +2999,7 @@ get_rels_with_domain(Oid domainOid, LOCKMODE lockmode)
 			rtc->rel = rel;
 			rtc->natts = 0;
 			rtc->atts = (int *) palloc(sizeof(int) * RelationGetNumberOfAttributes(rel));
-			result = lcons(rtc, result);
+			result = lappend(result, rtc);
 		}
 
 		/*

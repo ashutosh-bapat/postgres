@@ -3,7 +3,7 @@
  * nbtxlog.h
  *	  header file for postgres btree xlog routines
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/nbtxlog.h
@@ -82,13 +82,12 @@ typedef struct xl_btree_insert
  *
  * Note: XLOG_BTREE_SPLIT_L and XLOG_BTREE_SPLIT_R share this data record.
  * There are two variants to indicate whether the inserted tuple went into the
- * left or right split page (and thus, whether newitemoff and the new item are
- * stored or not).  We always log the left page high key because suffix
- * truncation can generate a new leaf high key using user-defined code.  This
- * is also necessary on internal pages, since the first right item that the
- * left page's high key was based on will have been truncated to zero
- * attributes in the right page (the original is unavailable from the right
- * page).
+ * left or right split page (and thus, whether the new item is stored or not).
+ * We always log the left page high key because suffix truncation can generate
+ * a new leaf high key using user-defined code.  This is also necessary on
+ * internal pages, since the first right item that the left page's high key
+ * was based on will have been truncated to zero attributes in the right page
+ * (the original is unavailable from the right page).
  *
  * Backup Blk 0: original page / new left page
  *
@@ -112,7 +111,7 @@ typedef struct xl_btree_split
 {
 	uint32		level;			/* tree level of page being split */
 	OffsetNumber firstright;	/* first item moved to right page */
-	OffsetNumber newitemoff;	/* new item's offset (if placed on left page) */
+	OffsetNumber newitemoff;	/* new item's offset (useful for _L variant) */
 } xl_btree_split;
 
 #define SizeOfBtreeSplit	(offsetof(xl_btree_split, newitemoff) + sizeof(OffsetNumber))
@@ -135,7 +134,11 @@ typedef struct xl_btree_delete
 #define SizeOfBtreeDelete	(offsetof(xl_btree_delete, nitems) + sizeof(int))
 
 /*
- * This is what we need to know about page reuse within btree.
+ * This is what we need to know about page reuse within btree.  This record
+ * only exists to generate a conflict point for Hot Standby.
+ *
+ * Note that we must include a RelFileNode in the record because we don't
+ * actually register the buffer with the record.
  */
 typedef struct xl_btree_reuse_page
 {
@@ -151,32 +154,17 @@ typedef struct xl_btree_reuse_page
  * The WAL record can represent deletion of any number of index tuples on a
  * single index page when executed by VACUUM.
  *
- * For MVCC scans, lastBlockVacuumed will be set to InvalidBlockNumber.
- * For a non-MVCC index scans there is an additional correctness requirement
- * for applying these changes during recovery, which is that we must do one
- * of these two things for every block in the index:
- *		* lock the block for cleanup and apply any required changes
- *		* EnsureBlockUnpinned()
- * The purpose of this is to ensure that no index scans started before we
- * finish scanning the index are still running by the time we begin to remove
- * heap tuples.
- *
- * Any changes to any one block are registered on just one WAL record. All
- * blocks that we need to run EnsureBlockUnpinned() are listed as a block range
- * starting from the last block vacuumed through until this one. Individual
- * block numbers aren't given.
- *
- * Note that the *last* WAL record in any vacuum of an index is allowed to
- * have a zero length array of offsets. Earlier records must have at least one.
+ * Note that the WAL record in any vacuum of an index must have at least one
+ * item to delete.
  */
 typedef struct xl_btree_vacuum
 {
-	BlockNumber lastBlockVacuumed;
+	uint32		ndeleted;
 
-	/* TARGET OFFSET NUMBERS FOLLOW */
+	/* DELETED TARGET OFFSET NUMBERS FOLLOW */
 } xl_btree_vacuum;
 
-#define SizeOfBtreeVacuum	(offsetof(xl_btree_vacuum, lastBlockVacuumed) + sizeof(BlockNumber))
+#define SizeOfBtreeVacuum	(offsetof(xl_btree_vacuum, ndeleted) + sizeof(uint32))
 
 /*
  * This is what we need to know about marking an empty branch for deletion.
@@ -259,4 +247,4 @@ extern void btree_desc(StringInfo buf, XLogReaderState *record);
 extern const char *btree_identify(uint8 info);
 extern void btree_mask(char *pagedata, BlockNumber blkno);
 
-#endif							/* NBXLOG_H */
+#endif							/* NBTXLOG_H */

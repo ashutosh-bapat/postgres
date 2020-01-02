@@ -5,7 +5,7 @@
  *	  Planning is complete, we just need to convert the selected
  *	  Path into a Plan.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -222,9 +222,12 @@ static NestLoop *make_nestloop(List *tlist,
 static HashJoin *make_hashjoin(List *tlist,
 							   List *joinclauses, List *otherclauses,
 							   List *hashclauses,
+							   List *hashoperators, List *hashcollations,
+							   List *hashkeys,
 							   Plan *lefttree, Plan *righttree,
 							   JoinType jointype, bool inner_unique);
 static Hash *make_hash(Plan *lefttree,
+					   List *hashkeys,
 					   Oid skewTable,
 					   AttrNumber skewColumn,
 					   bool skewInherit);
@@ -556,8 +559,8 @@ create_scan_plan(PlannerInfo *root, Path *best_path, int flags)
 	 * For paranoia's sake, don't modify the stored baserestrictinfo list.
 	 */
 	if (best_path->param_info)
-		scan_clauses = list_concat(list_copy(scan_clauses),
-								   best_path->param_info->ppi_clauses);
+		scan_clauses = list_concat_copy(scan_clauses,
+										best_path->param_info->ppi_clauses);
 
 	/*
 	 * Detect whether we have any pseudoconstant quals to deal with.  Then, if
@@ -1115,6 +1118,7 @@ create_append_plan(PlannerInfo *root, AppendPath *best_path, int flags)
 	plan->plan.qual = NIL;
 	plan->plan.lefttree = NULL;
 	plan->plan.righttree = NULL;
+	plan->apprelids = rel->relids;
 
 	if (pathkeys != NIL)
 	{
@@ -1292,6 +1296,7 @@ create_merge_append_plan(PlannerInfo *root, MergeAppendPath *best_path,
 	plan->qual = NIL;
 	plan->lefttree = NULL;
 	plan->righttree = NULL;
+	node->apprelids = rel->relids;
 
 	/*
 	 * Compute sort column info, and adjust MergeAppend's tlist as needed.
@@ -2211,10 +2216,9 @@ create_groupingsets_plan(PlannerInfo *root, GroupingSetsPath *best_path)
 	chain = NIL;
 	if (list_length(rollups) > 1)
 	{
-		ListCell   *lc2 = lnext(list_head(rollups));
 		bool		is_first_sort = ((RollupData *) linitial(rollups))->is_hashed;
 
-		for_each_cell(lc, lc2)
+		for_each_cell(lc, rollups, list_second_cell(rollups))
 		{
 			RollupData *rollup = lfirst(lc);
 			AttrNumber *new_grpColIdx;
@@ -2395,10 +2399,13 @@ create_windowagg_plan(PlannerInfo *root, WindowAggPath *best_path)
 	ListCell   *lc;
 
 	/*
-	 * WindowAgg can project, so no need to be terribly picky about child
-	 * tlist, but we do need grouping columns to be available
+	 * Choice of tlist here is motivated by the fact that WindowAgg will be
+	 * storing the input rows of window frames in a tuplestore; it therefore
+	 * behooves us to request a small tlist to avoid wasting space. We do of
+	 * course need grouping columns to be available.
 	 */
-	subplan = create_plan_recurse(root, best_path->subpath, CP_LABEL_TLIST);
+	subplan = create_plan_recurse(root, best_path->subpath,
+								  CP_LABEL_TLIST | CP_SMALL_TLIST);
 
 	tlist = build_path_tlist(root, &best_path->path);
 
@@ -3911,7 +3918,7 @@ create_foreignscan_plan(PlannerInfo *root, ForeignPath *best_path,
 }
 
 /*
- * create_custom_plan
+ * create_customscan_plan
  *
  * Transform a CustomPath into a Plan.
  */
@@ -4261,7 +4268,7 @@ create_mergejoin_plan(PlannerInfo *root,
 				elog(ERROR, "outer pathkeys do not match mergeclauses");
 			opathkey = (PathKey *) lfirst(lop);
 			opeclass = opathkey->pk_eclass;
-			lop = lnext(lop);
+			lop = lnext(outerpathkeys, lop);
 			if (oeclass != opeclass)
 				elog(ERROR, "outer pathkeys do not match mergeclauses");
 		}
@@ -4288,7 +4295,7 @@ create_mergejoin_plan(PlannerInfo *root,
 			if (ieclass == ipeclass)
 			{
 				/* successful first match to this inner pathkey */
-				lip = lnext(lip);
+				lip = lnext(innerpathkeys, lip);
 				first_inner_match = true;
 			}
 		}
@@ -4381,9 +4388,14 @@ create_hashjoin_plan(PlannerInfo *root,
 	List	   *joinclauses;
 	List	   *otherclauses;
 	List	   *hashclauses;
+	List	   *hashoperators = NIL;
+	List	   *hashcollations = NIL;
+	List	   *inner_hashkeys = NIL;
+	List	   *outer_hashkeys = NIL;
 	Oid			skewTable = InvalidOid;
 	AttrNumber	skewColumn = InvalidAttrNumber;
 	bool		skewInherit = false;
+	ListCell   *lc;
 
 	/*
 	 * HashJoin can project, so we don't have to demand exact tlists from the
@@ -4476,9 +4488,28 @@ create_hashjoin_plan(PlannerInfo *root,
 	}
 
 	/*
+	 * Collect hash related information. The hashed expressions are
+	 * deconstructed into outer/inner expressions, so they can be computed
+	 * separately (inner expressions are used to build the hashtable via Hash,
+	 * outer expressions to perform lookups of tuples from HashJoin's outer
+	 * plan in the hashtable). Also collect operator information necessary to
+	 * build the hashtable.
+	 */
+	foreach(lc, hashclauses)
+	{
+		OpExpr	   *hclause = lfirst_node(OpExpr, lc);
+
+		hashoperators = lappend_oid(hashoperators, hclause->opno);
+		hashcollations = lappend_oid(hashcollations, hclause->inputcollid);
+		outer_hashkeys = lappend(outer_hashkeys, linitial(hclause->args));
+		inner_hashkeys = lappend(inner_hashkeys, lsecond(hclause->args));
+	}
+
+	/*
 	 * Build the hash node and hash join node.
 	 */
 	hash_plan = make_hash(inner_plan,
+						  inner_hashkeys,
 						  skewTable,
 						  skewColumn,
 						  skewInherit);
@@ -4505,6 +4536,9 @@ create_hashjoin_plan(PlannerInfo *root,
 							  joinclauses,
 							  otherclauses,
 							  hashclauses,
+							  hashoperators,
+							  hashcollations,
+							  outer_hashkeys,
 							  outer_plan,
 							  (Plan *) hash_plan,
 							  best_path->jpath.jointype,
@@ -4820,7 +4854,7 @@ fix_indexqual_operand(Node *node, IndexOptInfo *index, int indexcol)
 				else
 					elog(ERROR, "index key does not match expected index column");
 			}
-			indexpr_item = lnext(indexpr_item);
+			indexpr_item = lnext(index->indexprs, indexpr_item);
 		}
 	}
 
@@ -5546,6 +5580,9 @@ make_hashjoin(List *tlist,
 			  List *joinclauses,
 			  List *otherclauses,
 			  List *hashclauses,
+			  List *hashoperators,
+			  List *hashcollations,
+			  List *hashkeys,
 			  Plan *lefttree,
 			  Plan *righttree,
 			  JoinType jointype,
@@ -5559,6 +5596,9 @@ make_hashjoin(List *tlist,
 	plan->lefttree = lefttree;
 	plan->righttree = righttree;
 	node->hashclauses = hashclauses;
+	node->hashoperators = hashoperators;
+	node->hashcollations = hashcollations;
+	node->hashkeys = hashkeys;
 	node->join.jointype = jointype;
 	node->join.inner_unique = inner_unique;
 	node->join.joinqual = joinclauses;
@@ -5568,6 +5608,7 @@ make_hashjoin(List *tlist,
 
 static Hash *
 make_hash(Plan *lefttree,
+		  List *hashkeys,
 		  Oid skewTable,
 		  AttrNumber skewColumn,
 		  bool skewInherit)
@@ -5580,6 +5621,7 @@ make_hash(Plan *lefttree,
 	plan->lefttree = lefttree;
 	plan->righttree = NULL;
 
+	node->hashkeys = hashkeys;
 	node->skewTable = skewTable;
 	node->skewColumn = skewColumn;
 	node->skewInherit = skewInherit;

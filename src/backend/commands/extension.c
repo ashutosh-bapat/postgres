@@ -12,7 +12,7 @@
  * postgresql.conf.  An extension also has an installation script file,
  * containing SQL commands to create the extension's objects.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -717,8 +717,20 @@ execute_sql_string(const char *sql)
 	foreach(lc1, raw_parsetree_list)
 	{
 		RawStmt    *parsetree = lfirst_node(RawStmt, lc1);
+		MemoryContext per_parsetree_context,
+					oldcontext;
 		List	   *stmt_list;
 		ListCell   *lc2;
+
+		/*
+		 * We do the work for each parsetree in a short-lived context, to
+		 * limit the memory used when there are many commands in the string.
+		 */
+		per_parsetree_context =
+			AllocSetContextCreate(CurrentMemoryContext,
+								  "execute_sql_string per-statement context",
+								  ALLOCSET_DEFAULT_SIZES);
+		oldcontext = MemoryContextSwitchTo(per_parsetree_context);
 
 		/* Be sure parser can see any DDL done so far */
 		CommandCounterIncrement();
@@ -772,6 +784,10 @@ execute_sql_string(const char *sql)
 
 			PopActiveSnapshot();
 		}
+
+		/* Clean up per-parsetree context. */
+		MemoryContextSwitchTo(oldcontext);
+		MemoryContextDelete(per_parsetree_context);
 	}
 
 	/* Be sure to advance the command counter after the last script command */
@@ -926,16 +942,12 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 
 		execute_sql_string(c_sql);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		creating_extension = false;
 		CurrentExtensionObject = InvalidOid;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	creating_extension = false;
-	CurrentExtensionObject = InvalidOid;
 
 	/*
 	 * Restore the GUC variables we set above.
@@ -1909,8 +1921,7 @@ pg_available_extensions(PG_FUNCTION_ARGS)
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
@@ -2018,8 +2029,7 @@ pg_available_extension_versions(PG_FUNCTION_ARGS)
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
@@ -2242,8 +2252,7 @@ pg_extension_update_paths(PG_FUNCTION_ARGS)
 	if (!(rsinfo->allowedModes & SFRM_Materialize))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("materialize mode required, but it is not " \
-						"allowed in this context")));
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
 	/* Build a tuple descriptor for our result type */
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)

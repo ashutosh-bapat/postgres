@@ -3,7 +3,7 @@
  * parse_clause.c
  *	  handle clauses in parser
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,8 +14,6 @@
  */
 
 #include "postgres.h"
-
-#include "miscadmin.h"
 
 #include "access/htup_details.h"
 #include "access/nbtree.h"
@@ -29,12 +27,11 @@
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "parser/analyze.h"
-#include "parser/parsetree.h"
-#include "parser/parser.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
@@ -44,17 +41,19 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
+#include "parser/parser.h"
+#include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
-#include "utils/guc.h"
 #include "utils/catcache.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
 #include "utils/rel.h"
-
+#include "utils/syscache.h"
 
 /* Convenience macro for the most common makeNamespaceItem() case */
-#define makeDefaultNSItem(rte)	makeNamespaceItem(rte, true, true, false, true)
+#define makeDefaultNSItem(rte, rti) \
+	makeNamespaceItem(rte, rti, true, true, false, true)
 
 static void extractRemainingColumns(List *common_colnames,
 									List *src_colnames, List *src_colvars,
@@ -80,7 +79,7 @@ static Node *transformFromClauseItem(ParseState *pstate, Node *n,
 									 List **namespace);
 static Node *buildMergedJoinVar(ParseState *pstate, JoinType jointype,
 								Var *l_colvar, Var *r_colvar);
-static ParseNamespaceItem *makeNamespaceItem(RangeTblEntry *rte,
+static ParseNamespaceItem *makeNamespaceItem(RangeTblEntry *rte, int rtindex,
 											 bool rel_visible, bool cols_visible,
 											 bool lateral_only, bool lateral_ok);
 static void setNamespaceColumnVisibility(List *namespace, bool cols_visible);
@@ -218,11 +217,14 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 	rte = addRangeTableEntryForRelation(pstate, pstate->p_target_relation,
 										RowExclusiveLock,
 										relation->alias, inh, false);
-	pstate->p_target_rangetblentry = rte;
 
 	/* assume new rte is at end */
 	rtindex = list_length(pstate->p_rtable);
 	Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
+
+	/* remember the RTE as being the query target */
+	pstate->p_target_rangetblentry = rte;
+	pstate->p_target_rtindex = rtindex;
 
 	/*
 	 * Override addRangeTableEntry's default ACL_SELECT permissions check, and
@@ -1086,7 +1088,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
 		*top_rte = rte;
 		*top_rti = rtindex;
-		*namespace = list_make1(makeDefaultNSItem(rte));
+		*namespace = list_make1(makeDefaultNSItem(rte, rtindex));
 		rtr = makeNode(RangeTblRef);
 		rtr->rtindex = rtindex;
 		return (Node *) rtr;
@@ -1104,7 +1106,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
 		*top_rte = rte;
 		*top_rti = rtindex;
-		*namespace = list_make1(makeDefaultNSItem(rte));
+		*namespace = list_make1(makeDefaultNSItem(rte, rtindex));
 		rtr = makeNode(RangeTblRef);
 		rtr->rtindex = rtindex;
 		return (Node *) rtr;
@@ -1122,7 +1124,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
 		*top_rte = rte;
 		*top_rti = rtindex;
-		*namespace = list_make1(makeDefaultNSItem(rte));
+		*namespace = list_make1(makeDefaultNSItem(rte, rtindex));
 		rtr = makeNode(RangeTblRef);
 		rtr->rtindex = rtindex;
 		return (Node *) rtr;
@@ -1147,7 +1149,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		Assert(rte == rt_fetch(rtindex, pstate->p_rtable));
 		*top_rte = rte;
 		*top_rti = rtindex;
-		*namespace = list_make1(makeDefaultNSItem(rte));
+		*namespace = list_make1(makeDefaultNSItem(rte, rtindex));
 		rtr = makeNode(RangeTblRef);
 		rtr->rtindex = rtindex;
 		return (Node *) rtr;
@@ -1221,9 +1223,6 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		 *
 		 * Notice that we don't require the merged namespace list to be
 		 * conflict-free.  See the comments for scanNameSpaceForRefname().
-		 *
-		 * NB: this coding relies on the fact that list_concat is not
-		 * destructive to its second argument.
 		 */
 		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT);
 		setNamespaceLateralState(l_namespace, true, lateral_ok);
@@ -1493,6 +1492,7 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		 */
 		*namespace = lappend(my_namespace,
 							 makeNamespaceItem(rte,
+											   j->rtindex,
 											   (j->alias != NULL),
 											   true,
 											   false,
@@ -1629,13 +1629,15 @@ buildMergedJoinVar(ParseState *pstate, JoinType jointype,
  *	  Convenience subroutine to construct a ParseNamespaceItem.
  */
 static ParseNamespaceItem *
-makeNamespaceItem(RangeTblEntry *rte, bool rel_visible, bool cols_visible,
+makeNamespaceItem(RangeTblEntry *rte, int rtindex,
+				  bool rel_visible, bool cols_visible,
 				  bool lateral_only, bool lateral_ok)
 {
 	ParseNamespaceItem *nsitem;
 
 	nsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
 	nsitem->p_rte = rte;
+	nsitem->p_rtindex = rtindex;
 	nsitem->p_rel_visible = rel_visible;
 	nsitem->p_cols_visible = cols_visible;
 	nsitem->p_lateral_only = lateral_only;
@@ -2123,9 +2125,7 @@ flatten_grouping_sets(Node *expr, bool toplevel, bool *hasGroupingSets)
 
 					if (IsA(n1, GroupingSet) &&
 						((GroupingSet *) n1)->kind == GROUPING_SET_SETS)
-					{
 						result_set = list_concat(result_set, (List *) n2);
-					}
 					else
 						result_set = lappend(result_set, n2);
 				}

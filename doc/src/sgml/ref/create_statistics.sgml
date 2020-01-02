@@ -98,7 +98,8 @@ CREATE STATISTICS [ IF NOT EXISTS ] <replaceable class="parameter">statistics_na
     <listitem>
      <para>
       The name of a table column to be covered by the computed statistics.
-      At least two column names must be given.
+      At least two column names must be given;  the order of the column names
+      is insignificant.
      </para>
     </listitem>
    </varlistentry>
@@ -178,7 +179,7 @@ CREATE TABLE t2 (
 INSERT INTO t2 SELECT mod(i,100), mod(i,100)
                  FROM generate_series(1,1000000) s(i);
 
-CREATE STATISTICS s2 (mcv) ON (a, b) FROM t2;
+CREATE STATISTICS s2 (mcv) ON a, b FROM t2;
 
 ANALYZE t2;
 

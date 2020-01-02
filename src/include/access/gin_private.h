@@ -2,7 +2,7 @@
  * gin_private.h
  *	  header file for postgres inverted index access method implementation.
  *
- *	Copyright (c) 2006-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2020, PostgreSQL Global Development Group
  *
  *	src/include/access/gin_private.h
  *--------------------------------------------------------------------------
@@ -14,9 +14,10 @@
 #include "access/gin.h"
 #include "access/ginblock.h"
 #include "access/itup.h"
+#include "catalog/pg_am_d.h"
 #include "fmgr.h"
-#include "storage/bufmgr.h"
 #include "lib/rbtree.h"
+#include "storage/bufmgr.h"
 
 /*
  * Storage type for GIN's reloptions
@@ -30,10 +31,14 @@ typedef struct GinOptions
 
 #define GIN_DEFAULT_USE_FASTUPDATE	true
 #define GinGetUseFastUpdate(relation) \
-	((relation)->rd_options ? \
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_INDEX && \
+				 relation->rd_rel->relam == GIN_AM_OID), \
+	 (relation)->rd_options ? \
 	 ((GinOptions *) (relation)->rd_options)->useFastUpdate : GIN_DEFAULT_USE_FASTUPDATE)
 #define GinGetPendingListCleanupSize(relation) \
-	((relation)->rd_options && \
+	(AssertMacro(relation->rd_rel->relkind == RELKIND_INDEX && \
+				 relation->rd_rel->relam == GIN_AM_OID), \
+	 (relation)->rd_options && \
 	 ((GinOptions *) (relation)->rd_options)->pendingListCleanupSize != -1 ? \
 	 ((GinOptions *) (relation)->rd_options)->pendingListCleanupSize : \
 	 gin_pending_list_limit)
@@ -54,7 +59,7 @@ typedef struct GinState
 	bool		oneCol;			/* true if single-column index */
 
 	/*
-	 * origTupDesc is the nominal tuple descriptor of the index, ie, the i'th
+	 * origTupdesc is the nominal tuple descriptor of the index, ie, the i'th
 	 * attribute shows the key type (not the input data type!) of the i'th
 	 * index column.  In a single-column index this describes the actual leaf
 	 * index tuples.  In a multi-column index, the actual leaf tuples contain
@@ -443,7 +448,7 @@ extern void ginInsertCleanup(GinState *ginstate, bool full_clean,
 
 /* ginpostinglist.c */
 
-extern GinPostingList *ginCompressPostingList(const ItemPointer ptrs, int nptrs,
+extern GinPostingList *ginCompressPostingList(const ItemPointer ipd, int nipd,
 											  int maxsize, int *nwritten);
 extern int	ginPostingListDecodeAllSegmentsToTbm(GinPostingList *ptr, int totalsize, TIDBitmap *tbm);
 

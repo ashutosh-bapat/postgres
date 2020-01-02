@@ -8,7 +8,7 @@
  * or call FUNCAPI-callable functions or macros.
  *
  *
- * Copyright (c) 2002-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2020, PostgreSQL Global Development Group
  *
  * src/include/funcapi.h
  *
@@ -17,11 +17,10 @@
 #ifndef FUNCAPI_H
 #define FUNCAPI_H
 
-#include "fmgr.h"
 #include "access/tupdesc.h"
 #include "executor/executor.h"
 #include "executor/tuptable.h"
-
+#include "fmgr.h"
 
 /*-------------------------------------------------------------------------
  *	Support to ease writing Functions returning composite types
@@ -252,7 +251,7 @@ extern Datum HeapTupleHeaderGetDatum(HeapTupleHeader tuple);
  *		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
  *		<user defined code>
  *		<if returning composite>
- *			<build TupleDesc, and perhaps AttInMetaData>
+ *			<build TupleDesc, and perhaps AttInMetadata>
  *		<endif returning composite>
  *		<user defined code>
  *		// return to original context when allocating transient memory

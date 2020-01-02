@@ -6,7 +6,7 @@
  *	  message integrity and endpoint authentication.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,10 +27,6 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <ctype.h>
-
-#include "libpq-fe.h"
-#include "fe-auth.h"
-#include "libpq-int.h"
 
 #ifdef WIN32
 #include "win32.h"
@@ -54,6 +50,10 @@
 #include <pthread.h>
 #endif
 #endif
+
+#include "fe-auth.h"
+#include "libpq-fe.h"
+#include "libpq-int.h"
 
 /*
  * Macros to handle disabling and then restoring the state of SIGPIPE handling.
@@ -431,6 +431,24 @@ PQsslAttributeNames(PGconn *conn)
 	static const char *const result[] = {NULL};
 
 	return result;
+}
+
+PQsslKeyPassHook_type
+PQgetSSLKeyPassHook(void)
+{
+	return NULL;
+}
+
+void
+PQsetSSLKeyPassHook(PQsslKeyPassHook_type hook)
+{
+	return;
+}
+
+int
+PQdefaultSSLKeyPassHook(char *buf, int size, PGconn *conn)
+{
+	return 0;
 }
 #endif							/* USE_SSL */
 

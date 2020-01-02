@@ -3,18 +3,11 @@
  *
  *	file system operations
  *
- *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/file.c
  */
 
 #include "postgres_fe.h"
-
-#include "access/visibilitymap.h"
-#include "common/file_perm.h"
-#include "pg_upgrade.h"
-#include "storage/bufpage.h"
-#include "storage/checksum.h"
-#include "storage/checksum_impl.h"
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -26,6 +19,12 @@
 #include <linux/fs.h>
 #endif
 
+#include "access/visibilitymap.h"
+#include "common/file_perm.h"
+#include "pg_upgrade.h"
+#include "storage/bufpage.h"
+#include "storage/checksum.h"
+#include "storage/checksum_impl.h"
 
 #ifdef WIN32
 static int	win32_pghardlink(const char *src, const char *dst);

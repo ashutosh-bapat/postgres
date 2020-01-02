@@ -401,6 +401,10 @@ INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 -- but this shouldn't:
 INSERT INTO func_index_heap VALUES('QWERTY');
 
+-- while we're here, see that the metadata looks sane
+\d func_index_heap
+\d func_index_index
+
 
 --
 -- Same test, expressional index
@@ -416,6 +420,14 @@ INSERT INTO func_index_heap VALUES('QWE','RTY');
 INSERT INTO func_index_heap VALUES('ABCD', 'EF');
 -- but this shouldn't:
 INSERT INTO func_index_heap VALUES('QWERTY');
+
+-- while we're here, see that the metadata looks sane
+\d func_index_heap
+\d func_index_index
+
+-- this should fail because of unsafe column type (anonymous record)
+create index on func_index_heap ((f1 || f2), (row(f1, f2)));
+
 
 --
 -- Test unique index with included columns
@@ -537,6 +549,12 @@ ALTER TABLE cwi_test DROP CONSTRAINT cwi_uniq_idx,
 \d cwi_replaced_pkey
 
 DROP INDEX cwi_replaced_pkey;	-- Should fail; a constraint depends on it
+
+-- Check that non-default index options are rejected
+CREATE UNIQUE INDEX cwi_uniq3_idx ON cwi_test(a desc);
+ALTER TABLE cwi_test ADD UNIQUE USING INDEX cwi_uniq3_idx;  -- fail
+CREATE UNIQUE INDEX cwi_uniq4_idx ON cwi_test(b collate "POSIX");
+ALTER TABLE cwi_test ADD UNIQUE USING INDEX cwi_uniq4_idx;  -- fail
 
 DROP TABLE cwi_test;
 
@@ -776,9 +794,35 @@ REINDEX TABLE CONCURRENTLY concur_reindex_tab3;  -- succeeds with warning
 INSERT INTO concur_reindex_tab3 VALUES  (4, '[2,4]');
 -- Check materialized views
 CREATE MATERIALIZED VIEW concur_reindex_matview AS SELECT * FROM concur_reindex_tab;
+-- Dependency lookup before and after the follow-up REINDEX commands.
+-- These should remain consistent.
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid,refobjid,refobjsubid) as objref,
+       deptype
+FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND
+  objid in ('concur_reindex_tab'::regclass,
+            'concur_reindex_ind1'::regclass,
+	    'concur_reindex_ind2'::regclass,
+	    'concur_reindex_ind3'::regclass,
+	    'concur_reindex_ind4'::regclass,
+	    'concur_reindex_matview'::regclass)
+  ORDER BY 1, 2;
 REINDEX INDEX CONCURRENTLY concur_reindex_ind1;
 REINDEX TABLE CONCURRENTLY concur_reindex_tab;
 REINDEX TABLE CONCURRENTLY concur_reindex_matview;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid,refobjid,refobjsubid) as objref,
+       deptype
+FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND
+  objid in ('concur_reindex_tab'::regclass,
+            'concur_reindex_ind1'::regclass,
+	    'concur_reindex_ind2'::regclass,
+	    'concur_reindex_ind3'::regclass,
+	    'concur_reindex_ind4'::regclass,
+	    'concur_reindex_matview'::regclass)
+  ORDER BY 1, 2;
 -- Check that comments are preserved
 CREATE TABLE testcomment (i int);
 CREATE INDEX testcomment_idx1 ON testcomment (i);
@@ -823,12 +867,40 @@ REINDEX TABLE CONCURRENTLY concur_reindex_part_10;
 SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
   ORDER BY relid, level;
 -- REINDEX should preserve dependencies of partition tree.
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid,refobjid,refobjsubid) as objref,
+       deptype
+FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND
+  objid in ('concur_reindex_part'::regclass,
+            'concur_reindex_part_0'::regclass,
+            'concur_reindex_part_0_1'::regclass,
+            'concur_reindex_part_0_2'::regclass,
+            'concur_reindex_part_index'::regclass,
+            'concur_reindex_part_index_0'::regclass,
+            'concur_reindex_part_index_0_1'::regclass,
+            'concur_reindex_part_index_0_2'::regclass)
+  ORDER BY 1, 2;
 REINDEX INDEX CONCURRENTLY concur_reindex_part_index_0_1;
 REINDEX INDEX CONCURRENTLY concur_reindex_part_index_0_2;
 SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
   ORDER BY relid, level;
 REINDEX TABLE CONCURRENTLY concur_reindex_part_0_1;
 REINDEX TABLE CONCURRENTLY concur_reindex_part_0_2;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid,refobjid,refobjsubid) as objref,
+       deptype
+FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND
+  objid in ('concur_reindex_part'::regclass,
+            'concur_reindex_part_0'::regclass,
+            'concur_reindex_part_0_1'::regclass,
+            'concur_reindex_part_0_2'::regclass,
+            'concur_reindex_part_index'::regclass,
+            'concur_reindex_part_index_0'::regclass,
+            'concur_reindex_part_index_0_1'::regclass,
+            'concur_reindex_part_index_0_2'::regclass)
+  ORDER BY 1, 2;
 SELECT relid, parentrelid, level FROM pg_partition_tree('concur_reindex_part_index')
   ORDER BY relid, level;
 DROP TABLE concur_reindex_part;
@@ -871,6 +943,34 @@ REINDEX TABLE CONCURRENTLY concur_reindex_tab4;
 REINDEX INDEX CONCURRENTLY concur_reindex_ind5;
 \d concur_reindex_tab4
 DROP TABLE concur_reindex_tab4;
+
+-- Check handling of indexes with expressions and predicates.  The
+-- definitions of the rebuilt indexes should match the original
+-- definitions.
+CREATE TABLE concur_exprs_tab (c1 int , c2 boolean);
+INSERT INTO concur_exprs_tab (c1, c2) VALUES (1369652450, FALSE),
+  (414515746, TRUE),
+  (897778963, FALSE);
+CREATE UNIQUE INDEX concur_exprs_index_expr
+  ON concur_exprs_tab ((c1::text COLLATE "C"));
+CREATE UNIQUE INDEX concur_exprs_index_pred ON concur_exprs_tab (c1)
+  WHERE (c1::text > 500000000::text COLLATE "C");
+CREATE UNIQUE INDEX concur_exprs_index_pred_2
+  ON concur_exprs_tab ((1 / c1))
+  WHERE ('-H') >= (c2::TEXT) COLLATE "C";
+SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+REINDEX TABLE CONCURRENTLY concur_exprs_tab;
+SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+-- ALTER TABLE recreates the indexes, which should keep their collations.
+ALTER TABLE concur_exprs_tab ALTER c2 TYPE TEXT;
+SELECT pg_get_indexdef('concur_exprs_index_expr'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred'::regclass);
+SELECT pg_get_indexdef('concur_exprs_index_pred_2'::regclass);
+DROP TABLE concur_exprs_tab;
 
 --
 -- REINDEX SCHEMA
@@ -921,8 +1021,15 @@ REINDEX SCHEMA CONCURRENTLY schema_to_reindex;
 CREATE ROLE regress_reindexuser NOLOGIN;
 SET SESSION ROLE regress_reindexuser;
 REINDEX SCHEMA schema_to_reindex;
+-- Permission failures with toast tables and indexes (pg_authid here)
+RESET ROLE;
+GRANT USAGE ON SCHEMA pg_toast TO regress_reindexuser;
+SET SESSION ROLE regress_reindexuser;
+REINDEX TABLE pg_toast.pg_toast_1260;
+REINDEX INDEX pg_toast.pg_toast_1260_index;
 
 -- Clean up
 RESET ROLE;
+REVOKE USAGE ON SCHEMA pg_toast FROM regress_reindexuser;
 DROP ROLE regress_reindexuser;
 DROP SCHEMA schema_to_reindex CASCADE;

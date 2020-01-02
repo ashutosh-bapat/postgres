@@ -205,7 +205,7 @@
  *    to filter expressions having to be evaluated early, and allows to JIT
  *    the entire expression into one native function.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -231,12 +231,12 @@
 #include "parser/parse_coerce.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/datum.h"
+#include "utils/expandeddatum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/tuplesort.h"
-#include "utils/datum.h"
-
 
 static void select_current_set(AggState *aggstate, int setno, bool is_hash);
 static void initialize_phase(AggState *aggstate, int newphase);
@@ -882,7 +882,7 @@ process_ordered_aggregate_multi(AggState *aggstate,
  * This function handles only one grouping set (already set in
  * aggstate->current_set).
  *
- * The finalfunction will be run, and the result delivered, in the
+ * The finalfn will be run, and the result delivered, in the
  * output-tuple context; caller's CurrentMemoryContext does not matter.
  *
  * The finalfn uses the state as set in the transno. This also might be
@@ -1312,9 +1312,14 @@ build_hash_table(AggState *aggstate)
  * by themselves, and secondly ctids for row-marks.
  *
  * To eliminate duplicates, we build a bitmapset of the needed columns, and
- * then build an array of the columns included in the hashtable.  Note that
- * the array is preserved over ExecReScanAgg, so we allocate it in the
- * per-query context (unlike the hash table itself).
+ * then build an array of the columns included in the hashtable. We might
+ * still have duplicates if the passed-in grpColIdx has them, which can happen
+ * in edge cases from semijoins/distinct; these can't always be removed,
+ * because it's not certain that the duplicate cols will be using the same
+ * hash function.
+ *
+ * Note that the array is preserved over ExecReScanAgg, so we allocate it in
+ * the per-query context (unlike the hash table itself).
  */
 static void
 find_hash_columns(AggState *aggstate)
@@ -1335,6 +1340,7 @@ find_hash_columns(AggState *aggstate)
 		AttrNumber *grpColIdx = perhash->aggnode->grpColIdx;
 		List	   *hashTlist = NIL;
 		TupleDesc	hashDesc;
+		int			maxCols;
 		int			i;
 
 		perhash->largestGrpColIdx = 0;
@@ -1359,14 +1365,23 @@ find_hash_columns(AggState *aggstate)
 					colnos = bms_del_member(colnos, attnum);
 			}
 		}
-		/* Add in all the grouping columns */
-		for (i = 0; i < perhash->numCols; i++)
-			colnos = bms_add_member(colnos, grpColIdx[i]);
+
+		/*
+		 * Compute maximum number of input columns accounting for possible
+		 * duplications in the grpColIdx array, which can happen in some edge
+		 * cases where HashAggregate was generated as part of a semijoin or a
+		 * DISTINCT.
+		 */
+		maxCols = bms_num_members(colnos) + perhash->numCols;
 
 		perhash->hashGrpColIdxInput =
-			palloc(bms_num_members(colnos) * sizeof(AttrNumber));
+			palloc(maxCols * sizeof(AttrNumber));
 		perhash->hashGrpColIdxHash =
 			palloc(perhash->numCols * sizeof(AttrNumber));
+
+		/* Add all the grouping columns to colnos */
+		for (i = 0; i < perhash->numCols; i++)
+			colnos = bms_add_member(colnos, grpColIdx[i]);
 
 		/*
 		 * First build mapping for columns directly hashed. These are the
@@ -2216,12 +2231,42 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 	/*
 	 * initialize source tuple type.
 	 */
+	aggstate->ss.ps.outerops =
+		ExecGetResultSlotOps(outerPlanState(&aggstate->ss),
+							 &aggstate->ss.ps.outeropsfixed);
+	aggstate->ss.ps.outeropsset = true;
+
 	ExecCreateScanSlotFromOuterPlan(estate, &aggstate->ss,
-									ExecGetResultSlotOps(outerPlanState(&aggstate->ss), NULL));
+									aggstate->ss.ps.outerops);
 	scanDesc = aggstate->ss.ss_ScanTupleSlot->tts_tupleDescriptor;
-	if (node->chain)
+
+	/*
+	 * If there are more than two phases (including a potential dummy phase
+	 * 0), input will be resorted using tuplesort. Need a slot for that.
+	 */
+	if (numPhases > 2)
+	{
 		aggstate->sort_slot = ExecInitExtraTupleSlot(estate, scanDesc,
 													 &TTSOpsMinimalTuple);
+
+		/*
+		 * The output of the tuplesort, and the output from the outer child
+		 * might not use the same type of slot. In most cases the child will
+		 * be a Sort, and thus return a TTSOpsMinimalTuple type slot - but the
+		 * input can also be be presorted due an index, in which case it could
+		 * be a different type of slot.
+		 *
+		 * XXX: For efficiency it would be good to instead/additionally
+		 * generate expressions with corresponding settings of outerops* for
+		 * the individual phases - deforming is often a bottleneck for
+		 * aggregations with lots of rows per group. If there's multiple
+		 * sorts, we know that all but the first use TTSOpsMinimalTuple (via
+		 * the nodeAgg.c internal tuplesort).
+		 */
+		if (aggstate->ss.ps.outeropsfixed &&
+			aggstate->ss.ps.outerops != &TTSOpsMinimalTuple)
+			aggstate->ss.ps.outeropsfixed = false;
+	}
 
 	/*
 	 * Initialize result type, slot and projection.
@@ -2973,8 +3018,8 @@ build_pertrans_for_aggref(AggStatePerTrans pertrans,
 		numTransArgs = pertrans->numTransInputs + 1;
 
 		/*
-		 * Set up infrastructure for calling the transfn.  Note that invtrans
-		 * is not needed here.
+		 * Set up infrastructure for calling the transfn.  Note that
+		 * invtransfn is not needed here.
 		 */
 		build_aggregate_transfn_expr(inputTypes,
 									 numArguments,

@@ -1,7 +1,7 @@
 /*
  * PostgreSQL System Views
  *
- * Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2020, PostgreSQL Global Development Group
  *
  * src/backend/catalog/system_views.sql
  *
@@ -252,6 +252,46 @@ CREATE VIEW pg_stats WITH (security_barrier) AS
     AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));
 
 REVOKE ALL on pg_statistic FROM public;
+
+CREATE VIEW pg_stats_ext WITH (security_barrier) AS
+    SELECT cn.nspname AS schemaname,
+           c.relname AS tablename,
+           sn.nspname AS statistics_schemaname,
+           s.stxname AS statistics_name,
+           pg_get_userbyid(s.stxowner) AS statistics_owner,
+           ( SELECT array_agg(a.attname ORDER BY a.attnum)
+             FROM unnest(s.stxkeys) k
+                  JOIN pg_attribute a
+                       ON (a.attrelid = s.stxrelid AND a.attnum = k)
+           ) AS attnames,
+           s.stxkind AS kinds,
+           sd.stxdndistinct AS n_distinct,
+           sd.stxddependencies AS dependencies,
+           m.most_common_vals,
+           m.most_common_val_nulls,
+           m.most_common_freqs,
+           m.most_common_base_freqs
+    FROM pg_statistic_ext s JOIN pg_class c ON (c.oid = s.stxrelid)
+         JOIN pg_statistic_ext_data sd ON (s.oid = sd.stxoid)
+         LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
+         LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
+         LEFT JOIN LATERAL
+                   ( SELECT array_agg(values) AS most_common_vals,
+                            array_agg(nulls) AS most_common_val_nulls,
+                            array_agg(frequency) AS most_common_freqs,
+                            array_agg(base_frequency) AS most_common_base_freqs
+                     FROM pg_mcv_list_items(sd.stxdmcv)
+                   ) m ON sd.stxdmcv IS NOT NULL
+    WHERE NOT EXISTS
+              ( SELECT 1
+                FROM unnest(stxkeys) k
+                     JOIN pg_attribute a
+                          ON (a.attrelid = s.stxrelid AND a.attnum = k)
+                WHERE NOT has_column_privilege(c.oid, a.attnum, 'select') )
+    AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));
+
+-- unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
+REVOKE ALL on pg_statistic_ext_data FROM public;
 
 CREATE VIEW pg_publication_tables AS
     SELECT
@@ -736,7 +776,10 @@ CREATE VIEW pg_stat_replication AS
             W.replay_lag,
             W.sync_priority,
             W.sync_state,
-            W.reply_time
+            W.reply_time,
+            W.spill_txns,
+            W.spill_count,
+            W.spill_bytes
     FROM pg_stat_get_activity(NULL) AS S
         JOIN pg_stat_get_wal_senders() AS W ON (S.pid = W.pid)
         LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);
@@ -786,7 +829,8 @@ CREATE VIEW pg_stat_ssl AS
             S.ssl_client_dn AS client_dn,
             S.ssl_client_serial AS client_serial,
             S.ssl_issuer_dn AS issuer_dn
-    FROM pg_stat_get_activity(NULL) AS S;
+    FROM pg_stat_get_activity(NULL) AS S
+    WHERE S.client_port IS NOT NULL;
 
 CREATE VIEW pg_stat_gssapi AS
     SELECT
@@ -794,7 +838,8 @@ CREATE VIEW pg_stat_gssapi AS
             S.gss_auth AS gss_authenticated,
             S.gss_princ AS principal,
             S.gss_enc AS encrypted
-    FROM pg_stat_get_activity(NULL) AS S;
+    FROM pg_stat_get_activity(NULL) AS S
+    WHERE S.client_port IS NOT NULL;
 
 CREATE VIEW pg_replication_slots AS
     SELECT
@@ -956,6 +1001,11 @@ CREATE VIEW pg_stat_progress_create_index AS
         S.pid AS pid, S.datid AS datid, D.datname AS datname,
         S.relid AS relid,
         CAST(S.param7 AS oid) AS index_relid,
+        CASE S.param1 WHEN 1 THEN 'CREATE INDEX'
+                      WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'
+                      WHEN 3 THEN 'REINDEX'
+                      WHEN 4 THEN 'REINDEX CONCURRENTLY'
+                      END AS command,
         CASE S.param10 WHEN 0 THEN 'initializing'
                        WHEN 1 THEN 'waiting for writers before build'
                        WHEN 2 THEN 'building index' ||
@@ -1241,6 +1291,46 @@ RETURNS jsonb
 LANGUAGE INTERNAL
 STRICT IMMUTABLE PARALLEL SAFE
 AS 'jsonb_path_query_first';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_exists_tz(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                    silent boolean DEFAULT false)
+RETURNS boolean
+LANGUAGE INTERNAL
+STRICT STABLE PARALLEL SAFE
+AS 'jsonb_path_exists_tz';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_match_tz(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                   silent boolean DEFAULT false)
+RETURNS boolean
+LANGUAGE INTERNAL
+STRICT STABLE PARALLEL SAFE
+AS 'jsonb_path_match_tz';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_query_tz(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                   silent boolean DEFAULT false)
+RETURNS SETOF jsonb
+LANGUAGE INTERNAL
+STRICT STABLE PARALLEL SAFE
+AS 'jsonb_path_query_tz';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_query_array_tz(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                         silent boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+STRICT STABLE PARALLEL SAFE
+AS 'jsonb_path_query_array_tz';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_query_first_tz(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                         silent boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+STRICT STABLE PARALLEL SAFE
+AS 'jsonb_path_query_first_tz';
 
 --
 -- The default permissions for functions mean that anyone can execute them.

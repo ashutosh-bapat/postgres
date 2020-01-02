@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/plpython.sgml -->
 
 <chapter id="plpython">
- <title>PL/Python - Python Procedural Language</title>
+ <title>PL/Python &mdash; Python Procedural Language</title>
 
  <indexterm zone="plpython"><primary>PL/Python</primary></indexterm>
  <indexterm zone="plpython"><primary>Python</primary></indexterm>
@@ -665,7 +665,7 @@ CALL python_triple(5, 10);
   </sect2>
 
   <sect2>
-   <title>Set-returning Functions</title>
+   <title>Set-Returning Functions</title>
   <para>
    A <application>PL/Python</application> function can also return sets of
    scalar or composite types. There are several ways to achieve this because
@@ -1227,7 +1227,7 @@ except spiexceptions.DivisionByZero:
     return "denominator cannot equal zero"
 except spiexceptions.UniqueViolation:
     return "already have that fraction"
-except plpy.SPIError, e:
+except plpy.SPIError as e:
     return "other error, SQLSTATE %s" % e.sqlstate
 else:
     return "fraction inserted"
@@ -1274,7 +1274,7 @@ CREATE FUNCTION transfer_funds() RETURNS void AS $$
 try:
     plpy.execute("UPDATE accounts SET balance = balance - 100 WHERE account_name = 'joe'")
     plpy.execute("UPDATE accounts SET balance = balance + 100 WHERE account_name = 'mary'")
-except plpy.SPIError, e:
+except plpy.SPIError as e:
     result = "error transferring funds: %s" % e.args
 else:
     result = "funds transferred correctly"
@@ -1306,7 +1306,7 @@ try:
     with plpy.subtransaction():
         plpy.execute("UPDATE accounts SET balance = balance - 100 WHERE account_name = 'joe'")
         plpy.execute("UPDATE accounts SET balance = balance + 100 WHERE account_name = 'mary'")
-except plpy.SPIError, e:
+except plpy.SPIError as e:
     result = "error transferring funds: %s" % e.args
 else:
     result = "funds transferred correctly"
@@ -1357,7 +1357,7 @@ try:
         raise
     else:
         subxact.exit(None, None, None)
-except plpy.SPIError, e:
+except plpy.SPIError as e:
     result = "error transferring funds: %s" % e.args
 else:
     result = "funds transferred correctly"

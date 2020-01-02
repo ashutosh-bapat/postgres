@@ -3,7 +3,7 @@
  * lockcmds.c
  *	  LOCK command support code
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,13 +20,13 @@
 #include "catalog/pg_inherits.h"
 #include "commands/lockcmds.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
 #include "parser/parse_clause.h"
+#include "rewrite/rewriteHandler.h"
 #include "storage/lmgr.h"
 #include "utils/acl.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
-#include "rewrite/rewriteHandler.h"
-#include "nodes/nodeFuncs.h"
 
 static void LockTableRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, Oid userid);
 static AclResult LockTableAclCheck(Oid relid, LOCKMODE lockmode, Oid userid);
@@ -281,11 +281,11 @@ LockViewRecurse(Oid reloid, LOCKMODE lockmode, bool nowait, List *ancestor_views
 	context.nowait = nowait;
 	context.viewowner = view->rd_rel->relowner;
 	context.viewoid = reloid;
-	context.ancestor_views = lcons_oid(reloid, ancestor_views);
+	context.ancestor_views = lappend_oid(ancestor_views, reloid);
 
 	LockViewRecurse_walker((Node *) viewquery, &context);
 
-	ancestor_views = list_delete_oid(ancestor_views, reloid);
+	(void) list_delete_last(context.ancestor_views);
 
 	table_close(view, NoLock);
 }

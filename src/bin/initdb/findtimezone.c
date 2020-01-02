@@ -3,7 +3,7 @@
  * findtimezone.c
  *	  Functions for determining the default timezone to use.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/bin/initdb/findtimezone.c
@@ -128,8 +128,11 @@ pg_load_tz(const char *name)
  * the C library's localtime() function.  The database zone that matches
  * furthest into the past is the one to use.  Often there will be several
  * zones with identical rankings (since the IANA database assigns multiple
- * names to many zones).  We break ties arbitrarily by preferring shorter,
- * then alphabetically earlier zone names.
+ * names to many zones).  We break ties by first checking for "preferred"
+ * names (such as "UTC"), and then arbitrarily by preferring shorter, then
+ * alphabetically earlier zone names.  (If we did not explicitly prefer
+ * "UTC", we would get the alias name "UCT" instead due to alphabetic
+ * ordering.)
  *
  * Many modern systems use the IANA database, so if we can determine the
  * system's idea of which zone it is using and its behavior matches our zone
@@ -603,6 +606,34 @@ check_system_link_file(const char *linkname, struct tztry *tt,
 }
 
 /*
+ * Given a timezone name, determine whether it should be preferred over other
+ * names which are equally good matches. The output is arbitrary but we will
+ * use 0 for "neutral" default preference; larger values are more preferred.
+ */
+static int
+zone_name_pref(const char *zonename)
+{
+	/*
+	 * Prefer UTC over alternatives such as UCT.  Also prefer Etc/UTC over
+	 * Etc/UCT; but UTC is preferred to Etc/UTC.
+	 */
+	if (strcmp(zonename, "UTC") == 0)
+		return 50;
+	if (strcmp(zonename, "Etc/UTC") == 0)
+		return 40;
+
+	/*
+	 * We don't want to pick "localtime" or "posixrules", unless we can find
+	 * no other name for the prevailing zone.  Those aren't real zone names.
+	 */
+	if (strcmp(zonename, "localtime") == 0 ||
+		strcmp(zonename, "posixrules") == 0)
+		return -50;
+
+	return 0;
+}
+
+/*
  * Recursively scan the timezone database looking for the best match to
  * the system timezone behavior.
  *
@@ -674,9 +705,14 @@ scan_available_timezones(char *tzdir, char *tzdirsub, struct tztry *tt,
 			else if (score == *bestscore)
 			{
 				/* Consider how to break a tie */
-				if (strlen(tzdirsub) < strlen(bestzonename) ||
-					(strlen(tzdirsub) == strlen(bestzonename) &&
-					 strcmp(tzdirsub, bestzonename) < 0))
+				int			namepref = (zone_name_pref(tzdirsub) -
+										zone_name_pref(bestzonename));
+
+				if (namepref > 0 ||
+					(namepref == 0 &&
+					 (strlen(tzdirsub) < strlen(bestzonename) ||
+					  (strlen(tzdirsub) == strlen(bestzonename) &&
+					   strcmp(tzdirsub, bestzonename) < 0))))
 					strlcpy(bestzonename, tzdirsub, TZ_STRLEN_MAX + 1);
 			}
 		}

@@ -1845,7 +1845,8 @@ pg_stat_gssapi| SELECT s.pid,
     s.gss_auth AS gss_authenticated,
     s.gss_princ AS principal,
     s.gss_enc AS encrypted
-   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, sslcompression, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc);
+   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, sslcompression, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc)
+  WHERE (s.client_port IS NOT NULL);
 pg_stat_progress_cluster| SELECT s.pid,
     s.datid,
     d.datname,
@@ -1879,6 +1880,13 @@ pg_stat_progress_create_index| SELECT s.pid,
     d.datname,
     s.relid,
     (s.param7)::oid AS index_relid,
+        CASE s.param1
+            WHEN 1 THEN 'CREATE INDEX'::text
+            WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'::text
+            WHEN 3 THEN 'REINDEX'::text
+            WHEN 4 THEN 'REINDEX CONCURRENTLY'::text
+            ELSE NULL::text
+        END AS command,
         CASE s.param10
             WHEN 0 THEN 'initializing'::text
             WHEN 1 THEN 'waiting for writers before build'::text
@@ -1944,9 +1952,12 @@ pg_stat_replication| SELECT s.pid,
     w.replay_lag,
     w.sync_priority,
     w.sync_state,
-    w.reply_time
+    w.reply_time,
+    w.spill_txns,
+    w.spill_count,
+    w.spill_bytes
    FROM ((pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, sslcompression, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc)
-     JOIN pg_stat_get_wal_senders() w(pid, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, write_lag, flush_lag, replay_lag, sync_priority, sync_state, reply_time) ON ((s.pid = w.pid)))
+     JOIN pg_stat_get_wal_senders() w(pid, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, write_lag, flush_lag, replay_lag, sync_priority, sync_state, reply_time, spill_txns, spill_count, spill_bytes) ON ((s.pid = w.pid)))
      LEFT JOIN pg_authid u ON ((s.usesysid = u.oid)));
 pg_stat_ssl| SELECT s.pid,
     s.ssl,
@@ -1957,7 +1968,8 @@ pg_stat_ssl| SELECT s.pid,
     s.ssl_client_dn AS client_dn,
     s.ssl_client_serial AS client_serial,
     s.ssl_issuer_dn AS issuer_dn
-   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, sslcompression, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc);
+   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, sslcompression, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc)
+  WHERE (s.client_port IS NOT NULL);
 pg_stat_subscription| SELECT su.oid AS subid,
     su.subname,
     st.pid,
@@ -2277,6 +2289,35 @@ pg_stats| SELECT n.nspname AS schemaname,
      JOIN pg_attribute a ON (((c.oid = a.attrelid) AND (a.attnum = s.staattnum))))
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
   WHERE ((NOT a.attisdropped) AND has_column_privilege(c.oid, a.attnum, 'select'::text) AND ((c.relrowsecurity = false) OR (NOT row_security_active(c.oid))));
+pg_stats_ext| SELECT cn.nspname AS schemaname,
+    c.relname AS tablename,
+    sn.nspname AS statistics_schemaname,
+    s.stxname AS statistics_name,
+    pg_get_userbyid(s.stxowner) AS statistics_owner,
+    ( SELECT array_agg(a.attname ORDER BY a.attnum) AS array_agg
+           FROM (unnest(s.stxkeys) k(k)
+             JOIN pg_attribute a ON (((a.attrelid = s.stxrelid) AND (a.attnum = k.k))))) AS attnames,
+    s.stxkind AS kinds,
+    sd.stxdndistinct AS n_distinct,
+    sd.stxddependencies AS dependencies,
+    m.most_common_vals,
+    m.most_common_val_nulls,
+    m.most_common_freqs,
+    m.most_common_base_freqs
+   FROM (((((pg_statistic_ext s
+     JOIN pg_class c ON ((c.oid = s.stxrelid)))
+     JOIN pg_statistic_ext_data sd ON ((s.oid = sd.stxoid)))
+     LEFT JOIN pg_namespace cn ON ((cn.oid = c.relnamespace)))
+     LEFT JOIN pg_namespace sn ON ((sn.oid = s.stxnamespace)))
+     LEFT JOIN LATERAL ( SELECT array_agg(pg_mcv_list_items."values") AS most_common_vals,
+            array_agg(pg_mcv_list_items.nulls) AS most_common_val_nulls,
+            array_agg(pg_mcv_list_items.frequency) AS most_common_freqs,
+            array_agg(pg_mcv_list_items.base_frequency) AS most_common_base_freqs
+           FROM pg_mcv_list_items(sd.stxdmcv) pg_mcv_list_items(index, "values", nulls, frequency, base_frequency)) m ON ((sd.stxdmcv IS NOT NULL)))
+  WHERE ((NOT (EXISTS ( SELECT 1
+           FROM (unnest(s.stxkeys) k(k)
+             JOIN pg_attribute a ON (((a.attrelid = s.stxrelid) AND (a.attnum = k.k))))
+          WHERE (NOT has_column_privilege(c.oid, a.attnum, 'select'::text))))) AND ((c.relrowsecurity = false) OR (NOT row_security_active(c.oid))));
 pg_tables| SELECT n.nspname AS schemaname,
     c.relname AS tablename,
     pg_get_userbyid(c.relowner) AS tableowner,
@@ -2934,6 +2975,30 @@ Rules:
   WHERE trgt.f1 = new.f1
 
 --
+-- Also check multiassignment deparsing.
+--
+create table rule_t1(f1 int, f2 int);
+create table rule_dest(f1 int, f2 int[], tag text);
+create rule rr as on update to rule_t1 do instead UPDATE rule_dest trgt
+  SET (f2[1], f1, tag) = (SELECT new.f2, new.f1, 'updated'::varchar)
+  WHERE trgt.f1 = new.f1 RETURNING new.*;
+\d+ rule_t1
+                                  Table "public.rule_t1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ f1     | integer |           |          |         | plain   |              | 
+ f2     | integer |           |          |         | plain   |              | 
+Rules:
+    rr AS
+    ON UPDATE TO rule_t1 DO INSTEAD  UPDATE rule_dest trgt SET (f2[1], f1, tag) = ( SELECT new.f2,
+            new.f1,
+            'updated'::character varying AS "varchar")
+  WHERE trgt.f1 = new.f1
+  RETURNING new.f1,
+    new.f2
+
+drop table rule_t1, rule_dest;
+--
 -- check alter rename rule
 --
 CREATE TABLE rule_t1 (a INT);
@@ -2986,6 +3051,18 @@ create view rule_v1 as values(1,2);
  column2 | integer |           |          |         | plain   | 
 View definition:
  VALUES (1,2);
+
+alter table rule_v1 rename column column2 to q2;
+\d+ rule_v1
+                           View "public.rule_v1"
+ Column  |  Type   | Collation | Nullable | Default | Storage | Description 
+---------+---------+-----------+----------+---------+---------+-------------
+ column1 | integer |           |          |         | plain   | 
+ q2      | integer |           |          |         | plain   | 
+View definition:
+ SELECT "*VALUES*".column1,
+    "*VALUES*".column2 AS q2
+   FROM (VALUES (1,2)) "*VALUES*";
 
 drop view rule_v1;
 create view rule_v1(x) as values(1,2);

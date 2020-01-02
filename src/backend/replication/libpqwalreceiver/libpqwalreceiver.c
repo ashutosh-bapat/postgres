@@ -6,7 +6,7 @@
  * loaded as a dynamic module to avoid linking the main server binary with
  * libpq.
  *
- * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2020, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -19,14 +19,14 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-#include "libpq-fe.h"
-#include "pqexpbuffer.h"
 #include "access/xlog.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "libpq-fe.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "pqexpbuffer.h"
 #include "replication/walreceiver.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"

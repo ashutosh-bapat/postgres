@@ -5,7 +5,7 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,8 +28,8 @@
 #include "commands/alter.h"
 #include "commands/async.h"
 #include "commands/cluster.h"
-#include "commands/comment.h"
 #include "commands/collationcmds.h"
+#include "commands/comment.h"
 #include "commands/conversioncmds.h"
 #include "commands/copy.h"
 #include "commands/createas.h"
@@ -39,8 +39,8 @@
 #include "commands/event_trigger.h"
 #include "commands/explain.h"
 #include "commands/extension.h"
-#include "commands/matview.h"
 #include "commands/lockcmds.h"
+#include "commands/matview.h"
 #include "commands/policy.h"
 #include "commands/portalcmds.h"
 #include "commands/prepare.h"
@@ -68,9 +68,8 @@
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
 #include "utils/rel.h"
-
+#include "utils/syscache.h"
 
 /* Hook for plugins to get control in ProcessUtility() */
 ProcessUtility_hook_type ProcessUtility_hook = NULL;
@@ -596,13 +595,9 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			break;
 
 		case T_DropdbStmt:
-			{
-				DropdbStmt *stmt = (DropdbStmt *) parsetree;
-
-				/* no event triggers for global objects */
-				PreventInTransactionBlock(isTopLevel, "DROP DATABASE");
-				dropdb(stmt->dbname, stmt->missing_ok);
-			}
+			/* no event triggers for global objects */
+			PreventInTransactionBlock(isTopLevel, "DROP DATABASE");
+			DropDatabase(pstate, (DropdbStmt *) parsetree);
 			break;
 
 			/* Query-level asynchronous notification */
@@ -1081,7 +1076,7 @@ ProcessUtilitySlow(ParseState *pstate,
 						}
 
 						/* Need CCI between commands */
-						if (lnext(l) != NULL)
+						if (lnext(stmts, l) != NULL)
 							CommandCounterIncrement();
 					}
 
@@ -1162,7 +1157,7 @@ ProcessUtilitySlow(ParseState *pstate,
 							}
 
 							/* Need CCI between commands */
-							if (lnext(l) != NULL)
+							if (lnext(stmts, l) != NULL)
 								CommandCounterIncrement();
 						}
 
@@ -1347,10 +1342,16 @@ ProcessUtilitySlow(ParseState *pstate,
 
 							if (relkind != RELKIND_RELATION &&
 								relkind != RELKIND_MATVIEW &&
-								relkind != RELKIND_PARTITIONED_TABLE)
+								relkind != RELKIND_PARTITIONED_TABLE &&
+								relkind != RELKIND_FOREIGN_TABLE)
+								elog(ERROR, "unexpected relkind \"%c\" on partition \"%s\"",
+									 relkind, stmt->relation->relname);
+
+							if (relkind == RELKIND_FOREIGN_TABLE &&
+								(stmt->unique || stmt->primary))
 								ereport(ERROR,
-										(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-										 errmsg("cannot create index on partitioned table \"%s\"",
+										(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+										 errmsg("cannot create unique index on partitioned table \"%s\"",
 												stmt->relation->relname),
 										 errdetail("Table \"%s\" contains partitions that are foreign tables.",
 												   stmt->relation->relname)));
@@ -1508,13 +1509,11 @@ ProcessUtilitySlow(ParseState *pstate,
 					address = ExecRefreshMatView((RefreshMatViewStmt *) parsetree,
 												 queryString, params, completionTag);
 				}
-				PG_CATCH();
+				PG_FINALLY();
 				{
 					EventTriggerUndoInhibitCommandCollection();
-					PG_RE_THROW();
 				}
 				PG_END_TRY();
-				EventTriggerUndoInhibitCommandCollection();
 				break;
 
 			case T_CreateTrigStmt:
@@ -1682,6 +1681,10 @@ ProcessUtilitySlow(ParseState *pstate,
 				address = CreateStatistics((CreateStatsStmt *) parsetree);
 				break;
 
+			case T_AlterStatsStmt:
+				address = AlterStatistics((AlterStatsStmt *) parsetree);
+				break;
+
 			case T_AlterCollationStmt:
 				address = AlterCollation((AlterCollationStmt *) parsetree);
 				break;
@@ -1706,16 +1709,12 @@ ProcessUtilitySlow(ParseState *pstate,
 			EventTriggerDDLCommandEnd(parsetree);
 		}
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (needCleanup)
 			EventTriggerEndCompleteQuery();
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	if (needCleanup)
-		EventTriggerEndCompleteQuery();
 }
 
 /*
@@ -2395,7 +2394,14 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_RenameStmt:
-			tag = AlterObjectTypeCommandTag(((RenameStmt *) parsetree)->renameType);
+			/*
+			 * When the column is renamed, the command tag is created
+			 * from its relation type
+			 */
+			tag = AlterObjectTypeCommandTag(
+				((RenameStmt *) parsetree)->renameType == OBJECT_COLUMN ?
+				((RenameStmt *) parsetree)->relationType :
+				((RenameStmt *) parsetree)->renameType);
 			break;
 
 		case T_AlterObjectDependsStmt:
@@ -2797,6 +2803,10 @@ CreateCommandTag(Node *parsetree)
 
 		case T_CreateStatsStmt:
 			tag = "CREATE STATISTICS";
+			break;
+
+		case T_AlterStatsStmt:
+			tag = "ALTER STATISTICS";
 			break;
 
 		case T_DeallocateStmt:
@@ -3384,6 +3394,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreateStatsStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterStatsStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

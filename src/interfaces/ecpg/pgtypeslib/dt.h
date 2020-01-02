@@ -5,6 +5,8 @@
 
 #include <pgtypes_timestamp.h>
 
+#include <time.h>
+
 #define MAXTZLEN			 10
 
 typedef int32 fsec_t;
@@ -143,8 +145,6 @@ typedef int32 fsec_t;
 #define DTK_AGO			5
 
 #define DTK_SPECIAL		6
-#define DTK_INVALID		7
-#define DTK_CURRENT		8
 #define DTK_EARLY		9
 #define DTK_LATE		10
 #define DTK_EPOCH		11

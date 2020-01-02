@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -61,10 +61,9 @@
 #include <sys/select.h>
 #endif
 
+#include "fe_utils/string_utils.h"
 #include "parallel.h"
 #include "pg_backup_utils.h"
-
-#include "fe_utils/string_utils.h"
 #include "port/pg_bswap.h"
 
 /* Mnemonic macros for indexing the fd array returned by pipe(2) */

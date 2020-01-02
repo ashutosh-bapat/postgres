@@ -3,7 +3,7 @@
  * origin.c
  *	  Logical replication progress tracking support.
  *
- * Copyright (c) 2013-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2020, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/origin.c
@@ -70,32 +70,29 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#include "funcapi.h"
-#include "miscadmin.h"
-
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/table.h"
 #include "access/xact.h"
-
+#include "catalog/catalog.h"
 #include "catalog/indexing.h"
+#include "funcapi.h"
+#include "miscadmin.h"
 #include "nodes/execnodes.h"
-
-#include "replication/origin.h"
-#include "replication/logical.h"
 #include "pgstat.h"
+#include "replication/logical.h"
+#include "replication/origin.h"
+#include "storage/condition_variable.h"
+#include "storage/copydir.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
-#include "storage/condition_variable.h"
-#include "storage/copydir.h"
-
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/pg_lsn.h"
 #include "utils/rel.h"
-#include "utils/syscache.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
 
 /*
  * Replay progress of a single remote node.
@@ -649,7 +646,7 @@ CheckPointReplicationOrigin(void)
 						tmppath)));
 	}
 
-	if (CloseTransientFile(tmpfd))
+	if (CloseTransientFile(tmpfd) != 0)
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m",
@@ -788,7 +785,7 @@ StartupReplicationOrigin(void)
 				 errmsg("replication slot checkpoint has wrong checksum %u, expected %u",
 						crc, file_crc)));
 
-	if (CloseTransientFile(fd))
+	if (CloseTransientFile(fd) != 0)
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not close file \"%s\": %m",
@@ -1099,7 +1096,7 @@ replorigin_session_setup(RepOriginId node)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_IN_USE),
-					 errmsg("replication identifier %d is already active for PID %d",
+					 errmsg("replication origin with OID %d is already active for PID %d",
 							curstate->roident, curstate->acquired_by)));
 		}
 
@@ -1228,6 +1225,24 @@ pg_replication_origin_create(PG_FUNCTION_ARGS)
 	replorigin_check_prerequisites(false, false);
 
 	name = text_to_cstring((text *) DatumGetPointer(PG_GETARG_DATUM(0)));
+
+	/* Replication origins "pg_xxx" are reserved for internal use */
+	if (IsReservedName(name))
+		ereport(ERROR,
+				(errcode(ERRCODE_RESERVED_NAME),
+				 errmsg("replication origin name \"%s\" is reserved",
+						name),
+				 errdetail("Origin names starting with \"pg_\" are reserved.")));
+
+	/*
+	 * If built with appropriate switch, whine when regression-testing
+	 * conventions for replication origin names are violated.
+	 */
+#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
+	if (strncmp(name, "regress_", 8) != 0)
+		elog(WARNING, "replication origins created by regression test cases should have names starting with \"regress_\"");
+#endif
+
 	roident = replorigin_create(name);
 
 	pfree(name);

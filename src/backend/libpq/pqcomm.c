@@ -27,7 +27,7 @@
  * the backend's "backend/libpq" is quite separate from "interfaces/libpq".
  * All that remains is similarities of names to trap the unwary...
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/libpq/pqcomm.c
@@ -44,8 +44,8 @@
  *		StreamClose			- Close a client/backend connection
  *		TouchSocketFiles	- Protect socket files against /tmp cleaners
  *		pq_init			- initialize libpq at backend startup
- *		pq_comm_reset	- reset libpq during error recovery
- *		pq_close		- shutdown libpq at backend exit
+ *		socket_comm_reset	- reset libpq during error recovery
+ *		socket_close		- shutdown libpq at backend exit
  *
  * low-level I/O:
  *		pq_getbytes		- get a known number of bytes from connection
@@ -485,10 +485,10 @@ StreamServerPort(int family, char *hostName, unsigned short portNumber,
 		 * error on TCP ports.
 		 *
 		 * On win32, however, this behavior only happens if the
-		 * SO_EXLUSIVEADDRUSE is set. With SO_REUSEADDR, win32 allows multiple
-		 * servers to listen on the same address, resulting in unpredictable
-		 * behavior. With no flags at all, win32 behaves as Unix with
-		 * SO_REUSEADDR.
+		 * SO_EXCLUSIVEADDRUSE is set. With SO_REUSEADDR, win32 allows
+		 * multiple servers to listen on the same address, resulting in
+		 * unpredictable behavior. With no flags at all, win32 behaves as Unix
+		 * with SO_REUSEADDR.
 		 */
 		if (!IS_AF_UNIX(addr->ai_family))
 		{

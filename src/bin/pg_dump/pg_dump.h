@@ -3,7 +3,7 @@
  * pg_dump.h
  *	  Common header file for the pg_dump utility
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/pg_dump.h
@@ -18,10 +18,6 @@
 
 
 #define oidcmp(x,y) ( ((x) < (y) ? -1 : ((x) > (y)) ?  1 : 0) )
-#define oideq(x,y) ( (x) == (y) )
-#define oidle(x,y) ( (x) <= (y) )
-#define oidge(x,y) ( (x) >= (y) )
-#define oidzero(x) ( (x) == 0 )
 
 /*
  * The data structures used to store system catalog information.  Every
@@ -371,6 +367,8 @@ typedef struct _indxInfo
 	bool		indisclustered;
 	bool		indisreplident;
 	Oid			parentidx;		/* if partitioned, parent index OID */
+	SimplePtrList partattaches;	/* if partitioned, partition attach objects */
+
 	/* if there is an associated constraint object, its dumpId: */
 	DumpId		indexconstraint;
 } IndxInfo;
@@ -386,6 +384,7 @@ typedef struct _statsExtInfo
 {
 	DumpableObject dobj;
 	char	   *rolname;		/* name of owner, or empty string */
+	int			stattarget;		/* statistics target */
 } StatsExtInfo;
 
 typedef struct _ruleInfo
@@ -636,9 +635,6 @@ typedef struct _extensionMemberId
 	CatalogId	catId;			/* tableoid+oid of some member object */
 	ExtensionInfo *ext;			/* owning extension */
 } ExtensionMemberId;
-
-/* global decls */
-extern bool force_quotes;		/* double-quotes for identifiers flag */
 
 /* placeholders for comment starting and ending delimiters */
 extern char g_comment_start[10];

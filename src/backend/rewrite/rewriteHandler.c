@@ -3,7 +3,7 @@
  * rewriteHandler.c
  *		Primary module of query rewriter.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -27,6 +27,7 @@
 #include "catalog/pg_type.h"
 #include "commands/trigger.h"
 #include "foreign/fdwapi.h"
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/analyze.h"
@@ -980,11 +981,11 @@ process_matched_tle(TargetEntry *src_tle,
 	 *
 	 * As a further complication, the destination column might be a domain,
 	 * resulting in each assignment containing a CoerceToDomain node over a
-	 * FieldStore or ArrayRef.  These should have matching target domains,
-	 * so we strip them and reconstitute a single CoerceToDomain over the
-	 * combined FieldStore/ArrayRef nodes.  (Notice that this has the result
-	 * that the domain's checks are applied only after we do all the field or
-	 * element updates, not after each one.  This is arguably desirable.)
+	 * FieldStore or SubscriptingRef.  These should have matching target
+	 * domains, so we strip them and reconstitute a single CoerceToDomain over
+	 * the combined FieldStore/SubscriptingRef nodes.  (Notice that this has the
+	 * result that the domain's checks are applied only after we do all the
+	 * field or element updates, not after each one.  This is arguably desirable.)
 	 *----------
 	 */
 	src_expr = (Node *) src_tle->expr;
@@ -1041,11 +1042,11 @@ process_matched_tle(TargetEntry *src_tle,
 			/* combine the two */
 			memcpy(fstore, prior_expr, sizeof(FieldStore));
 			fstore->newvals =
-				list_concat(list_copy(((FieldStore *) prior_expr)->newvals),
-							list_copy(((FieldStore *) src_expr)->newvals));
+				list_concat_copy(((FieldStore *) prior_expr)->newvals,
+								 ((FieldStore *) src_expr)->newvals);
 			fstore->fieldnums =
-				list_concat(list_copy(((FieldStore *) prior_expr)->fieldnums),
-							list_copy(((FieldStore *) src_expr)->fieldnums));
+				list_concat_copy(((FieldStore *) prior_expr)->fieldnums,
+								 ((FieldStore *) src_expr)->fieldnums);
 		}
 		else
 		{
@@ -1130,7 +1131,7 @@ build_column_default(Relation rel, int attrno)
 	{
 		NextValueExpr *nve = makeNode(NextValueExpr);
 
-		nve->seqid = getOwnedSequence(RelationGetRelid(rel), attrno);
+		nve->seqid = getIdentitySequence(RelationGetRelid(rel), attrno, false);
 		nve->typeId = att_tup->atttypid;
 
 		return (Node *) nve;
@@ -1973,7 +1974,7 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 							 errmsg("infinite recursion detected in rules for relation \"%s\"",
 									RelationGetRelationName(rel))));
-				activeRIRs = lcons_oid(RelationGetRelid(rel), activeRIRs);
+				activeRIRs = lappend_oid(activeRIRs, RelationGetRelid(rel));
 
 				foreach(l, locks)
 				{
@@ -1986,7 +1987,7 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 												  activeRIRs);
 				}
 
-				activeRIRs = list_delete_first(activeRIRs);
+				activeRIRs = list_delete_last(activeRIRs);
 			}
 		}
 
@@ -2059,7 +2060,7 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 							 errmsg("infinite recursion detected in policy for relation \"%s\"",
 									RelationGetRelationName(rel))));
 
-				activeRIRs = lcons_oid(RelationGetRelid(rel), activeRIRs);
+				activeRIRs = lappend_oid(activeRIRs, RelationGetRelid(rel));
 
 				/*
 				 * get_row_security_policies just passed back securityQuals
@@ -2084,7 +2085,7 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 				expression_tree_walker((Node *) withCheckOptions,
 									   fireRIRonSubLink, (void *) activeRIRs);
 
-				activeRIRs = list_delete_first(activeRIRs);
+				activeRIRs = list_delete_last(activeRIRs);
 			}
 
 			/*
@@ -2619,6 +2620,11 @@ view_cols_are_auto_updatable(Query *viewquery,
  * non-NULL, then only the specified columns are considered when testing for
  * updatability.
  *
+ * Unlike the preceding functions, this does recurse to look at a view's
+ * base relations, so it needs to detect recursion.  To do that, we pass
+ * a list of currently-considered outer relations.  External callers need
+ * only pass NIL.
+ *
  * This is used for the information_schema views, which have separate concepts
  * of "updatable" and "trigger updatable".  A relation is "updatable" if it
  * can be updated without the need for triggers (either because it has a
@@ -2637,6 +2643,7 @@ view_cols_are_auto_updatable(Query *viewquery,
  */
 int
 relation_is_updatable(Oid reloid,
+					  List *outer_reloids,
 					  bool include_triggers,
 					  Bitmapset *include_cols)
 {
@@ -2645,6 +2652,9 @@ relation_is_updatable(Oid reloid,
 	RuleLock   *rulelocks;
 
 #define ALL_EVENTS ((1 << CMD_INSERT) | (1 << CMD_UPDATE) | (1 << CMD_DELETE))
+
+	/* Since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
 
 	rel = try_relation_open(reloid, AccessShareLock);
 
@@ -2656,6 +2666,13 @@ relation_is_updatable(Oid reloid,
 	 */
 	if (rel == NULL)
 		return 0;
+
+	/* If we detect a recursive view, report that it is not updatable */
+	if (list_member_oid(outer_reloids, RelationGetRelid(rel)))
+	{
+		relation_close(rel, AccessShareLock);
+		return 0;
+	}
 
 	/* If the relation is a table, it is always updatable */
 	if (rel->rd_rel->relkind == RELKIND_RELATION ||
@@ -2777,11 +2794,15 @@ relation_is_updatable(Oid reloid,
 				base_rte->relkind != RELKIND_PARTITIONED_TABLE)
 			{
 				baseoid = base_rte->relid;
+				outer_reloids = lappend_oid(outer_reloids,
+											RelationGetRelid(rel));
 				include_cols = adjust_view_column_set(updatable_cols,
 													  viewquery->targetList);
 				auto_events &= relation_is_updatable(baseoid,
+													 outer_reloids,
 													 include_triggers,
 													 include_cols);
+				outer_reloids = list_delete_last(outer_reloids);
 			}
 			events |= auto_events;
 		}
@@ -3711,7 +3732,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 			rev = (rewrite_event *) palloc(sizeof(rewrite_event));
 			rev->relation = RelationGetRelid(rt_entry_relation);
 			rev->event = event;
-			rewrite_events = lcons(rev, rewrite_events);
+			rewrite_events = lappend(rewrite_events, rev);
 
 			foreach(n, product_queries)
 			{
@@ -3722,7 +3743,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 				rewritten = list_concat(rewritten, newstuff);
 			}
 
-			rewrite_events = list_delete_first(rewrite_events);
+			rewrite_events = list_delete_last(rewrite_events);
 		}
 
 		/*

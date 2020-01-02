@@ -4,7 +4,7 @@
  *	  Public header file for SP-GiST access method.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/spgist.h
@@ -16,13 +16,8 @@
 
 #include "access/amapi.h"
 #include "access/xlogreader.h"
-#include "fmgr.h"
 #include "lib/stringinfo.h"
 
-
-/* reloption parameters */
-#define SPGIST_MIN_FILLFACTOR			10
-#define SPGIST_DEFAULT_FILLFACTOR		80
 
 /* SPGiST opclass support function numbers */
 #define SPGIST_CONFIG_PROC				1

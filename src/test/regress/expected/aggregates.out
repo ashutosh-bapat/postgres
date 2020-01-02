@@ -998,31 +998,31 @@ insert into minmaxtest2 values(15), (16);
 insert into minmaxtest3 values(17), (18);
 explain (costs off)
   select min(f1), max(f1) from minmaxtest;
-                                          QUERY PLAN                                          
-----------------------------------------------------------------------------------------------
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
  Result
    InitPlan 1 (returns $0)
      ->  Limit
            ->  Merge Append
                  Sort Key: minmaxtest.f1
-                 ->  Index Only Scan using minmaxtesti on minmaxtest
+                 ->  Index Only Scan using minmaxtesti on minmaxtest minmaxtest_1
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan using minmaxtest1i on minmaxtest1
+                 ->  Index Only Scan using minmaxtest1i on minmaxtest1 minmaxtest_2
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan Backward using minmaxtest2i on minmaxtest2
+                 ->  Index Only Scan Backward using minmaxtest2i on minmaxtest2 minmaxtest_3
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan using minmaxtest3i on minmaxtest3
+                 ->  Index Only Scan using minmaxtest3i on minmaxtest3 minmaxtest_4
    InitPlan 2 (returns $1)
      ->  Limit
            ->  Merge Append
-                 Sort Key: minmaxtest_1.f1 DESC
-                 ->  Index Only Scan Backward using minmaxtesti on minmaxtest minmaxtest_1
+                 Sort Key: minmaxtest_5.f1 DESC
+                 ->  Index Only Scan Backward using minmaxtesti on minmaxtest minmaxtest_6
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan Backward using minmaxtest1i on minmaxtest1 minmaxtest1_1
+                 ->  Index Only Scan Backward using minmaxtest1i on minmaxtest1 minmaxtest_7
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan using minmaxtest2i on minmaxtest2 minmaxtest2_1
+                 ->  Index Only Scan using minmaxtest2i on minmaxtest2 minmaxtest_8
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan Backward using minmaxtest3i on minmaxtest3 minmaxtest3_1
+                 ->  Index Only Scan Backward using minmaxtest3i on minmaxtest3 minmaxtest_9
 (23 rows)
 
 select min(f1), max(f1) from minmaxtest;
@@ -1034,31 +1034,31 @@ select min(f1), max(f1) from minmaxtest;
 -- DISTINCT doesn't do anything useful here, but it shouldn't fail
 explain (costs off)
   select distinct min(f1), max(f1) from minmaxtest;
-                                          QUERY PLAN                                          
-----------------------------------------------------------------------------------------------
+                                         QUERY PLAN                                          
+---------------------------------------------------------------------------------------------
  Unique
    InitPlan 1 (returns $0)
      ->  Limit
            ->  Merge Append
                  Sort Key: minmaxtest.f1
-                 ->  Index Only Scan using minmaxtesti on minmaxtest
+                 ->  Index Only Scan using minmaxtesti on minmaxtest minmaxtest_1
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan using minmaxtest1i on minmaxtest1
+                 ->  Index Only Scan using minmaxtest1i on minmaxtest1 minmaxtest_2
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan Backward using minmaxtest2i on minmaxtest2
+                 ->  Index Only Scan Backward using minmaxtest2i on minmaxtest2 minmaxtest_3
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan using minmaxtest3i on minmaxtest3
+                 ->  Index Only Scan using minmaxtest3i on minmaxtest3 minmaxtest_4
    InitPlan 2 (returns $1)
      ->  Limit
            ->  Merge Append
-                 Sort Key: minmaxtest_1.f1 DESC
-                 ->  Index Only Scan Backward using minmaxtesti on minmaxtest minmaxtest_1
+                 Sort Key: minmaxtest_5.f1 DESC
+                 ->  Index Only Scan Backward using minmaxtesti on minmaxtest minmaxtest_6
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan Backward using minmaxtest1i on minmaxtest1 minmaxtest1_1
+                 ->  Index Only Scan Backward using minmaxtest1i on minmaxtest1 minmaxtest_7
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan using minmaxtest2i on minmaxtest2 minmaxtest2_1
+                 ->  Index Only Scan using minmaxtest2i on minmaxtest2 minmaxtest_8
                        Index Cond: (f1 IS NOT NULL)
-                 ->  Index Only Scan Backward using minmaxtest3i on minmaxtest3 minmaxtest3_1
+                 ->  Index Only Scan Backward using minmaxtest3i on minmaxtest3 minmaxtest_9
    ->  Sort
          Sort Key: ($0), ($1)
          ->  Result
@@ -1147,9 +1147,78 @@ explain (costs off) select * from t3 group by a,b,c;
    ->  Seq Scan on t3
 (3 rows)
 
-drop table t1;
+create temp table t1c () inherits (t1);
+-- Ensure we don't remove any columns when t1 has a child table
+explain (costs off) select * from t1 group by a,b,c,d;
+             QUERY PLAN              
+-------------------------------------
+ HashAggregate
+   Group Key: t1.a, t1.b, t1.c, t1.d
+   ->  Append
+         ->  Seq Scan on t1 t1_1
+         ->  Seq Scan on t1c t1_2
+(5 rows)
+
+-- Okay to remove columns if we're only querying the parent.
+explain (costs off) select * from only t1 group by a,b,c,d;
+      QUERY PLAN      
+----------------------
+ HashAggregate
+   Group Key: a, b
+   ->  Seq Scan on t1
+(3 rows)
+
+create temp table p_t1 (
+  a int,
+  b int,
+  c int,
+  d int,
+  primary key(a,b)
+) partition by list(a);
+create temp table p_t1_1 partition of p_t1 for values in(1);
+create temp table p_t1_2 partition of p_t1 for values in(2);
+-- Ensure we can remove non-PK columns for partitioned tables.
+explain (costs off) select * from p_t1 group by a,b,c,d;
+           QUERY PLAN           
+--------------------------------
+ HashAggregate
+   Group Key: p_t1.a, p_t1.b
+   ->  Append
+         ->  Seq Scan on p_t1_1
+         ->  Seq Scan on p_t1_2
+(5 rows)
+
+drop table t1 cascade;
+NOTICE:  drop cascades to table t1c
 drop table t2;
 drop table t3;
+drop table p_t1;
+--
+-- Test GROUP BY matching of join columns that are type-coerced due to USING
+--
+create temp table t1(f1 int, f2 bigint);
+create temp table t2(f1 bigint, f22 bigint);
+select f1 from t1 left join t2 using (f1) group by f1;
+ f1 
+----
+(0 rows)
+
+select f1 from t1 left join t2 using (f1) group by t1.f1;
+ f1 
+----
+(0 rows)
+
+select t1.f1 from t1 left join t2 using (f1) group by t1.f1;
+ f1 
+----
+(0 rows)
+
+-- only this one should fail:
+select t1.f1 from t1 left join t2 using (f1) group by f1;
+ERROR:  column "t1.f1" must appear in the GROUP BY clause or be used in an aggregate function
+LINE 1: select t1.f1 from t1 left join t2 using (f1) group by f1;
+               ^
+drop table t1, t2;
 --
 -- Test combinations of DISTINCT and/or ORDER BY
 --
@@ -1987,10 +2056,10 @@ NOTICE:  avg_transfn called with 3
 
 -- this should not share the state due to different input columns.
 select my_avg(one),my_sum(two) from (values(1,2),(3,4)) t(one,two);
-NOTICE:  avg_transfn called with 2
 NOTICE:  avg_transfn called with 1
-NOTICE:  avg_transfn called with 4
+NOTICE:  avg_transfn called with 2
 NOTICE:  avg_transfn called with 3
+NOTICE:  avg_transfn called with 4
  my_avg | my_sum 
 --------+--------
       2 |      6
@@ -2269,4 +2338,22 @@ select v||'a', case when v||'a' = 'aa' then 1 else 0 end, count(*)
  aa       |    1 |     1
  ba       |    0 |     1
 (2 rows)
+
+-- Make sure that generation of HashAggregate for uniqification purposes
+-- does not lead to array overflow due to unexpected duplicate hash keys
+-- see CAFeeJoKKu0u+A_A9R9316djW-YW3-+Gtgvy3ju655qRHR3jtdA@mail.gmail.com
+explain (costs off)
+  select 1 from tenk1
+   where (hundred, thousand) in (select twothousand, twothousand from onek);
+                         QUERY PLAN                          
+-------------------------------------------------------------
+ Hash Join
+   Hash Cond: (tenk1.hundred = onek.twothousand)
+   ->  Seq Scan on tenk1
+         Filter: (hundred = thousand)
+   ->  Hash
+         ->  HashAggregate
+               Group Key: onek.twothousand, onek.twothousand
+               ->  Seq Scan on onek
+(8 rows)
 

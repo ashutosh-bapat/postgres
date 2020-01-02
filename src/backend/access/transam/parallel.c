@@ -3,7 +3,7 @@
  * parallel.c
  *	  Infrastructure for launching parallel workers
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,9 +19,9 @@
 #include "access/session.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "catalog/pg_enum.h"
 #include "catalog/index.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_enum.h"
 #include "commands/async.h"
 #include "executor/execParallel.h"
 #include "libpq/libpq.h"
@@ -42,7 +42,6 @@
 #include "utils/relmapper.h"
 #include "utils/snapmgr.h"
 #include "utils/typcache.h"
-
 
 /*
  * We don't want to waste a lot of memory on an error queue which, most of

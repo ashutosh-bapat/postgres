@@ -3,7 +3,7 @@
  * pl_exec.c		- Executor for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,10 +17,10 @@
 
 #include <ctype.h>
 
+#include "access/detoast.h"
 #include "access/htup_details.h"
 #include "access/transam.h"
 #include "access/tupconvert.h"
-#include "access/tuptoaster.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -28,11 +28,14 @@
 #include "executor/spi.h"
 #include "executor/spi_priv.h"
 #include "funcapi.h"
+#include "mb/stringinfo_mb.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/optimizer.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_type.h"
 #include "parser/scansup.h"
+#include "plpgsql.h"
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
@@ -46,9 +49,6 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-
-#include "plpgsql.h"
-
 
 typedef struct
 {
@@ -382,6 +382,7 @@ static void plpgsql_param_eval_generic_ro(ExprState *state, ExprEvalStep *op,
 static void exec_move_row(PLpgSQL_execstate *estate,
 						  PLpgSQL_variable *target,
 						  HeapTuple tup, TupleDesc tupdesc);
+static void revalidate_rectypeid(PLpgSQL_rec *rec);
 static ExpandedRecordHeader *make_expanded_record_for_rec(PLpgSQL_execstate *estate,
 														  PLpgSQL_rec *rec,
 														  TupleDesc srctupdesc,
@@ -808,6 +809,31 @@ coerce_function_result_tuple(PLpgSQL_execstate *estate, TupleDesc tupdesc)
 			estate->retval = PointerGetDatum(SPI_returntuple(rettup, tupdesc));
 			/* no need to free map, we're about to return anyway */
 		}
+		else if (!(tupdesc->tdtypeid == erh->er_decltypeid ||
+				   (tupdesc->tdtypeid == RECORDOID &&
+					!ExpandedRecordIsDomain(erh))))
+		{
+			/*
+			 * The expanded record has the right physical tupdesc, but the
+			 * wrong type ID.  (Typically, the expanded record is RECORDOID
+			 * but the function is declared to return a named composite type.
+			 * As in exec_move_row_from_datum, we don't allow returning a
+			 * composite-domain record from a function declared to return
+			 * RECORD.)  So we must flatten the record to a tuple datum and
+			 * overwrite its type fields with the right thing.  spi.c doesn't
+			 * provide any easy way to deal with this case, so we end up
+			 * duplicating the guts of datumCopy() :-(
+			 */
+			Size		resultsize;
+			HeapTupleHeader tuphdr;
+
+			resultsize = EOH_get_flat_size(&erh->hdr);
+			tuphdr = (HeapTupleHeader) SPI_palloc(resultsize);
+			EOH_flatten_into(&erh->hdr, (void *) tuphdr, resultsize);
+			HeapTupleHeaderSetTypeId(tuphdr, tupdesc->tdtypeid);
+			HeapTupleHeaderSetTypMod(tuphdr, tupdesc->tdtypmod);
+			estate->retval = PointerGetDatum(tuphdr);
+		}
 		else
 		{
 			/*
@@ -1164,8 +1190,6 @@ plpgsql_exec_event_trigger(PLpgSQL_function *func, EventTriggerData *trigdata)
 	 * Pop the error context stack
 	 */
 	error_context_stack = plerrcontext.previous;
-
-	return;
 }
 
 /*
@@ -2495,7 +2519,8 @@ exec_stmt_case(PLpgSQL_execstate *estate, PLpgSQL_stmt_case *stmt)
 			t_var->datatype->atttypmod != t_typmod)
 			t_var->datatype = plpgsql_build_datatype(t_typoid,
 													 t_typmod,
-													 estate->func->fn_input_collation);
+													 estate->func->fn_input_collation,
+													 NULL);
 
 		/* now we can assign to the variable */
 		exec_assign_value(estate,
@@ -3269,10 +3294,10 @@ exec_stmt_return_next(PLpgSQL_execstate *estate,
 	 * reference; in particular, this path is always taken in functions with
 	 * one or more OUT parameters.
 	 *
-	 * Unlike exec_statement_return, there's no special win here for R/W
-	 * expanded values, since they'll have to get flattened to go into the
-	 * tuplestore.  Indeed, we'd better make them R/O to avoid any risk of the
-	 * casting step changing them in-place.
+	 * Unlike exec_stmt_return, there's no special win here for R/W expanded
+	 * values, since they'll have to get flattened to go into the tuplestore.
+	 * Indeed, we'd better make them R/O to avoid any risk of the casting step
+	 * changing them in-place.
 	 */
 	if (stmt->retvarno >= 0)
 	{
@@ -3679,7 +3704,7 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 													 paramvalue,
 													 paramtypeid);
 				appendStringInfoString(&ds, extval);
-				current_param = lnext(current_param);
+				current_param = lnext(stmt->params, current_param);
 				exec_eval_cleanup(estate);
 			}
 			else
@@ -5583,7 +5608,7 @@ plpgsql_exec_get_datum_type(PLpgSQL_execstate *estate,
 void
 plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
 								 PLpgSQL_datum *datum,
-								 Oid *typeid, int32 *typmod, Oid *collation)
+								 Oid *typeId, int32 *typMod, Oid *collation)
 {
 	switch (datum->dtype)
 	{
@@ -5592,8 +5617,8 @@ plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
 			{
 				PLpgSQL_var *var = (PLpgSQL_var *) datum;
 
-				*typeid = var->datatype->typoid;
-				*typmod = var->datatype->atttypmod;
+				*typeId = var->datatype->typoid;
+				*typMod = var->datatype->atttypmod;
 				*collation = var->datatype->collation;
 				break;
 			}
@@ -5605,15 +5630,15 @@ plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
 				if (rec->erh == NULL || rec->rectypeid != RECORDOID)
 				{
 					/* Report variable's declared type */
-					*typeid = rec->rectypeid;
-					*typmod = -1;
+					*typeId = rec->rectypeid;
+					*typMod = -1;
 				}
 				else
 				{
 					/* Report record's actual type if declared RECORD */
-					*typeid = rec->erh->er_typeid;
+					*typeId = rec->erh->er_typeid;
 					/* do NOT return the mutable typmod of a RECORD variable */
-					*typmod = -1;
+					*typMod = -1;
 				}
 				/* composite types are never collatable */
 				*collation = InvalidOid;
@@ -5651,16 +5676,16 @@ plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
 					recfield->rectupledescid = rec->erh->er_tupdesc_id;
 				}
 
-				*typeid = recfield->finfo.ftypeid;
-				*typmod = recfield->finfo.ftypmod;
+				*typeId = recfield->finfo.ftypeid;
+				*typMod = recfield->finfo.ftypmod;
 				*collation = recfield->finfo.fcollation;
 				break;
 			}
 
 		default:
 			elog(ERROR, "unrecognized dtype: %d", datum->dtype);
-			*typeid = InvalidOid;	/* keep compiler quiet */
-			*typmod = -1;
+			*typeId = InvalidOid;	/* keep compiler quiet */
+			*typMod = -1;
 			*collation = InvalidOid;
 			break;
 	}
@@ -6053,6 +6078,7 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	LocalTransactionId curlxid = MyProc->lxid;
 	CachedPlan *cplan;
 	void	   *save_setup_arg;
+	bool		need_snapshot;
 	MemoryContext oldcontext;
 
 	/*
@@ -6124,12 +6150,19 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 
 	/*
 	 * We have to do some of the things SPI_execute_plan would do, in
-	 * particular advance the snapshot if we are in a non-read-only function.
-	 * Without this, stable functions within the expression would fail to see
-	 * updates made so far by our own function.
+	 * particular push a new snapshot so that stable functions within the
+	 * expression can see updates made so far by our own function.  However,
+	 * we can skip doing that (and just invoke the expression with the same
+	 * snapshot passed to our function) in some cases, which is useful because
+	 * it's quite expensive relative to the cost of a simple expression.  We
+	 * can skip it if the expression contains no stable or volatile functions;
+	 * immutable functions shouldn't need to see our updates.  Also, if this
+	 * is a read-only function, we haven't made any updates so again it's okay
+	 * to skip.
 	 */
 	oldcontext = MemoryContextSwitchTo(get_eval_mcontext(estate));
-	if (!estate->readonly_func)
+	need_snapshot = (expr->expr_simple_mutable && !estate->readonly_func);
+	if (need_snapshot)
 	{
 		CommandCounterIncrement();
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -6154,7 +6187,7 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 
 	estate->paramLI->parserSetupArg = save_setup_arg;
 
-	if (!estate->readonly_func)
+	if (need_snapshot)
 		PopActiveSnapshot();
 
 	MemoryContextSwitchTo(oldcontext);
@@ -6812,6 +6845,76 @@ exec_move_row(PLpgSQL_execstate *estate,
 }
 
 /*
+ * Verify that a PLpgSQL_rec's rectypeid is up-to-date.
+ */
+static void
+revalidate_rectypeid(PLpgSQL_rec *rec)
+{
+	PLpgSQL_type *typ = rec->datatype;
+	TypeCacheEntry *typentry;
+
+	if (rec->rectypeid == RECORDOID)
+		return;					/* it's RECORD, so nothing to do */
+	Assert(typ != NULL);
+	if (typ->tcache &&
+		typ->tcache->tupDesc_identifier == typ->tupdesc_id)
+	{
+		/*
+		 * Although *typ is known up-to-date, it's possible that rectypeid
+		 * isn't, because *rec is cloned during each function startup from a
+		 * copy that we don't have a good way to update.  Hence, forcibly fix
+		 * rectypeid before returning.
+		 */
+		rec->rectypeid = typ->typoid;
+		return;
+	}
+
+	/*
+	 * typcache entry has suffered invalidation, so re-look-up the type name
+	 * if possible, and then recheck the type OID.  If we don't have a
+	 * TypeName, then we just have to soldier on with the OID we've got.
+	 */
+	if (typ->origtypname != NULL)
+	{
+		/* this bit should match parse_datatype() in pl_gram.y */
+		typenameTypeIdAndMod(NULL, typ->origtypname,
+							 &typ->typoid,
+							 &typ->atttypmod);
+	}
+
+	/* this bit should match build_datatype() in pl_comp.c */
+	typentry = lookup_type_cache(typ->typoid,
+								 TYPECACHE_TUPDESC |
+								 TYPECACHE_DOMAIN_BASE_INFO);
+	if (typentry->typtype == TYPTYPE_DOMAIN)
+		typentry = lookup_type_cache(typentry->domainBaseType,
+									 TYPECACHE_TUPDESC);
+	if (typentry->tupDesc == NULL)
+	{
+		/*
+		 * If we get here, user tried to replace a composite type with a
+		 * non-composite one.  We're not gonna support that.
+		 */
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("type %s is not composite",
+						format_type_be(typ->typoid))));
+	}
+
+	/*
+	 * Update tcache and tupdesc_id.  Since we don't support changing to a
+	 * non-composite type, none of the rest of *typ needs to change.
+	 */
+	typ->tcache = typentry;
+	typ->tupdesc_id = typentry->tupDesc_identifier;
+
+	/*
+	 * Update *rec, too.  (We'll deal with subsidiary RECFIELDs as needed.)
+	 */
+	rec->rectypeid = typ->typoid;
+}
+
+/*
  * Build an expanded record object suitable for assignment to "rec".
  *
  * Caller must supply either a source tuple descriptor or a source expanded
@@ -6835,6 +6938,11 @@ make_expanded_record_for_rec(PLpgSQL_execstate *estate,
 
 	if (rec->rectypeid != RECORDOID)
 	{
+		/*
+		 * Make sure rec->rectypeid is up-to-date before using it.
+		 */
+		revalidate_rectypeid(rec);
+
 		/*
 		 * New record must be of desired type, but maybe srcerh has already
 		 * done all the same lookups.
@@ -7307,6 +7415,11 @@ exec_move_row_from_datum(PLpgSQL_execstate *estate,
 				return;
 
 			/*
+			 * Make sure rec->rectypeid is up-to-date before using it.
+			 */
+			revalidate_rectypeid(rec);
+
+			/*
 			 * If we have a R/W pointer, we're allowed to just commandeer
 			 * ownership of the expanded record.  If it's of the right type to
 			 * put into the record variable, do that.  (Note we don't accept
@@ -7517,6 +7630,9 @@ instantiate_empty_record_variable(PLpgSQL_execstate *estate, PLpgSQL_rec *rec)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("record \"%s\" is not assigned yet", rec->refname),
 				 errdetail("The tuple structure of a not-yet-assigned record is indeterminate.")));
+
+	/* Make sure rec->rectypeid is up-to-date before using it */
+	revalidate_rectypeid(rec);
 
 	/* OK, do it */
 	rec->erh = make_expanded_record_from_typeid(rec->rectypeid, -1,
@@ -7951,6 +8067,8 @@ exec_save_simple_expr(PLpgSQL_expr *expr, CachedPlan *cplan)
 	/* Also stash away the expression result type */
 	expr->expr_simple_type = exprType((Node *) tle_expr);
 	expr->expr_simple_typmod = exprTypmod((Node *) tle_expr);
+	/* We also want to remember if it is immutable or not */
+	expr->expr_simple_mutable = contain_mutable_functions((Node *) tle_expr);
 }
 
 /*
@@ -8242,7 +8360,7 @@ assign_simple_var(PLpgSQL_execstate *estate, PLpgSQL_var *var,
 		 * pain, but there's little choice.
 		 */
 		oldcxt = MemoryContextSwitchTo(get_eval_mcontext(estate));
-		detoasted = PointerGetDatum(heap_tuple_fetch_attr((struct varlena *) DatumGetPointer(newvalue)));
+		detoasted = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(newvalue)));
 		MemoryContextSwitchTo(oldcxt);
 		/* Now's a good time to not leak the input value if it's freeable */
 		if (freeable)
@@ -8503,19 +8621,11 @@ format_expr_params(PLpgSQL_execstate *estate,
 		if (paramisnull)
 			appendStringInfoString(&paramstr, "NULL");
 		else
-		{
-			char	   *value = convert_value_to_string(estate, paramdatum, paramtypeid);
-			char	   *p;
-
-			appendStringInfoCharMacro(&paramstr, '\'');
-			for (p = value; *p; p++)
-			{
-				if (*p == '\'') /* double single quotes */
-					appendStringInfoCharMacro(&paramstr, *p);
-				appendStringInfoCharMacro(&paramstr, *p);
-			}
-			appendStringInfoCharMacro(&paramstr, '\'');
-		}
+			appendStringInfoStringQuoted(&paramstr,
+										 convert_value_to_string(estate,
+																 paramdatum,
+																 paramtypeid),
+										 0);
 
 		paramno++;
 	}
@@ -8553,19 +8663,11 @@ format_preparedparamsdata(PLpgSQL_execstate *estate,
 		if (ppd->nulls[paramno] == 'n')
 			appendStringInfoString(&paramstr, "NULL");
 		else
-		{
-			char	   *value = convert_value_to_string(estate, ppd->values[paramno], ppd->types[paramno]);
-			char	   *p;
-
-			appendStringInfoCharMacro(&paramstr, '\'');
-			for (p = value; *p; p++)
-			{
-				if (*p == '\'') /* double single quotes */
-					appendStringInfoCharMacro(&paramstr, *p);
-				appendStringInfoCharMacro(&paramstr, *p);
-			}
-			appendStringInfoCharMacro(&paramstr, '\'');
-		}
+			appendStringInfoStringQuoted(&paramstr,
+										 convert_value_to_string(estate,
+																 ppd->values[paramno],
+																 ppd->types[paramno]),
+										 0);
 	}
 
 	MemoryContextSwitchTo(oldcontext);

@@ -18,7 +18,7 @@
  * (In performance-critical code paths we can use pg_detoast_datum_packed
  * and the appropriate access macros to avoid that overhead.)  Note that this
  * conversion is performed directly in heap_form_tuple, without invoking
- * tuptoaster.c.
+ * heaptoast.c.
  *
  * This change will break any code that assumes it needn't detoast values
  * that have been put into a tuple but never sent to disk.  Hopefully there
@@ -45,7 +45,7 @@
  * and we'd like to still refer to them via C struct offsets.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -57,9 +57,9 @@
 
 #include "postgres.h"
 
+#include "access/heaptoast.h"
 #include "access/sysattr.h"
 #include "access/tupdesc_details.h"
-#include "access/tuptoaster.h"
 #include "executor/tuptable.h"
 #include "utils/expandeddatum.h"
 

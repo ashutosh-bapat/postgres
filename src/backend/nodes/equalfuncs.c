@@ -18,7 +18,7 @@
  * "x" to be considered equal() to another reference to "x" in the query.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -900,6 +900,8 @@ _equalAppendRelInfo(const AppendRelInfo *a, const AppendRelInfo *b)
 	COMPARE_SCALAR_FIELD(parent_reltype);
 	COMPARE_SCALAR_FIELD(child_reltype);
 	COMPARE_NODE_FIELD(translated_vars);
+	COMPARE_SCALAR_FIELD(num_child_cols);
+	COMPARE_POINTER_FIELD(parent_colnos, a->num_child_cols * sizeof(AttrNumber));
 	COMPARE_SCALAR_FIELD(parent_reloid);
 
 	return true;
@@ -1366,6 +1368,16 @@ _equalCreateStatsStmt(const CreateStatsStmt *a, const CreateStatsStmt *b)
 }
 
 static bool
+_equalAlterStatsStmt(const AlterStatsStmt *a, const AlterStatsStmt *b)
+{
+	COMPARE_NODE_FIELD(defnames);
+	COMPARE_SCALAR_FIELD(stxstattarget);
+	COMPARE_SCALAR_FIELD(missing_ok);
+
+	return true;
+}
+
+static bool
 _equalCreateFunctionStmt(const CreateFunctionStmt *a, const CreateFunctionStmt *b)
 {
 	COMPARE_SCALAR_FIELD(is_procedure);
@@ -1666,6 +1678,7 @@ _equalDropdbStmt(const DropdbStmt *a, const DropdbStmt *b)
 {
 	COMPARE_STRING_FIELD(dbname);
 	COMPARE_SCALAR_FIELD(missing_ok);
+	COMPARE_NODE_FIELD(options);
 
 	return true;
 }
@@ -3317,6 +3330,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CreateStatsStmt:
 			retval = _equalCreateStatsStmt(a, b);
+			break;
+		case T_AlterStatsStmt:
+			retval = _equalAlterStatsStmt(a, b);
 			break;
 		case T_CreateFunctionStmt:
 			retval = _equalCreateFunctionStmt(a, b);

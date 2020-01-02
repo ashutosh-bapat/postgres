@@ -5,7 +5,7 @@
  *		bits of hard-wired knowledge
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -31,9 +31,9 @@
 #include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
+#include "catalog/pg_db_role_setting.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_pltemplate.h"
-#include "catalog/pg_db_role_setting.h"
 #include "catalog/pg_replication_origin.h"
 #include "catalog/pg_shdepend.h"
 #include "catalog/pg_shdescription.h"
@@ -49,7 +49,6 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
 
 /*
  * IsSystemRelation
@@ -317,13 +316,6 @@ IsSharedRelation(Oid relationId)
  * consecutive existing OIDs.  This is a mostly reasonable assumption for
  * system catalogs.
  *
- * This is exported separately because there are cases where we want to use
- * an index that will not be recognized by RelationGetOidIndex: TOAST tables
- * have indexes that are usable, but have multiple columns and are on
- * ordinary columns rather than a true OID column.  This code will work
- * anyway, so long as the OID is the index's first column.  The caller must
- * pass in the actual heap attnum of the OID column, however.
- *
  * Caller must have a suitable lock on the relation.
  */
 Oid
@@ -383,7 +375,7 @@ GetNewOidWithIndex(Relation relation, Oid indexId, AttrNumber oidcolumn)
  * is also an unused OID within pg_class.  If the result is to be used only
  * as a relfilenode for an existing relation, pass NULL for pg_class.
  *
- * As with GetNewObjectIdWithIndex(), there is some theoretical risk of a race
+ * As with GetNewOidWithIndex(), there is some theoretical risk of a race
  * condition, but it doesn't seem worth worrying about.
  *
  * Note: we don't support using this in bootstrap mode.  All relations

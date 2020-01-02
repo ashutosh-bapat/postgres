@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/initdb
 #
-# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/initdb/Makefile
@@ -26,7 +26,12 @@ ifneq (,$(with_system_tzdata))
 override CPPFLAGS += '-DSYSTEMTZDIR="$(with_system_tzdata)"'
 endif
 
-OBJS=	initdb.o findtimezone.o localtime.o encnames.o $(WIN32RES)
+OBJS = \
+	$(WIN32RES) \
+	encnames.o \
+	findtimezone.o \
+	initdb.o \
+	localtime.o
 
 all: initdb
 
