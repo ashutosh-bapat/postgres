@@ -45,6 +45,7 @@
 #include "commands/portalcmds.h"
 #include "commands/prepare.h"
 #include "commands/proclang.h"
+#include "commands/propgraphcmds.h"
 #include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
 #include "commands/seclabel.h"
@@ -213,6 +214,7 @@ check_xact_readonly(Node *parsetree)
 		case T_AlterTableSpaceOptionsStmt:
 		case T_CreateForeignTableStmt:
 		case T_ImportForeignSchemaStmt:
+		case T_CreatePropGraphStmt:
 		case T_SecLabelStmt:
 		case T_CreatePublicationStmt:
 		case T_AlterPublicationStmt:
@@ -1549,6 +1551,10 @@ ProcessUtilitySlow(ParseState *pstate,
 				address = DefineOpFamily((CreateOpFamilyStmt *) parsetree);
 				break;
 
+			case T_CreatePropGraphStmt:
+				address = CreatePropGraph(pstate, (CreatePropGraphStmt *) parsetree);
+				break;
+
 			case T_CreateTransformStmt:
 				address = CreateTransform((CreateTransformStmt *) parsetree);
 				break;
@@ -1736,6 +1742,7 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
 		case OBJECT_FOREIGN_TABLE:
+		case OBJECT_PROPGRAPH:
 			RemoveRelations(stmt);
 			break;
 		default:
@@ -2011,6 +2018,9 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 		case OBJECT_PROCEDURE:
 			tag = "ALTER PROCEDURE";
 			break;
+		case OBJECT_PROPGRAPH:
+			tag = "ALTER PROPERTY GRAPH";
+			break;
 		case OBJECT_ROLE:
 			tag = "ALTER ROLE";
 			break;
@@ -2281,6 +2291,9 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_INDEX:
 					tag = "DROP INDEX";
+					break;
+				case OBJECT_PROPGRAPH:
+					tag = "DROP PROPERTY GRAPH";
 					break;
 				case OBJECT_TYPE:
 					tag = "DROP TYPE";
@@ -2663,6 +2676,10 @@ CreateCommandTag(Node *parsetree)
 				default:
 					tag = "???";
 			}
+			break;
+
+		case T_CreatePropGraphStmt:
+			tag = "CREATE PROPERTY GRAPH";
 			break;
 
 		case T_CreateTransformStmt:
@@ -3342,6 +3359,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreateOpFamilyStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_CreatePropGraphStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

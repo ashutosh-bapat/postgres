@@ -1,3 +1,7 @@
+CREATE PROPERTY GRAPH my_graph;
+CREATE PROPERTY GRAPH my_graph;  -- error: duplicate
+ERROR:  relation "my_graph" already exists
+CREATE PROPERTY GRAPH my_graph2;
 SELECT gt.creation_date, gt.content
 FROM my_graph GRAPH_TABLE (
   MATCH
@@ -12,3 +16,11 @@ FROM my_graph GRAPH_TABLE (
 ERROR:  GRAPH_TABLE is not implemented
 LINE 2: FROM my_graph GRAPH_TABLE (
                       ^
+DROP TABLE my_graph2;  -- error: wrong object type
+ERROR:  "my_graph2" is not a table
+HINT:  Use DROP PROPERTY GRAPH to remove a property graph.
+DROP PROPERTY GRAPH my_graph2;
+DROP PROPERTY GRAPH my_graph2;  -- error: does not exist
+ERROR:  property graph "my_graph2" does not exist
+DROP PROPERTY GRAPH IF EXISTS my_graph2;
+NOTICE:  property graph "my_graph2" does not exist, skipping

@@ -108,6 +108,7 @@ static const event_trigger_support_data event_trigger_support[] = {
 	{"OPERATOR FAMILY", true},
 	{"POLICY", true},
 	{"PROCEDURE", true},
+	{"PROPERTY GRAPH", true},
 	{"PUBLICATION", true},
 	{"ROLE", false},
 	{"ROUTINE", true},
@@ -1127,6 +1128,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_OPFAMILY:
 		case OBJECT_POLICY:
 		case OBJECT_PROCEDURE:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_PUBLICATION:
 		case OBJECT_PUBLICATION_REL:
 		case OBJECT_ROUTINE:
@@ -2268,6 +2270,7 @@ stringify_grant_objtype(ObjectType objtype)
 		case OBJECT_OPERATOR:
 		case OBJECT_OPFAMILY:
 		case OBJECT_POLICY:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_PUBLICATION:
 		case OBJECT_PUBLICATION_REL:
 		case OBJECT_ROLE:
@@ -2350,6 +2353,7 @@ stringify_adefprivs_objtype(ObjectType objtype)
 		case OBJECT_OPERATOR:
 		case OBJECT_OPFAMILY:
 		case OBJECT_POLICY:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_PUBLICATION:
 		case OBJECT_PUBLICATION_REL:
 		case OBJECT_ROLE:

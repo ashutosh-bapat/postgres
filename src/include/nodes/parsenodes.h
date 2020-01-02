@@ -1707,6 +1707,7 @@ typedef enum ObjectType
 	OBJECT_OPFAMILY,
 	OBJECT_POLICY,
 	OBJECT_PROCEDURE,
+	OBJECT_PROPGRAPH,
 	OBJECT_PUBLICATION,
 	OBJECT_PUBLICATION_REL,
 	OBJECT_ROLE,
@@ -3373,6 +3374,16 @@ typedef struct CreateCastStmt
 	CoercionContext context;
 	bool		inout;
 } CreateCastStmt;
+
+/* ----------------------
+ *	CREATE PROPERTY GRAPH Statement
+ * ----------------------
+ */
+typedef struct CreatePropGraphStmt
+{
+	NodeTag		type;
+	RangeVar   *pgname;
+} CreatePropGraphStmt;
 
 /* ----------------------
  *	CREATE TRANSFORM Statement

@@ -421,6 +421,7 @@ typedef enum NodeTag
 	T_AlterCollationStmt,
 	T_CallStmt,
 	T_AlterStatsStmt,
+	T_CreatePropGraphStmt,
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)

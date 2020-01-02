@@ -3426,6 +3426,9 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_PROCEDURE:
 						msg = gettext_noop("permission denied for procedure %s");
 						break;
+					case OBJECT_PROPGRAPH:
+						msg = gettext_noop("permission denied for property graph %s");
+						break;
 					case OBJECT_PUBLICATION:
 						msg = gettext_noop("permission denied for publication %s");
 						break;
@@ -3550,6 +3553,9 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 						break;
 					case OBJECT_PROCEDURE:
 						msg = gettext_noop("must be owner of procedure %s");
+						break;
+					case OBJECT_PROPGRAPH:
+						msg = gettext_noop("must be owner of property graph %s");
 						break;
 					case OBJECT_PUBLICATION:
 						msg = gettext_noop("must be owner of publication %s");

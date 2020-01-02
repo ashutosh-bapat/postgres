@@ -434,6 +434,38 @@ ALTER OPERATOR FAMILY alt_opf18 USING btree DROP FUNCTION 2 (int4, int4);
 DROP OPERATOR FAMILY alt_opf18 USING btree;
 
 --
+-- Property Graph
+--
+SET SESSION AUTHORIZATION regress_alter_generic_user1;
+CREATE PROPERTY GRAPH alt_graph1;
+CREATE PROPERTY GRAPH alt_graph2;
+
+ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph2; -- failed (name conflict)
+ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph3; -- OK
+ALTER PROPERTY GRAPH alt_graph2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
+ALTER PROPERTY GRAPH alt_graph2 OWNER TO regress_alter_generic_user3;  -- OK
+--TODO: ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- OK
+
+SET SESSION AUTHORIZATION regress_alter_generic_user2;
+CREATE PROPERTY GRAPH alt_graph4;
+
+ALTER PROPERTY GRAPH alt_graph3 RENAME TO alt_graph5;  -- failed (not owner)
+ALTER PROPERTY GRAPH alt_graph4 RENAME TO alt_graph5;  -- OK
+ALTER PROPERTY GRAPH alt_graph3 OWNER TO regress_alter_generic_user2;  -- failed (not owner)
+ALTER PROPERTY GRAPH alt_graph5 OWNER TO regress_alter_generic_user3;  -- failed (no role membership)
+-- TODO: ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- failed (not owner)
+-- TODO: ALTER PROPERTY GRAPH alt_graph2 SET SCHEMA alt_nsp2;  -- failed (name conflict) XXX
+
+RESET SESSION AUTHORIZATION;
+
+SELECT nspname, relname, rolname
+  FROM pg_class c, pg_namespace n, pg_authid a
+  WHERE c.relnamespace = n.oid AND c.relowner = a.oid
+    AND n.nspname in ('alt_nsp1', 'alt_nsp2')
+    AND c.relkind = 'g'
+  ORDER BY nspname, relname;
+
+--
 -- Statistics
 --
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
@@ -584,6 +616,13 @@ DROP FOREIGN DATA WRAPPER alt_fdw3 CASCADE;
 
 DROP LANGUAGE alt_lang2 CASCADE;
 DROP LANGUAGE alt_lang3 CASCADE;
+
+-- FIXME
+DROP PROPERTY GRAPH alt_graph1;
+DROP PROPERTY GRAPH alt_graph2;
+DROP PROPERTY GRAPH alt_graph3;
+DROP PROPERTY GRAPH alt_graph4;
+DROP PROPERTY GRAPH alt_graph5;
 
 DROP SCHEMA alt_nsp1 CASCADE;
 DROP SCHEMA alt_nsp2 CASCADE;

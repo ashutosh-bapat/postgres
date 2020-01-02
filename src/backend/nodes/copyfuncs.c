@@ -4234,6 +4234,16 @@ _copyImportForeignSchemaStmt(const ImportForeignSchemaStmt *from)
 	return newnode;
 }
 
+static CreatePropGraphStmt *
+_copyCreatePropGraphStmt(const CreatePropGraphStmt *from)
+{
+	CreatePropGraphStmt *newnode = makeNode(CreatePropGraphStmt);
+
+	COPY_NODE_FIELD(pgname);
+
+	return newnode;
+}
+
 static CreateTransformStmt *
 _copyCreateTransformStmt(const CreateTransformStmt *from)
 {
@@ -5413,6 +5423,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_ImportForeignSchemaStmt:
 			retval = _copyImportForeignSchemaStmt(from);
+			break;
+		case T_CreatePropGraphStmt:
+			retval = _copyCreatePropGraphStmt(from);
 			break;
 		case T_CreateTransformStmt:
 			retval = _copyCreateTransformStmt(from);

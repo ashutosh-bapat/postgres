@@ -1977,6 +1977,14 @@ _equalImportForeignSchemaStmt(const ImportForeignSchemaStmt *a, const ImportFore
 }
 
 static bool
+_equalCreatePropGraphStmt(const CreatePropGraphStmt *a, const CreatePropGraphStmt *b)
+{
+	COMPARE_NODE_FIELD(pgname);
+
+	return true;
+}
+
+static bool
 _equalCreateTransformStmt(const CreateTransformStmt *a, const CreateTransformStmt *b)
 {
 	COMPARE_SCALAR_FIELD(replace);
@@ -3504,6 +3512,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_ImportForeignSchemaStmt:
 			retval = _equalImportForeignSchemaStmt(a, b);
+			break;
+		case T_CreatePropGraphStmt:
+			retval = _equalCreatePropGraphStmt(a, b);
 			break;
 		case T_CreateTransformStmt:
 			retval = _equalCreateTransformStmt(a, b);
