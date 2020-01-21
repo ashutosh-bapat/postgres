@@ -3403,6 +3403,8 @@ typedef struct CreatePropGraphStmt
 {
 	NodeTag		type;
 	RangeVar   *pgname;
+	List	   *vertex_tables;
+	List	   *edge_tables;
 } CreatePropGraphStmt;
 
 /* ----------------------

@@ -1984,6 +1984,8 @@ static bool
 _equalCreatePropGraphStmt(const CreatePropGraphStmt *a, const CreatePropGraphStmt *b)
 {
 	COMPARE_NODE_FIELD(pgname);
+	COMPARE_NODE_FIELD(vertex_tables);
+	COMPARE_NODE_FIELD(edge_tables);
 
 	return true;
 }

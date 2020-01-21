@@ -592,6 +592,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <partboundspec> PartitionBoundSpec
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
+%type <list>	opt_vertex_tables_clause opt_edge_tables_clause
+				edge_table_list edge_table_definition
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -636,11 +638,11 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CYCLE
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
-	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC
+	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC DESTINATION
 	DETACH DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
 	DOUBLE_P DROP
 
-	EACH ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
+	EACH EDGE ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
 	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN EXPRESSION
 	EXTENSION EXTERNAL EXTRACT
 
@@ -666,7 +668,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 	MAPPING MATCH MATERIALIZED MAXVALUE METHOD MINUTE_P MINVALUE MODE MONTH_P MOVE
 
-	NAME_P NAMES NATIONAL NATURAL NCHAR NEW NEXT NO NONE
+	NAME_P NAMES NATIONAL NATURAL NCHAR NEW NEXT NO NODE NONE
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
 	NULLS_P NUMERIC
 
@@ -681,13 +683,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	QUOTE
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFERENCING
-	REFRESH REINDEX RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
+	REFRESH REINDEX RELATIONSHIP RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
 	RESET RESTART RESTRICT RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
 	ROUTINE ROUTINES ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCHEMAS SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
 	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
-	SIMILAR SIMPLE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
+	SIMILAR SIMPLE SKIP SMALLINT SNAPSHOT SOME SOURCE SQL_P STABLE STANDALONE_P
 	START STATEMENT STATISTICS STDIN STDOUT STORAGE STORED STRICT_P STRIP_P
 	SUBSCRIPTION SUBSTRING SUPPORT SYMMETRIC SYSID SYSTEM_P
 
@@ -700,7 +702,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	UNLISTEN UNLOGGED UNTIL UPDATE USER USING
 
 	VACUUM VALID VALIDATE VALIDATOR VALUE_P VALUES VARCHAR VARIADIC VARYING
-	VERBOSE VERSION_P VIEW VIEWS VOLATILE
+	VERBOSE VERSION_P VERTEX VIEW VIEWS VOLATILE
 
 	WHEN WHERE WHITESPACE_P WINDOW WITH WITHIN WITHOUT WORK WRAPPER WRITE
 
@@ -8353,14 +8355,42 @@ opt_if_exists: IF_P EXISTS						{ $$ = true; }
  *
  *****************************************************************************/
 
-CreatePropGraphStmt: CREATE OptTemp PROPERTY GRAPH qualified_name
+CreatePropGraphStmt: CREATE OptTemp PROPERTY GRAPH qualified_name opt_vertex_tables_clause opt_edge_tables_clause
 				{
 					CreatePropGraphStmt *n = makeNode(CreatePropGraphStmt);
 
 					n->pgname = $5;
 					n->pgname->relpersistence = $2;
+					n->vertex_tables = $6;
+					n->edge_tables = $7;
 
 					$$ = (Node *)n;
+				}
+		;
+
+opt_vertex_tables_clause:
+			vertex_synonym TABLES '(' qualified_name_list ')'	{ $$ = $4; }
+			| /*EMPTY*/							{ $$ = NIL; }
+		;
+
+vertex_synonym: NODE | VERTEX
+		;
+
+opt_edge_tables_clause:
+			edge_synonym TABLES '(' edge_table_list	')'			{ $$ = $4; }
+			| /*EMPTY*/							{ $$ = NIL; }
+		;
+
+edge_synonym: EDGE | RELATIONSHIP
+		;
+
+edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
+			| edge_table_list ',' edge_table_definition		{ $$ = lappend($1, $3); }
+		;
+
+edge_table_definition: qualified_name SOURCE qualified_name DESTINATION qualified_name
+				{
+					$$ = list_make3($1, $3, $5);
 				}
 		;
 
@@ -15341,6 +15371,7 @@ unreserved_keyword:
 			| DELIMITER
 			| DELIMITERS
 			| DEPENDS
+			| DESTINATION
 			| DETACH
 			| DICTIONARY
 			| DISABLE_P
@@ -15350,6 +15381,7 @@ unreserved_keyword:
 			| DOUBLE_P
 			| DROP
 			| EACH
+			| EDGE
 			| ENABLE_P
 			| ENCODING
 			| ENCRYPTED
@@ -15430,6 +15462,7 @@ unreserved_keyword:
 			| NEW
 			| NEXT
 			| NO
+			| NODE
 			| NOTHING
 			| NOTIFY
 			| NOWAIT
@@ -15478,6 +15511,7 @@ unreserved_keyword:
 			| REFERENCING
 			| REFRESH
 			| REINDEX
+			| RELATIONSHIP
 			| RELATIVE_P
 			| RELEASE
 			| RENAME
@@ -15515,6 +15549,7 @@ unreserved_keyword:
 			| SIMPLE
 			| SKIP
 			| SNAPSHOT
+			| SOURCE
 			| SQL_P
 			| STABLE
 			| STANDALONE_P
@@ -15561,6 +15596,7 @@ unreserved_keyword:
 			| VALUE_P
 			| VARYING
 			| VERSION_P
+			| VERTEX
 			| VIEW
 			| VIEWS
 			| VOLATILE

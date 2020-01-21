@@ -1,9 +1,17 @@
-CREATE PROPERTY GRAPH my_graph;
-CREATE PROPERTY GRAPH my_graph;  -- error: duplicate
-ERROR:  relation "my_graph" already exists
-CREATE PROPERTY GRAPH my_graph2;
+CREATE PROPERTY GRAPH g1;
+CREATE PROPERTY GRAPH g1;  -- error: duplicate
+ERROR:  relation "g1" already exists
+CREATE TABLE t1 (a int, b text);
+CREATE TABLE t2 (i int, j int, k int);
+CREATE TABLE t3 (x int, y text, z text);
+CREATE PROPERTY GRAPH g2 VERTEX TABLES (t1, t2);
+-- error cases
+CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
+ERROR:  relation "xx" does not exist
+CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
+ERROR:  table "t1" specified more than once as vertex table
 SELECT gt.creation_date, gt.content
-FROM my_graph GRAPH_TABLE (
+FROM g1 GRAPH_TABLE (
   MATCH
     (creator IS person WHERE creator.email = 'foo@example.com')
       -[ IS created ]->
@@ -14,13 +22,13 @@ FROM my_graph GRAPH_TABLE (
     COLUMNS (m.creation_date, m.content)
 ) AS gt;
 ERROR:  GRAPH_TABLE is not implemented
-LINE 2: FROM my_graph GRAPH_TABLE (
-                      ^
-DROP TABLE my_graph2;  -- error: wrong object type
-ERROR:  "my_graph2" is not a table
+LINE 2: FROM g1 GRAPH_TABLE (
+                ^
+DROP TABLE g2;  -- error: wrong object type
+ERROR:  "g2" is not a table
 HINT:  Use DROP PROPERTY GRAPH to remove a property graph.
-DROP PROPERTY GRAPH my_graph2;
-DROP PROPERTY GRAPH my_graph2;  -- error: does not exist
-ERROR:  property graph "my_graph2" does not exist
-DROP PROPERTY GRAPH IF EXISTS my_graph2;
-NOTICE:  property graph "my_graph2" does not exist, skipping
+DROP PROPERTY GRAPH g2;
+DROP PROPERTY GRAPH g2;  -- error: does not exist
+ERROR:  property graph "g2" does not exist
+DROP PROPERTY GRAPH IF EXISTS g2;
+NOTICE:  property graph "g2" does not exist, skipping

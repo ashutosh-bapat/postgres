@@ -4243,6 +4243,8 @@ _copyCreatePropGraphStmt(const CreatePropGraphStmt *from)
 	CreatePropGraphStmt *newnode = makeNode(CreatePropGraphStmt);
 
 	COPY_NODE_FIELD(pgname);
+	COPY_NODE_FIELD(vertex_tables);
+	COPY_NODE_FIELD(edge_tables);
 
 	return newnode;
 }
