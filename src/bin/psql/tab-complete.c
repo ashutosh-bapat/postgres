@@ -478,6 +478,14 @@ static const SchemaQuery Query_for_list_of_partitioned_indexes = {
 	.result = "pg_catalog.quote_ident(c.relname)",
 };
 
+static const SchemaQuery Query_for_list_of_propgraphs = {
+	.catname = "pg_catalog.pg_class c",
+	.selcondition = "c.relkind IN (" CppAsString2(RELKIND_PROPGRAPH) ")",
+	.viscondition = "pg_catalog.pg_table_is_visible(c.oid)",
+	.namespace = "c.relnamespace",
+	.result = "pg_catalog.quote_ident(c.relname)",
+};
+
 
 /* All relations */
 static const SchemaQuery Query_for_list_of_relations = {
@@ -1014,6 +1022,7 @@ static const pgsql_thing_t words_after_create[] = {
 	{"PARSER", Query_for_list_of_ts_parsers, NULL, NULL, THING_NO_SHOW},
 	{"POLICY", NULL, NULL, NULL},
 	{"PROCEDURE", NULL, NULL, Query_for_list_of_procedures},
+	{"PROPERTY GRAPH", NULL, NULL, &Query_for_list_of_propgraphs},
 	{"PUBLICATION", NULL, Query_for_list_of_publications},
 	{"ROLE", Query_for_list_of_roles},
 	{"ROUTINE", NULL, NULL, &Query_for_list_of_routines, THING_NO_CREATE},
@@ -1862,6 +1871,12 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("ALTER", "POLICY", MatchAny, "ON", MatchAny, "WITH", "CHECK"))
 		COMPLETE_WITH("(");
 
+	/* ALTER PROPERTY GRAPH */
+	else if (Matches("ALTER", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs, NULL);
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny))
+		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA");
+
 	/* ALTER RULE <name>, add ON */
 	else if (Matches("ALTER", "RULE", MatchAny))
 		COMPLETE_WITH("ON");
@@ -2470,6 +2485,32 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("(");
 
 
+/* CREATE PROPERTY GRAPH */
+	else if (Matches("CREATE", "PROPERTY"))
+		COMPLETE_WITH("GRAPH");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny))
+		COMPLETE_WITH("VERTEX");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE"))
+		COMPLETE_WITH("TABLES");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES"))
+		COMPLETE_WITH("(");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "("))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables, NULL);
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(", MatchAny))
+		COMPLETE_WITH(",", ")");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(") &&
+			 TailMatches(")"))
+		COMPLETE_WITH("EDGE"); // FIXME
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
+			 TailMatches("EDGE|RELATIONSHIP"))
+		COMPLETE_WITH("TABLES");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
+			 TailMatches("EDGE|RELATIONSHIP", "TABLES"))
+		COMPLETE_WITH("(");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
+			 TailMatches("EDGE|RELATIONSHIP", "TABLES", "("))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables, NULL);
+
 /* CREATE PUBLICATION */
 	else if (Matches("CREATE", "PUBLICATION", MatchAny))
 		COMPLETE_WITH("FOR TABLE", "FOR ALL TABLES", "WITH (");
@@ -2948,6 +2989,12 @@ psql_completion(const char *text, int start, int end)
 		completion_info_charp = prev2_wd;
 		COMPLETE_WITH_QUERY(Query_for_list_of_tables_for_policy);
 	}
+
+	/* DROP PROPERTY GRAPH */
+	else if (Matches("DROP", "PROPERTY"))
+		COMPLETE_WITH("GRAPH");
+	else if (Matches("DROP", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs, NULL);
 
 	/* DROP RULE */
 	else if (Matches("DROP", "RULE", MatchAny))
@@ -3743,6 +3790,8 @@ psql_completion(const char *text, int start, int end)
 			COMPLETE_WITH("OBJECT");
 		else if (TailMatches("CREATE|ALTER|DROP", "MATERIALIZED"))
 			COMPLETE_WITH("VIEW");
+		else if (TailMatches("CREATE|ALTER|DROP", "PROPERTY"))
+			COMPLETE_WITH("GRAPH");
 		else if (TailMatches("CREATE|ALTER|DROP", "TEXT"))
 			COMPLETE_WITH("SEARCH");
 		else if (TailMatches("CREATE|ALTER|DROP", "USER"))
