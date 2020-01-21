@@ -21,7 +21,9 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-TODO
+CREATE PROPERTY GRAPH <replaceable class="parameter">name</replaceable>
+    [ {VERTEX|NODE} TABLES ( <replaceable class="parameter">vertex_table_name</replaceable> [, ...] ) ]
+    [ {EDGE|RELATIONSHIP} TABLES ( { <replaceable class="parameter">edge_table_name</replaceable> SOURCE <replaceable class="parameter">source_table_name</replaceable> DESTINATION <replaceable class="parameter">dest_table_name</replaceable> } [, ...] ) ]
 </synopsis>
  </refsynopsisdiv>
 
@@ -30,6 +32,96 @@ TODO
 
   <para>
    TODO
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Parameters</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><replaceable class="parameter">name</replaceable></term>
+    <listitem>
+     <para>
+      The name (optionally schema-qualified) of the new property graph.
+     </para>
+
+     <para>
+      Property graphs share a namespace with tables and other relation types.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>VERTEX</literal>/<literal>NODE</literal></term>
+    <term><literal>EDGE</literal>/<literal>RELATIONSHIP</literal></term>
+    <listitem>
+     <para>
+      These keywords are synonyms, respectively.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">vertex_table_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of a table that will contain vertices in the new property
+      graph.  A table can be listed at most once as a vertex table.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">edge_table_name</replaceable></term>
+    <listitem>
+     <para>
+      The name of a table that will contain edges in the new property graph.
+      A table can be listed at most once as an edge table.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">source_table_name</replaceable></term>
+    <term><replaceable class="parameter">dest_table_name</replaceable></term>
+    <listitem>
+     <para>
+      The names of vertex tables that the edge table is linked to.  These must
+      be listed as a vertex table also.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
+  <title>Notes</title>
+
+  <para>
+   Property graphs are queried using the <literal>GRAPH_TABLE</literal> clause
+   of <xref linkend="sql-select"/>.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+<programlisting>
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (v1, v2, v3)
+    EDGE TABLES (e1 SOURCE v1 DESTINATION v2,
+                 e2 SOURCE v1 DESTINATION v3);
+</programlisting></para>
+ </refsect1>
+
+ <refsect1>
+  <title>Compatibility</title>
+
+  <para>
+   <command>CREATE PROPERTY GRAPH</command> conforms to ISO/IEC 9075-16
+   (SQL/PGQ).
   </para>
  </refsect1>
 
