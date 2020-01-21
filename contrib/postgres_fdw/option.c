@@ -159,6 +159,16 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 						 errmsg("password_required=false is superuser-only"),
 						 errhint("User mappings with the password_required option set to false may only be created or modified by the superuser")));
 		}
+		else if (strcmp(def->defname, "sslcert") == 0 ||
+				 strcmp(def->defname, "sslkey") == 0)
+		{
+			/* similarly for sslcert / sslkey on user mapping */
+			if (catalog == UserMappingRelationId && !superuser())
+				ereport(ERROR,
+						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						 errmsg("sslcert and sslkey are superuser-only"),
+						 errhint("User mappings with the sslcert or sslkey options set may only be created or modified by the superuser")));
+		}
 	}
 
 	PG_RETURN_VOID();
@@ -194,6 +204,15 @@ InitPgFdwOptions(void)
 		{"fetch_size", ForeignServerRelationId, false},
 		{"fetch_size", ForeignTableRelationId, false},
 		{"password_required", UserMappingRelationId, false},
+		/*
+		 * sslcert and sslkey are in fact libpq options, but we repeat them
+		 * here to allow them to appear in both foreign server context
+		 * (when we generate libpq options) and user mapping context
+		 * (from here).
+		 */
+		{"sslcert", UserMappingRelationId, true},
+		{"sslkey", UserMappingRelationId, true},
+
 		{NULL, InvalidOid, false}
 	};
 

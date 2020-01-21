@@ -1447,7 +1447,13 @@ psql_completion(const char *text, int start, int end)
 		NULL
 	};
 
-	(void) end;					/* "end" is not used */
+	/*
+	 * Temporary workaround for a bug in recent (2019) libedit: it incorrectly
+	 * de-escapes the input "text", causing us to fail to recognize backslash
+	 * commands.  So get the string to look at from rl_line_buffer instead.
+	 */
+	char	   *text_copy = pnstrdup(rl_line_buffer + start, end - start);
+	text = text_copy;
 
 #ifdef HAVE_RL_COMPLETION_APPEND_CHARACTER
 	rl_completion_append_character = ' ';
@@ -2009,7 +2015,7 @@ psql_completion(const char *text, int start, int end)
 	/* ALTER TABLE ALTER [COLUMN] <foo> DROP */
 	else if (Matches("ALTER", "TABLE", MatchAny, "ALTER", "COLUMN", MatchAny, "DROP") ||
 			 Matches("ALTER", "TABLE", MatchAny, "ALTER", MatchAny, "DROP"))
-		COMPLETE_WITH("DEFAULT", "IDENTITY", "NOT NULL");
+		COMPLETE_WITH("DEFAULT", "EXPRESSION", "IDENTITY", "NOT NULL");
 	else if (Matches("ALTER", "TABLE", MatchAny, "CLUSTER"))
 		COMPLETE_WITH("ON");
 	else if (Matches("ALTER", "TABLE", MatchAny, "CLUSTER", "ON"))
@@ -3591,7 +3597,7 @@ psql_completion(const char *text, int start, int end)
 		if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
 			COMPLETE_WITH("FULL", "FREEZE", "ANALYZE", "VERBOSE",
 						  "DISABLE_PAGE_SKIPPING", "SKIP_LOCKED",
-						  "INDEX_CLEANUP", "TRUNCATE");
+						  "INDEX_CLEANUP", "TRUNCATE", "PARALLEL");
 		else if (TailMatches("FULL|FREEZE|ANALYZE|VERBOSE|DISABLE_PAGE_SKIPPING|SKIP_LOCKED|INDEX_CLEANUP|TRUNCATE"))
 			COMPLETE_WITH("ON", "OFF");
 	}
@@ -3859,6 +3865,7 @@ psql_completion(const char *text, int start, int end)
 	/* free storage */
 	free(previous_words);
 	free(words_buffer);
+	free(text_copy);
 
 	/* Return our Grand List O' Matches */
 	return matches;

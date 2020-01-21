@@ -462,7 +462,7 @@ pqDropConnection(PGconn *conn, bool flushInput)
 	/* Always discard any unsent data */
 	conn->outCount = 0;
 
-	/* Free authentication state */
+	/* Free authentication/encryption state */
 #ifdef ENABLE_GSS
 	{
 		OM_uint32	min_s;
@@ -471,6 +471,21 @@ pqDropConnection(PGconn *conn, bool flushInput)
 			gss_delete_sec_context(&min_s, &conn->gctx, GSS_C_NO_BUFFER);
 		if (conn->gtarg_nam)
 			gss_release_name(&min_s, &conn->gtarg_nam);
+		if (conn->gss_SendBuffer)
+		{
+			free(conn->gss_SendBuffer);
+			conn->gss_SendBuffer = NULL;
+		}
+		if (conn->gss_RecvBuffer)
+		{
+			free(conn->gss_RecvBuffer);
+			conn->gss_RecvBuffer = NULL;
+		}
+		if (conn->gss_ResultBuffer)
+		{
+			free(conn->gss_ResultBuffer);
+			conn->gss_ResultBuffer = NULL;
+		}
 	}
 #endif
 #ifdef ENABLE_SSPI
@@ -2800,10 +2815,12 @@ keep_going:						/* We will come back to here until there is
 #ifdef ENABLE_GSS
 
 				/*
-				 * If GSSAPI is enabled and we have a credential cache, try to
-				 * set it up before sending startup messages.  If it's already
-				 * operating, don't try SSL and instead just build the startup
-				 * packet.
+				 * If GSSAPI encryption is enabled, then call
+				 * pg_GSS_have_cred_cache() which will return true if we can
+				 * acquire credentials (and give us a handle to use in
+				 * conn->gcred), and then send a packet to the server asking
+				 * for GSSAPI Encryption (and skip past SSL negotiation and
+				 * regular startup below).
 				 */
 				if (conn->try_gss && !conn->gctx)
 					conn->try_gss = pg_GSS_have_cred_cache(&conn->gcred);

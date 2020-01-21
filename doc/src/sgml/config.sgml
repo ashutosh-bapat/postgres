@@ -2308,13 +2308,13 @@ include_dir 'conf.d'
        <listitem>
         <para>
          Sets the maximum number of parallel workers that can be
-         started by a single utility command.  Currently, the only
-         parallel utility command that supports the use of parallel
-         workers is <command>CREATE INDEX</command>, and only when
-         building a B-tree index.  Parallel workers are taken from the
-         pool of processes established by <xref
-         linkend="guc-max-worker-processes"/>, limited by <xref
-         linkend="guc-max-parallel-workers"/>.  Note that the requested
+         started by a single utility command.  Currently, the parallel
+         utility commands that support the use of parallel workers are
+         <command>CREATE INDEX</command> only when building a B-tree index,
+         and <command>VACUUM</command> without <literal>FULL</literal>
+         option.  Parallel workers are taken from the pool of processes
+         established by <xref linkend="guc-max-worker-processes"/>, limited
+         by <xref linkend="guc-max-parallel-workers"/>.  Note that the requested
          number of workers may not actually be available at run time.
          If this occurs, the utility operation will run with fewer
          workers than expected.  The default value is 2.  Setting this
@@ -4124,6 +4124,26 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-wal-receiver-create-temp-slot" xreflabel="wal_receiver_create_temp_slot">
+      <term><varname>wal_receiver_create_temp_slot</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>wal_receiver_create_temp_slot</varname> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Specifies whether a WAL receiver should create a temporary replication
+        slot on the remote instance when no permanent replication slot to use
+        has been configured (using <xref linkend="guc-primary-slot-name"/>).
+        The default is on.  The only reason to turn this off would be if the
+        remote instance is currently out of available replication slots.  This
+        parameter can only be set in the <filename>postgresql.conf</filename>
+        file or on the server command line.  Changes only take effect when the
+        WAL receiver process starts a new connection.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-wal-receiver-status-interval" xreflabel="wal_receiver_status_interval">
       <term><varname>wal_receiver_status_interval</varname> (<type>integer</type>)
       <indexterm>
@@ -4895,7 +4915,9 @@ ANY <replaceable class="parameter">num_sync</replaceable> ( <replaceable class="
         for a parallel scan to be considered.  Note that a parallel index scan
         typically won't touch the entire index; it is the number of pages
         which the planner believes will actually be touched by the scan which
-        is relevant.
+        is relevant.  This parameter is also used to decide whether a
+        particular index can participate in a parallel vacuum.  See
+        <xref linkend="sql-vacuum"/>.
         If this value is specified without units, it is taken as blocks,
         that is <symbol>BLCKSZ</symbol> bytes, typically 8kB.
         The default is 512 kilobytes (<literal>512kB</literal>).

@@ -174,6 +174,18 @@ WARNING:  extension "bar" is not installed
 ALTER SERVER testserver1 OPTIONS (DROP extensions);
 ALTER USER MAPPING FOR public SERVER testserver1
 	OPTIONS (DROP user, DROP password);
+-- Attempt to add a valid option that's not allowed in a user mapping
+ALTER USER MAPPING FOR public SERVER testserver1
+	OPTIONS (ADD sslmode 'require');
+ERROR:  invalid option "sslmode"
+HINT:  Valid options in this context are: user, password, sslpassword, password_required, sslcert, sslkey
+-- But we can add valid ones fine
+ALTER USER MAPPING FOR public SERVER testserver1
+	OPTIONS (ADD sslpassword 'dummy');
+-- Ensure valid options we haven't used in a user mapping yet are
+-- permitted to check validation.
+ALTER USER MAPPING FOR public SERVER testserver1
+	OPTIONS (ADD sslkey 'value', ADD sslcert 'value');
 ALTER FOREIGN TABLE ft1 OPTIONS (schema_name 'S 1', table_name 'T 1');
 ALTER FOREIGN TABLE ft2 OPTIONS (schema_name 'S 1', table_name 'T 1');
 ALTER FOREIGN TABLE ft1 ALTER COLUMN c1 OPTIONS (column_name 'C 1');
@@ -8886,6 +8898,15 @@ SELECT * FROM ft1_nopw LIMIT 1;
  1111 |  2 |    |    |    |    | ft1        | 
 (1 row)
 
+-- unpriv user also cannot set sslcert / sslkey on the user mapping
+-- first set password_required so we see the right error messages
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (SET password_required 'true');
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (ADD sslcert 'foo.crt');
+ERROR:  sslcert and sslkey are superuser-only
+HINT:  User mappings with the sslcert or sslkey options set may only be created or modified by the superuser
+ALTER USER MAPPING FOR CURRENT_USER SERVER loopback_nopw OPTIONS (ADD sslkey 'foo.key');
+ERROR:  sslcert and sslkey are superuser-only
+HINT:  User mappings with the sslcert or sslkey options set may only be created or modified by the superuser
 -- We're done with the role named after a specific user and need to check the
 -- changes to the public mapping.
 DROP USER MAPPING FOR CURRENT_USER SERVER loopback_nopw;
