@@ -730,7 +730,8 @@ usage(void)
 	printf(_("  -z, --stats[=record]   show statistics instead of records\n"
 			 "                         (optionally, show per-record statistics)\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }
 
 int
@@ -1053,7 +1054,7 @@ main(int argc, char **argv)
 	for (;;)
 	{
 		/* try to read the next record */
-		record = XLogReadRecord(xlogreader_state, first_record, &errormsg);
+		record = XLogReadRecord(xlogreader_state, &errormsg);
 		if (!record)
 		{
 			if (!config.follow || private.endptr_reached)
@@ -1064,9 +1065,6 @@ main(int argc, char **argv)
 				continue;
 			}
 		}
-
-		/* after reading the first record, continue at next one */
-		first_record = InvalidXLogRecPtr;
 
 		/* apply all specified filters */
 		if (config.filter_by_rmgr != -1 &&

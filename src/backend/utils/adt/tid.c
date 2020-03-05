@@ -25,12 +25,12 @@
 #include "access/tableam.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
+#include "common/hashfn.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "parser/parsetree.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
-#include "utils/hashutils.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/varlena.h"
@@ -381,7 +381,7 @@ currtid_byreloid(PG_FUNCTION_ARGS)
 	ItemPointerCopy(tid, result);
 
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = table_beginscan(rel, snapshot, 0, NULL);
+	scan = table_beginscan_tid(rel, snapshot);
 	table_tuple_get_latest_tid(scan, result);
 	table_endscan(scan);
 	UnregisterSnapshot(snapshot);
@@ -419,7 +419,7 @@ currtid_byrelname(PG_FUNCTION_ARGS)
 	ItemPointerCopy(tid, result);
 
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = table_beginscan(rel, snapshot, 0, NULL);
+	scan = table_beginscan_tid(rel, snapshot);
 	table_tuple_get_latest_tid(scan, result);
 	table_endscan(scan);
 	UnregisterSnapshot(snapshot);

@@ -310,6 +310,7 @@ struct DropRelationCallbackState
 	((child_is_partition) ? DEPENDENCY_AUTO : DEPENDENCY_NORMAL)
 
 static void truncate_check_rel(Oid relid, Form_pg_class reltuple);
+static void truncate_check_perms(Oid relid, Form_pg_class reltuple);
 static void truncate_check_activity(Relation rel);
 static void RangeVarCallbackForTruncate(const RangeVar *relation,
 										Oid relId, Oid oldRelId, void *arg);
@@ -1266,7 +1267,11 @@ RemoveRelations(DropStmt *drop)
 	/* DROP CONCURRENTLY uses a weaker lock, and has some restrictions */
 	if (drop->concurrent)
 	{
-		flags |= PERFORM_DELETION_CONCURRENTLY;
+		/*
+		 * Note that for temporary relations this lock may get upgraded
+		 * later on, but as no other session can access a temporary
+		 * relation, this is actually fine.
+		 */
 		lockmode = ShareUpdateExclusiveLock;
 		Assert(drop->removeType == OBJECT_INDEX);
 		if (list_length(drop->objects) != 1)
@@ -1359,6 +1364,18 @@ RemoveRelations(DropStmt *drop)
 		{
 			DropErrorMsgNonExistent(rel, relkind, drop->missing_ok);
 			continue;
+		}
+
+		/*
+		 * Decide if concurrent mode needs to be used here or not.  The
+		 * relation persistence cannot be known without its OID.
+		 */
+		if (drop->concurrent &&
+			get_rel_persistence(relOid) != RELPERSISTENCE_TEMP)
+		{
+			Assert(list_length(drop->objects) == 1 &&
+				   drop->removeType == OBJECT_INDEX);
+			flags |= PERFORM_DELETION_CONCURRENTLY;
 		}
 
 		/* OK, we're ready to delete this one */
@@ -1609,6 +1626,12 @@ ExecuteTruncate(TruncateStmt *stmt)
 					continue;
 				}
 
+				/*
+				 * Inherited TRUNCATE commands perform access
+				 * permission checks on the parent table only.
+				 * So we skip checking the children's permissions
+				 * and don't call truncate_check_perms() here.
+				 */
 				truncate_check_rel(RelationGetRelid(rel), rel->rd_rel);
 				truncate_check_activity(rel);
 
@@ -1695,6 +1718,7 @@ ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 						(errmsg("truncate cascades to table \"%s\"",
 								RelationGetRelationName(rel))));
 				truncate_check_rel(relid, rel->rd_rel);
+				truncate_check_perms(relid, rel->rd_rel);
 				truncate_check_activity(rel);
 				rels = lappend(rels, rel);
 				relids = lappend_oid(relids, relid);
@@ -1945,7 +1969,6 @@ ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 static void
 truncate_check_rel(Oid relid, Form_pg_class reltuple)
 {
-	AclResult	aclresult;
 	char	   *relname = NameStr(reltuple->relname);
 
 	/*
@@ -1959,12 +1982,6 @@ truncate_check_rel(Oid relid, Form_pg_class reltuple)
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table", relname)));
 
-	/* Permissions checks */
-	aclresult = pg_class_aclcheck(relid, GetUserId(), ACL_TRUNCATE);
-	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, get_relkind_objtype(reltuple->relkind),
-					   relname);
-
 	if (!allowSystemTableMods && IsSystemClass(relid, reltuple))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -1972,6 +1989,22 @@ truncate_check_rel(Oid relid, Form_pg_class reltuple)
 						relname)));
 
 	InvokeObjectTruncateHook(relid);
+}
+
+/*
+ * Check that current user has the permission to truncate given relation.
+ */
+static void
+truncate_check_perms(Oid relid, Form_pg_class reltuple)
+{
+	char	   *relname = NameStr(reltuple->relname);
+	AclResult	aclresult;
+
+	/* Permissions checks */
+	aclresult = pg_class_aclcheck(relid, GetUserId(), ACL_TRUNCATE);
+	if (aclresult != ACLCHECK_OK)
+		aclcheck_error(aclresult, get_relkind_objtype(reltuple->relkind),
+					   relname);
 }
 
 /*
@@ -2007,14 +2040,14 @@ storage_name(char c)
 {
 	switch (c)
 	{
-		case 'p':
+		case TYPSTORAGE_PLAIN:
 			return "PLAIN";
-		case 'm':
-			return "MAIN";
-		case 'x':
-			return "EXTENDED";
-		case 'e':
+		case TYPSTORAGE_EXTERNAL:
 			return "EXTERNAL";
+		case TYPSTORAGE_EXTENDED:
+			return "EXTENDED";
+		case TYPSTORAGE_MAIN:
+			return "MAIN";
 		default:
 			return "???";
 	}
@@ -5282,8 +5315,9 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 
 					ereport(ERROR,
 							(errcode(ERRCODE_NOT_NULL_VIOLATION),
-							 errmsg("column \"%s\" contains null values",
-									NameStr(attr->attname)),
+							 errmsg("column \"%s\" of relation \"%s\" contains null values",
+									NameStr(attr->attname),
+									RelationGetRelationName(oldrel)),
 							 errtablecol(oldrel, attn + 1)));
 				}
 			}
@@ -5298,8 +5332,9 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 						if (!ExecCheck(con->qualstate, econtext))
 							ereport(ERROR,
 									(errcode(ERRCODE_CHECK_VIOLATION),
-									 errmsg("check constraint \"%s\" is violated by some row",
-											con->name),
+									 errmsg("check constraint \"%s\" of relation \"%s\" is violated by some row",
+											con->name,
+											RelationGetRelationName(oldrel)),
 									 errtableconstraint(oldrel, con->name)));
 						break;
 					case CONSTR_FOREIGN:
@@ -5316,11 +5351,13 @@ ATRewriteTable(AlteredTableInfo *tab, Oid OIDNewHeap, LOCKMODE lockmode)
 				if (tab->validate_default)
 					ereport(ERROR,
 							(errcode(ERRCODE_CHECK_VIOLATION),
-							 errmsg("updated partition constraint for default partition would be violated by some row")));
+							 errmsg("updated partition constraint for default partition \"%s\" would be violated by some row",
+									RelationGetRelationName(oldrel))));
 				else
 					ereport(ERROR,
 							(errcode(ERRCODE_CHECK_VIOLATION),
-							 errmsg("partition constraint is violated by some row")));
+							 errmsg("partition constraint of relation \"%s\" is violated by some row",
+									RelationGetRelationName(oldrel))));
 			}
 
 			/* Write the tuple out to the new relation */
@@ -6136,14 +6173,18 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	 * returned by AddRelationNewConstraints, so that the right thing happens
 	 * when a datatype's default applies.
 	 *
-	 * We skip this step completely for views and foreign tables.  For a view,
-	 * we can only get here from CREATE OR REPLACE VIEW, which historically
-	 * doesn't set up defaults, not even for domain-typed columns.  And in any
-	 * case we mustn't invoke Phase 3 on a view or foreign table, since they
-	 * have no storage.
+	 * Note: it might seem that this should happen at the end of Phase 2, so
+	 * that the effects of subsequent subcommands can be taken into account.
+	 * It's intentional that we do it now, though.  The new column should be
+	 * filled according to what is said in the ADD COLUMN subcommand, so that
+	 * the effects are the same as if this subcommand had been run by itself
+	 * and the later subcommands had been issued in new ALTER TABLE commands.
+	 *
+	 * We can skip this entirely for relations without storage, since Phase 3
+	 * is certainly not going to touch them.  System attributes don't have
+	 * interesting defaults, either.
 	 */
-	if (relkind != RELKIND_VIEW && relkind != RELKIND_COMPOSITE_TYPE
-		&& relkind != RELKIND_FOREIGN_TABLE && attribute.attnum > 0)
+	if (RELKIND_HAS_STORAGE(relkind) && attribute.attnum > 0)
 	{
 		/*
 		 * For an identity column, we can't use build_column_default(),
@@ -7357,13 +7398,13 @@ ATExecSetStorage(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	storagemode = strVal(newValue);
 
 	if (pg_strcasecmp(storagemode, "plain") == 0)
-		newstorage = 'p';
+		newstorage = TYPSTORAGE_PLAIN;
 	else if (pg_strcasecmp(storagemode, "external") == 0)
-		newstorage = 'e';
+		newstorage = TYPSTORAGE_EXTERNAL;
 	else if (pg_strcasecmp(storagemode, "extended") == 0)
-		newstorage = 'x';
+		newstorage = TYPSTORAGE_EXTENDED;
 	else if (pg_strcasecmp(storagemode, "main") == 0)
-		newstorage = 'm';
+		newstorage = TYPSTORAGE_MAIN;
 	else
 	{
 		ereport(ERROR,
@@ -7395,7 +7436,7 @@ ATExecSetStorage(Relation rel, const char *colName, Node *newValue, LOCKMODE loc
 	 * safety check: do not allow toasted storage modes unless column datatype
 	 * is TOAST-aware.
 	 */
-	if (newstorage == 'p' || TypeIsToastable(attrtuple->atttypid))
+	if (newstorage == TYPSTORAGE_PLAIN || TypeIsToastable(attrtuple->atttypid))
 		attrtuple->attstorage = newstorage;
 	else
 		ereport(ERROR,
@@ -8931,13 +8972,13 @@ CloneFkReferenced(Relation parentRel, Relation partitionRel)
 	List	   *clone = NIL;
 
 	/*
-	 * Search for any constraints where this partition is in the referenced
-	 * side.  However, we must ignore any constraint whose parent constraint
-	 * is also going to be cloned, to avoid duplicates.  So do it in two
-	 * steps: first construct the list of constraints to clone, then go over
-	 * that list cloning those whose parents are not in the list.  (We must
-	 * not rely on the parent being seen first, since the catalog scan could
-	 * return children first.)
+	 * Search for any constraints where this partition's parent is in the
+	 * referenced side.  However, we must not clone any constraint whose
+	 * parent constraint is also going to be cloned, to avoid duplicates.  So
+	 * do it in two steps: first construct the list of constraints to clone,
+	 * then go over that list cloning those whose parents are not in the list.
+	 * (We must not rely on the parent being seen first, since the catalog
+	 * scan could return children first.)
 	 */
 	pg_constraint = table_open(ConstraintRelationId, RowShareLock);
 	ScanKeyInit(&key[0],
@@ -8952,10 +8993,6 @@ CloneFkReferenced(Relation parentRel, Relation partitionRel)
 	while ((tuple = systable_getnext(scan)) != NULL)
 	{
 		Form_pg_constraint constrForm = (Form_pg_constraint) GETSTRUCT(tuple);
-
-		/* Only try to clone the top-level constraint; skip child ones. */
-		if (constrForm->conparentid != InvalidOid)
-			continue;
 
 		clone = lappend_oid(clone, constrForm->oid);
 	}
@@ -8984,6 +9021,16 @@ CloneFkReferenced(Relation parentRel, Relation partitionRel)
 		if (!HeapTupleIsValid(tuple))
 			elog(ERROR, "cache lookup failed for constraint %u", constrOid);
 		constrForm = (Form_pg_constraint) GETSTRUCT(tuple);
+
+		/*
+		 * As explained above: don't try to clone a constraint for which we're
+		 * going to clone the parent.
+		 */
+		if (list_member_oid(clone, constrForm->conparentid))
+		{
+			ReleaseSysCache(tuple);
+			continue;
+		}
 
 		/*
 		 * Because we're only expanding the key space at the referenced side,
@@ -10150,8 +10197,9 @@ validateCheckConstraint(Relation rel, HeapTuple constrtup)
 		if (!ExecCheck(exprstate, econtext))
 			ereport(ERROR,
 					(errcode(ERRCODE_CHECK_VIOLATION),
-					 errmsg("check constraint \"%s\" is violated by some row",
-							NameStr(constrForm->conname)),
+					 errmsg("check constraint \"%s\" of relation \"%s\" is violated by some row",
+							NameStr(constrForm->conname),
+							RelationGetRelationName(rel)),
 					 errtableconstraint(rel, NameStr(constrForm->conname))));
 
 		ResetExprContext(econtext);
@@ -11449,8 +11497,7 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 										   attTup->attbyval,
 										   attTup->attalign,
 										   &isNull);
-			missingval = PointerGetDatum(
-										 construct_array(&missingval,
+			missingval = PointerGetDatum(construct_array(&missingval,
 														 1,
 														 targettype,
 														 tform->typlen,
@@ -15278,6 +15325,7 @@ RangeVarCallbackForTruncate(const RangeVar *relation,
 		elog(ERROR, "cache lookup failed for relation %u", relId);
 
 	truncate_check_rel(relId, (Form_pg_class) GETSTRUCT(tuple));
+	truncate_check_perms(relId, (Form_pg_class) GETSTRUCT(tuple));
 
 	ReleaseSysCache(tuple);
 }
@@ -16411,54 +16459,6 @@ out:
 }
 
 /*
- * isPartitionTrigger
- *		Subroutine for CloneRowTriggersToPartition: determine whether
- *		the given trigger has been cloned from another one.
- *
- * We use pg_depend as a proxy for this, since we don't have any direct
- * evidence.  This is an ugly hack to cope with a catalog deficiency.
- * Keep away from children.  Do not stare with naked eyes.  Do not propagate.
- */
-static bool
-isPartitionTrigger(Oid trigger_oid)
-{
-	Relation	pg_depend;
-	ScanKeyData key[2];
-	SysScanDesc scan;
-	HeapTuple	tup;
-	bool		found = false;
-
-	pg_depend = table_open(DependRelationId, AccessShareLock);
-
-	ScanKeyInit(&key[0], Anum_pg_depend_classid,
-				BTEqualStrategyNumber,
-				F_OIDEQ,
-				ObjectIdGetDatum(TriggerRelationId));
-	ScanKeyInit(&key[1], Anum_pg_depend_objid,
-				BTEqualStrategyNumber,
-				F_OIDEQ,
-				ObjectIdGetDatum(trigger_oid));
-
-	scan = systable_beginscan(pg_depend, DependDependerIndexId,
-							  true, NULL, 2, key);
-	while ((tup = systable_getnext(scan)) != NULL)
-	{
-		Form_pg_depend dep = (Form_pg_depend) GETSTRUCT(tup);
-
-		if (dep->refclassid == TriggerRelationId)
-		{
-			found = true;
-			break;
-		}
-	}
-
-	systable_endscan(scan);
-	table_close(pg_depend, AccessShareLock);
-
-	return found;
-}
-
-/*
  * CloneRowTriggersToPartition
  *		subroutine for ATExecAttachPartition/DefineRelation to create row
  *		triggers on partitions
@@ -16500,11 +16500,10 @@ CloneRowTriggersToPartition(Relation parent, Relation partition)
 
 		/*
 		 * Internal triggers require careful examination.  Ideally, we don't
-		 * clone them.
-		 *
-		 * However, if our parent is a partitioned relation, there might be
-		 * internal triggers that need cloning.  In that case, we must skip
-		 * clone it if the trigger on parent depends on another trigger.
+		 * clone them.  However, if our parent is itself a partition, there
+		 * might be internal triggers that must not be skipped; for example,
+		 * triggers on our parent that are in turn clones from its parent (our
+		 * grandparent) are marked internal, yet they are to be cloned.
 		 *
 		 * Note we dare not verify that the other trigger belongs to an
 		 * ancestor relation of our parent, because that creates deadlock
@@ -16512,7 +16511,7 @@ CloneRowTriggersToPartition(Relation parent, Relation partition)
 		 */
 		if (trigForm->tgisinternal &&
 			(!parent->rd_rel->relispartition ||
-			 !isPartitionTrigger(trigForm->oid)))
+			 !OidIsValid(trigForm->tgparentid)))
 			continue;
 
 		/*

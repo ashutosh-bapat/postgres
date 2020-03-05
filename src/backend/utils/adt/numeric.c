@@ -27,6 +27,7 @@
 #include <math.h>
 
 #include "catalog/pg_type.h"
+#include "common/hashfn.h"
 #include "common/int.h"
 #include "funcapi.h"
 #include "lib/hyperloglog.h"
@@ -38,7 +39,6 @@
 #include "utils/builtins.h"
 #include "utils/float.h"
 #include "utils/guc.h"
-#include "utils/hashutils.h"
 #include "utils/int8.h"
 #include "utils/numeric.h"
 #include "utils/sortsupport.h"
@@ -521,6 +521,8 @@ static void mod_var(const NumericVar *var1, const NumericVar *var2,
 static void ceil_var(const NumericVar *var, NumericVar *result);
 static void floor_var(const NumericVar *var, NumericVar *result);
 
+static void gcd_var(const NumericVar *var1, const NumericVar *var2,
+					NumericVar *result);
 static void sqrt_var(const NumericVar *arg, NumericVar *result, int rscale);
 static void exp_var(const NumericVar *arg, NumericVar *result, int rscale);
 static int	estimate_ln_dweight(const NumericVar *var);
@@ -2837,6 +2839,107 @@ numeric_larger(PG_FUNCTION_ARGS)
  *
  * ----------------------------------------------------------------------
  */
+
+/*
+ * numeric_gcd() -
+ *
+ *	Calculate the greatest common divisor of two numerics
+ */
+Datum
+numeric_gcd(PG_FUNCTION_ARGS)
+{
+	Numeric		num1 = PG_GETARG_NUMERIC(0);
+	Numeric		num2 = PG_GETARG_NUMERIC(1);
+	NumericVar	arg1;
+	NumericVar	arg2;
+	NumericVar	result;
+	Numeric		res;
+
+	/*
+	 * Handle NaN
+	 */
+	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
+		PG_RETURN_NUMERIC(make_result(&const_nan));
+
+	/*
+	 * Unpack the arguments
+	 */
+	init_var_from_num(num1, &arg1);
+	init_var_from_num(num2, &arg2);
+
+	init_var(&result);
+
+	/*
+	 * Find the GCD and return the result
+	 */
+	gcd_var(&arg1, &arg2, &result);
+
+	res = make_result(&result);
+
+	free_var(&result);
+
+	PG_RETURN_NUMERIC(res);
+}
+
+
+/*
+ * numeric_lcm() -
+ *
+ *	Calculate the least common multiple of two numerics
+ */
+Datum
+numeric_lcm(PG_FUNCTION_ARGS)
+{
+	Numeric		num1 = PG_GETARG_NUMERIC(0);
+	Numeric		num2 = PG_GETARG_NUMERIC(1);
+	NumericVar	arg1;
+	NumericVar	arg2;
+	NumericVar	result;
+	Numeric		res;
+
+	/*
+	 * Handle NaN
+	 */
+	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
+		PG_RETURN_NUMERIC(make_result(&const_nan));
+
+	/*
+	 * Unpack the arguments
+	 */
+	init_var_from_num(num1, &arg1);
+	init_var_from_num(num2, &arg2);
+
+	init_var(&result);
+
+	/*
+	 * Compute the result using lcm(x, y) = abs(x / gcd(x, y) * y), returning
+	 * zero if either input is zero.
+	 *
+	 * Note that the division is guaranteed to be exact, returning an integer
+	 * result, so the LCM is an integral multiple of both x and y.  A display
+	 * scale of Min(x.dscale, y.dscale) would be sufficient to represent it,
+	 * but as with other numeric functions, we choose to return a result whose
+	 * display scale is no smaller than either input.
+	 */
+	if (arg1.ndigits == 0 || arg2.ndigits == 0)
+		set_var_from_var(&const_zero, &result);
+	else
+	{
+		gcd_var(&arg1, &arg2, &result);
+		div_var(&arg1, &result, &result, 0, false);
+		mul_var(&arg2, &result, &result, arg2.dscale);
+		result.sign = NUMERIC_POS;
+	}
+
+	result.dscale = Max(arg1.dscale, arg2.dscale);
+
+	res = make_result(&result);
+
+	free_var(&result);
+
+	PG_RETURN_NUMERIC(res);
+}
+
 
 /*
  * numeric_fac()
@@ -8040,6 +8143,74 @@ floor_var(const NumericVar *var, NumericVar *result)
 
 
 /*
+ * gcd_var() -
+ *
+ *	Calculate the greatest common divisor of two numerics at variable level
+ */
+static void
+gcd_var(const NumericVar *var1, const NumericVar *var2, NumericVar *result)
+{
+	int			res_dscale;
+	int			cmp;
+	NumericVar	tmp_arg;
+	NumericVar	mod;
+
+	res_dscale = Max(var1->dscale, var2->dscale);
+
+	/*
+	 * Arrange for var1 to be the number with the greater absolute value.
+	 *
+	 * This would happen automatically in the loop below, but avoids an
+	 * expensive modulo operation.
+	 */
+	cmp = cmp_abs(var1, var2);
+	if (cmp < 0)
+	{
+		const NumericVar *tmp = var1;
+
+		var1 = var2;
+		var2 = tmp;
+	}
+
+	/*
+	 * Also avoid the taking the modulo if the inputs have the same absolute
+	 * value, or if the smaller input is zero.
+	 */
+	if (cmp == 0 || var2->ndigits == 0)
+	{
+		set_var_from_var(var1, result);
+		result->sign = NUMERIC_POS;
+		result->dscale = res_dscale;
+		return;
+	}
+
+	init_var(&tmp_arg);
+	init_var(&mod);
+
+	/* Use the Euclidean algorithm to find the GCD */
+	set_var_from_var(var1, &tmp_arg);
+	set_var_from_var(var2, result);
+
+	for (;;)
+	{
+		/* this loop can take a while, so allow it to be interrupted */
+		CHECK_FOR_INTERRUPTS();
+
+		mod_var(&tmp_arg, result, &mod);
+		if (mod.ndigits == 0)
+			break;
+		set_var_from_var(result, &tmp_arg);
+		set_var_from_var(&mod, result);
+	}
+	result->sign = NUMERIC_POS;
+	result->dscale = res_dscale;
+
+	free_var(&tmp_arg);
+	free_var(&mod);
+}
+
+
+/*
  * sqrt_var() -
  *
  *	Compute the square root of x using Newton's algorithm
@@ -8329,6 +8500,7 @@ ln_var(const NumericVar *arg, NumericVar *result, int rscale)
 	NumericVar	ni;
 	NumericVar	elem;
 	NumericVar	fact;
+	int			nsqrt;
 	int			local_rscale;
 	int			cmp;
 
@@ -8359,12 +8531,14 @@ ln_var(const NumericVar *arg, NumericVar *result, int rscale)
 	 * rscale as we work so that we keep this many significant digits at each
 	 * step (plus a few more for good measure).
 	 */
+	nsqrt = 0;
 	while (cmp_var(&x, &const_zero_point_nine) <= 0)
 	{
 		local_rscale = rscale - x.weight * DEC_DIGITS / 2 + 8;
 		local_rscale = Max(local_rscale, NUMERIC_MIN_DISPLAY_SCALE);
 		sqrt_var(&x, &x, local_rscale);
 		mul_var(&fact, &const_two, &fact, 0);
+		nsqrt++;
 	}
 	while (cmp_var(&x, &const_one_point_one) >= 0)
 	{
@@ -8372,6 +8546,7 @@ ln_var(const NumericVar *arg, NumericVar *result, int rscale)
 		local_rscale = Max(local_rscale, NUMERIC_MIN_DISPLAY_SCALE);
 		sqrt_var(&x, &x, local_rscale);
 		mul_var(&fact, &const_two, &fact, 0);
+		nsqrt++;
 	}
 
 	/*
@@ -8384,8 +8559,12 @@ ln_var(const NumericVar *arg, NumericVar *result, int rscale)
 	 *
 	 * The convergence of this is not as fast as one would like, but is
 	 * tolerable given that z is small.
+	 *
+	 * The Taylor series result will be multiplied by 2^(nsqrt+1), which has a
+	 * decimal weight of (nsqrt+1) * log10(2), so work with this many extra
+	 * digits of precision (plus a few more for good measure).
 	 */
-	local_rscale = rscale + 8;
+	local_rscale = rscale + (int) ((nsqrt + 1) * 0.301029995663981) + 8;
 
 	sub_var(&x, &const_one, result);
 	add_var(&x, &const_one, &elem);

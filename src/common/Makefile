@@ -31,7 +31,6 @@ include $(top_builddir)/src/Makefile.global
 # don't include subdirectory-path-dependent -I and -L switches
 STD_CPPFLAGS := $(filter-out -I$(top_srcdir)/src/include -I$(top_builddir)/src/include,$(CPPFLAGS))
 STD_LDFLAGS := $(filter-out -L$(top_builddir)/src/common -L$(top_builddir)/src/port,$(LDFLAGS))
-override CPPFLAGS += -DVAL_CONFIGURE="\"$(configure_args)\""
 override CPPFLAGS += -DVAL_CC="\"$(CC)\""
 override CPPFLAGS += -DVAL_CPPFLAGS="\"$(STD_CPPFLAGS)\""
 override CPPFLAGS += -DVAL_CFLAGS="\"$(CFLAGS)\""
@@ -55,7 +54,9 @@ OBJS_COMMON = \
 	exec.o \
 	f2s.o \
 	file_perm.o \
+	hashfn.o \
 	ip.o \
+	jsonapi.o \
 	keywords.o \
 	kwlookup.o \
 	link-canary.o \

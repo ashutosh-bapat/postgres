@@ -49,6 +49,7 @@
 #include "catalog/pg_type.h"
 #include "commands/alter.h"
 #include "commands/defrem.h"
+#include "commands/extension.h"
 #include "commands/proclang.h"
 #include "executor/execdesc.h"
 #include "executor/executor.h"
@@ -285,8 +286,8 @@ interpret_function_parameter_list(ParseState *pstate,
 			if (fp->mode == FUNC_PARAM_OUT)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 (errmsg("procedures cannot have OUT arguments"),
-						  errhint("INOUT arguments are permitted."))));
+						 errmsg("procedures cannot have OUT arguments"),
+						 errhint("INOUT arguments are permitted.")));
 		}
 
 		/* handle input parameters */
@@ -432,9 +433,9 @@ interpret_function_parameter_list(ParseState *pstate,
 	if (outCount > 0 || varCount > 0)
 	{
 		*allParameterTypes = construct_array(allTypes, parameterCount, OIDOID,
-											 sizeof(Oid), true, 'i');
+											 sizeof(Oid), true, TYPALIGN_INT);
 		*parameterModes = construct_array(paramModes, parameterCount, CHAROID,
-										  1, true, 'c');
+										  1, true, TYPALIGN_CHAR);
 		if (outCount > 1)
 			*requiredResultType = RECORDOID;
 		/* otherwise we set requiredResultType correctly above */
@@ -453,7 +454,7 @@ interpret_function_parameter_list(ParseState *pstate,
 				paramNames[i] = CStringGetTextDatum("");
 		}
 		*parameterNames = construct_array(paramNames, parameterCount, TEXTOID,
-										  -1, false, 'i');
+										  -1, false, TYPALIGN_INT);
 	}
 	else
 		*parameterNames = NULL;
@@ -991,7 +992,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("language \"%s\" does not exist", language),
-				 (PLTemplateExists(language) ?
+				 (extension_file_exists(language) ?
 				  errhint("Use CREATE EXTENSION to load the language into the database.") : 0)));
 
 	languageStruct = (Form_pg_language) GETSTRUCT(languageTuple);
@@ -1106,7 +1107,7 @@ CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 		foreach(lc, trftypes_list)
 			arr[i++] = ObjectIdGetDatum(lfirst_oid(lc));
 		trftypes = construct_array(arr, list_length(trftypes_list),
-								   OIDOID, sizeof(Oid), true, 'i');
+								   OIDOID, sizeof(Oid), true, TYPALIGN_INT);
 	}
 	else
 	{
@@ -2225,7 +2226,7 @@ ExecuteDoStmt(DoStmt *stmt, bool atomic)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("language \"%s\" does not exist", language),
-				 (PLTemplateExists(language) ?
+				 (extension_file_exists(language) ?
 				  errhint("Use CREATE EXTENSION to load the language into the database.") : 0)));
 
 	languageStruct = (Form_pg_language) GETSTRUCT(languageTuple);

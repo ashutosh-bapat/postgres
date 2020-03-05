@@ -317,7 +317,8 @@ CREATE VIEW pg_available_extensions AS
 
 CREATE VIEW pg_available_extension_versions AS
     SELECT E.name, E.version, (X.extname IS NOT NULL) AS installed,
-           E.superuser, E.relocatable, E.schema, E.requires, E.comment
+           E.superuser, E.trusted, E.relocatable,
+           E.schema, E.requires, E.comment
       FROM pg_available_extension_versions() AS E
            LEFT JOIN pg_extension AS X
              ON E.name = X.extname AND E.version = X.extversion;
@@ -740,6 +741,7 @@ CREATE VIEW pg_stat_activity AS
             S.datid AS datid,
             D.datname AS datname,
             S.pid,
+            S.leader_pid,
             S.usesysid,
             U.rolname AS usename,
             S.application_name,
@@ -1057,6 +1059,22 @@ CREATE VIEW pg_stat_progress_create_index AS
         S.param15 AS partitions_done
     FROM pg_stat_get_progress_info('CREATE INDEX') AS S
         LEFT JOIN pg_database D ON S.datid = D.oid;
+
+CREATE VIEW pg_stat_progress_basebackup AS
+    SELECT
+        S.pid AS pid,
+        CASE S.param1 WHEN 0 THEN 'initializing'
+                      WHEN 1 THEN 'waiting for checkpoint to finish'
+                      WHEN 2 THEN 'estimating backup size'
+                      WHEN 3 THEN 'streaming database files'
+                      WHEN 4 THEN 'waiting for wal archiving to finish'
+                      WHEN 5 THEN 'transferring wal files'
+                      END AS phase,
+	S.param2 AS backup_total,
+	S.param3 AS backup_streamed,
+	S.param4 AS tablespaces_total,
+	S.param5 AS tablespaces_streamed
+    FROM pg_stat_get_progress_info('BASEBACKUP') AS S;
 
 CREATE VIEW pg_user_mappings AS
     SELECT

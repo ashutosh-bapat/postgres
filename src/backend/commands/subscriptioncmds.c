@@ -293,7 +293,7 @@ publicationListToArray(List *publist)
 	MemoryContextSwitchTo(oldcxt);
 
 	arr = construct_array(datums, list_length(publist),
-						  TEXTOID, -1, false, 'i');
+						  TEXTOID, -1, false, TYPALIGN_INT);
 
 	MemoryContextDelete(memcxt);
 
@@ -347,7 +347,7 @@ CreateSubscription(CreateSubscriptionStmt *stmt, bool isTopLevel)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to create subscriptions"))));
+				 errmsg("must be superuser to create subscriptions")));
 
 	/*
 	 * If built with appropriate switch, whine when regression-testing

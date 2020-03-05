@@ -191,7 +191,6 @@ static volatile sig_atomic_t got_STOPPING = false;
 static volatile sig_atomic_t replication_active = false;
 
 static LogicalDecodingContext *logical_decoding_ctx = NULL;
-static XLogRecPtr logical_startptr = InvalidXLogRecPtr;
 
 /* A sample associating a WAL location with the time it was written. */
 typedef struct
@@ -564,7 +563,7 @@ StartReplication(StartReplicationCmd *cmd)
 		if (SlotIsLogical(MyReplicationSlot))
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-					 (errmsg("cannot use a logical replication slot for physical replication"))));
+					 errmsg("cannot use a logical replication slot for physical replication")));
 	}
 
 	/*
@@ -1075,8 +1074,11 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 static void
 DropReplicationSlot(DropReplicationSlotCmd *cmd)
 {
+	QueryCompletion qc;
+
 	ReplicationSlotDrop(cmd->slotname, !cmd->wait);
-	EndCommand("DROP_REPLICATION_SLOT", DestRemote);
+	SetQueryCompletion(&qc, CMDTAG_DROP_REPLICATION_SLOT, 0);
+	EndCommand(&qc, DestRemote, false);
 }
 
 /*
@@ -1087,6 +1089,7 @@ static void
 StartLogicalReplication(StartReplicationCmd *cmd)
 {
 	StringInfoData buf;
+	QueryCompletion qc;
 
 	/* make sure that our requirements are still fulfilled */
 	CheckLogicalDecodingRequirements();
@@ -1130,9 +1133,9 @@ StartLogicalReplication(StartReplicationCmd *cmd)
 	pq_endmessage(&buf);
 	pq_flush();
 
-
 	/* Start reading WAL from the oldest required WAL. */
-	logical_startptr = MyReplicationSlot->data.restart_lsn;
+	XLogBeginRead(logical_decoding_ctx->reader,
+				  MyReplicationSlot->data.restart_lsn);
 
 	/*
 	 * Report the location after which we'll send out further commits as the
@@ -1161,7 +1164,8 @@ StartLogicalReplication(StartReplicationCmd *cmd)
 	WalSndSetState(WALSNDSTATE_STARTUP);
 
 	/* Get out of COPY mode (CommandComplete). */
-	EndCommand("COPY 0", DestRemote);
+	SetQueryCompletion(&qc, CMDTAG_COPY, 0);
+	EndCommand(&qc, DestRemote, false);
 }
 
 /*
@@ -1465,6 +1469,7 @@ exec_replication_command(const char *cmd_string)
 	Node	   *cmd_node;
 	MemoryContext cmd_context;
 	MemoryContext old_context;
+	QueryCompletion qc;
 
 	/*
 	 * If WAL sender has been told that shutdown is getting close, switch its
@@ -1500,8 +1505,8 @@ exec_replication_command(const char *cmd_string)
 	if (parse_rc != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 (errmsg_internal("replication command parser returned %d",
-								  parse_rc))));
+				 errmsg_internal("replication command parser returned %d",
+								 parse_rc)));
 
 	cmd_node = replication_parse_result;
 
@@ -1615,7 +1620,8 @@ exec_replication_command(const char *cmd_string)
 	MemoryContextDelete(cmd_context);
 
 	/* Send CommandComplete message */
-	EndCommand("SELECT", DestRemote);
+	SetQueryCompletion(&qc, CMDTAG_SELECT, 0);
+	EndCommand(&qc, DestRemote, true);
 
 	/* Report to pgstat that this process is now idle */
 	pgstat_report_activity(STATE_IDLE, NULL);
@@ -2791,8 +2797,7 @@ XLogSendLogical(void)
 	 */
 	WalSndCaughtUp = false;
 
-	record = XLogReadRecord(logical_decoding_ctx->reader, logical_startptr, &errm);
-	logical_startptr = InvalidXLogRecPtr;
+	record = XLogReadRecord(logical_decoding_ctx->reader, &errm);
 
 	/* xlog record was invalid */
 	if (errm != NULL)
@@ -2869,8 +2874,11 @@ WalSndDone(WalSndSendDataCallback send_data)
 	if (WalSndCaughtUp && sentPtr == replicatedPtr &&
 		!pq_is_send_pending())
 	{
+		QueryCompletion qc;
+
 		/* Inform the standby that XLOG streaming is done */
-		EndCommand("COPY 0", DestRemote);
+		SetQueryCompletion(&qc, CMDTAG_COPY, 0);
+		EndCommand(&qc, DestRemote, false);
 		pq_flush();
 
 		proc_exit(0);

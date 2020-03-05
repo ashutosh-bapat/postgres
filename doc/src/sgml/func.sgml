@@ -873,6 +873,40 @@
       <row>
        <entry>
         <indexterm>
+         <primary>gcd</primary>
+        </indexterm>
+        <literal><function>gcd(<replaceable>a</replaceable>, <replaceable>b</replaceable>)</function></literal>
+       </entry>
+       <entry>(same as argument types)</entry>
+       <entry>
+        greatest common divisor (the largest positive number that divides both
+        inputs with no remainder); returns <literal>0</literal> if both inputs
+        are zero
+       </entry>
+       <entry><literal>gcd(1071, 462)</literal></entry>
+       <entry><literal>21</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
+         <primary>lcm</primary>
+        </indexterm>
+        <literal><function>lcm(<replaceable>a</replaceable>, <replaceable>b</replaceable>)</function></literal>
+       </entry>
+       <entry>(same as argument types)</entry>
+       <entry>
+        least common multiple (the smallest strictly positive number that is
+        an integral multiple of both inputs); returns <literal>0</literal> if
+        either input is zero
+       </entry>
+       <entry><literal>lcm(1071, 462)</literal></entry>
+       <entry><literal>23562</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
          <primary>ln</primary>
         </indexterm>
         <literal><function>ln(<type>dp</type> or <type>numeric</type>)</function></literal>
@@ -5934,7 +5968,7 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>TM</literal> prefix</entry>
-        <entry>translation mode (print localized day and month names based on
+        <entry>translation mode (use localized day and month names based on
          <xref linkend="guc-lc-time"/>)</entry>
         <entry><literal>TMMonth</literal></entry>
        </row>
@@ -5965,9 +5999,20 @@ SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       <literal>TM</literal> does not include trailing blanks.
-       <function>to_timestamp</function> and <function>to_date</function> ignore
-       the <literal>TM</literal> modifier.
+       <literal>TM</literal> suppresses trailing blanks whether or
+       not <literal>FM</literal> is specified.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       <function>to_timestamp</function> and <function>to_date</function>
+       ignore letter case in the input; so for
+       example <literal>MON</literal>, <literal>Mon</literal>,
+       and <literal>mon</literal> all accept the same strings.  When using
+       the <literal>TM</literal> modifier, case-folding is done according to
+       the rules of the function's input collation (see
+       <xref linkend="collation"/>).
       </para>
      </listitem>
 
@@ -12790,12 +12835,12 @@ table2-mapping
      <para>
       The <literal>datetime()</literal> and
       <literal>datetime(<replaceable>template</replaceable>)</literal> methods
-      use the same parsing rules as <literal>to_timestamp</literal> SQL
-      function does (see <xref linkend="functions-formatting"/>) with three
-      exceptions.  At first, these methods doesn't allow unmatched template
-      patterns.  At second, only following separators are allowed in the
-      template string: minus sign, period, solidus, comma, apostrophe,
-      semicolon, colon and space.  At third, separators in the template string
+      use the same parsing rules as the <literal>to_timestamp</literal> SQL
+      function does (see <xref linkend="functions-formatting"/>), with three
+      exceptions.  First, these methods don't allow unmatched template
+      patterns.  Second, only the following separators are allowed in the
+      template string: minus sign, period, solidus (slash), comma, apostrophe,
+      semicolon, colon and space.  Third, separators in the template string
       must exactly match the input string.
      </para>
     </note>
@@ -16527,10 +16572,11 @@ AND
    rows.  Two rows might have a different binary representation even
    though comparisons of the two rows with the equality operator is true.
    The ordering of rows under these comparison operators is deterministic
-   but not otherwise meaningful.  These operators are used internally for
-   materialized views and might be useful for other specialized purposes
-   such as replication but are not intended to be generally useful for
-   writing queries.
+   but not otherwise meaningful.  These operators are used internally
+   for materialized views and might be useful for other specialized
+   purposes such as replication and B-Tree deduplication (see <xref
+   linkend="btree-deduplication"/>).  They are not intended to be
+   generally useful for writing queries, though.
   </para>
   </sect2>
  </sect1>
@@ -20436,8 +20482,11 @@ postgres=# SELECT * FROM pg_walfile_name_offset(pg_stop_backup());
        <entry>
         Advances the current confirmed position of a replication slot named
         <parameter>slot_name</parameter>. The slot will not be moved backwards,
-        and it will not be moved beyond the current insert location.  Returns
-        name of the slot and real position to which it was advanced to.
+        and it will not be moved beyond the current insert location. Returns
+        the name of the slot and the real position to which it was advanced to.
+        The information of the updated slot is written out at the follow-up
+        checkpoint if any advancing is done. In the event of a crash, the
+        slot may return to an earlier position.
        </entry>
       </row>
 

@@ -602,6 +602,9 @@ retry2:
 
 	pg_freeaddrinfo_all(hints.ai_family, addrs);
 
+	/* Now that we have a long-lived socket, tell fd.c about it. */
+	ReserveExternalFD();
+
 	return;
 
 startup_failed:
@@ -3697,6 +3700,9 @@ pgstat_get_wait_client(WaitEventClient w)
 		case WAIT_EVENT_CLIENT_WRITE:
 			event_name = "ClientWrite";
 			break;
+		case WAIT_EVENT_GSS_OPEN_SERVER:
+			event_name = "GSSOpenServer";
+			break;
 		case WAIT_EVENT_LIBPQWALRECEIVER_CONNECT:
 			event_name = "LibPQWalReceiverConnect";
 			break;
@@ -3714,9 +3720,6 @@ pgstat_get_wait_client(WaitEventClient w)
 			break;
 		case WAIT_EVENT_WAL_SENDER_WRITE_DATA:
 			event_name = "WalSenderWriteData";
-			break;
-		case WAIT_EVENT_GSS_OPEN_SERVER:
-			event_name = "GSSOpenServer";
 			break;
 			/* no default case, so that compiler will warn */
 	}
@@ -4571,14 +4574,12 @@ PgstatCollectorMain(int argc, char *argv[])
 					break;
 
 				case PGSTAT_MTYPE_RESETSHAREDCOUNTER:
-					pgstat_recv_resetsharedcounter(
-												   &msg.msg_resetsharedcounter,
+					pgstat_recv_resetsharedcounter(&msg.msg_resetsharedcounter,
 												   len);
 					break;
 
 				case PGSTAT_MTYPE_RESETSINGLECOUNTER:
-					pgstat_recv_resetsinglecounter(
-												   &msg.msg_resetsinglecounter,
+					pgstat_recv_resetsinglecounter(&msg.msg_resetsinglecounter,
 												   len);
 					break;
 
@@ -4611,8 +4612,7 @@ PgstatCollectorMain(int argc, char *argv[])
 					break;
 
 				case PGSTAT_MTYPE_RECOVERYCONFLICT:
-					pgstat_recv_recoveryconflict(
-												 &msg.msg_recoveryconflict,
+					pgstat_recv_recoveryconflict(&msg.msg_recoveryconflict,
 												 len);
 					break;
 
@@ -4625,8 +4625,7 @@ PgstatCollectorMain(int argc, char *argv[])
 					break;
 
 				case PGSTAT_MTYPE_CHECKSUMFAILURE:
-					pgstat_recv_checksum_failure(
-												 &msg.msg_checksumfailure,
+					pgstat_recv_checksum_failure(&msg.msg_checksumfailure,
 												 len);
 					break;
 
