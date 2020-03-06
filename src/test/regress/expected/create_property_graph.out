@@ -6,7 +6,14 @@ ERROR:  relation "g1" already exists
 CREATE TABLE t1 (a int, b text);
 CREATE TABLE t2 (i int, j int, k int);
 CREATE TABLE t3 (x int, y text, z text);
-CREATE PROPERTY GRAPH g2 VERTEX TABLES (t1, t2);
+CREATE TABLE e1 (a int, i int, t text);
+CREATE TABLE e2 (a int, x int, t text);
+CREATE PROPERTY GRAPH g2
+    VERTEX TABLES (t1, t2, t3)
+    EDGE TABLES (
+        e1 SOURCE t1 DESTINATION t2,
+        e2 SOURCE t1 DESTINATION t3
+    );
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
@@ -21,8 +28,10 @@ ERROR:  property graph "g2" does not exist
 DROP PROPERTY GRAPH IF EXISTS g2;
 NOTICE:  property graph "g2" does not exist, skipping
 DROP SCHEMA create_property_graph_tests CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to property graph g1
 drop cascades to table t1
 drop cascades to table t2
 drop cascades to table t3
+drop cascades to table e1
+drop cascades to table e2

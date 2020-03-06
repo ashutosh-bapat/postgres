@@ -37,6 +37,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	List	   *vertex_relids = NIL;
 	List	   *vertex_aliases = NIL;
 	List	   *edge_relids = NIL;
+	List	   *edge_aliases = NIL;
 	Relation	vertexrel;
 	Relation	edgerel;
 
@@ -82,20 +83,27 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		RangeVar   *rvsource = lsecond_node(RangeVar, etl);
 		RangeVar   *rvdest = lthird_node(RangeVar, etl);
 		Oid			relid;
+		char	   *aliasname;
 		Oid			relid2;
 		Oid			relid3;
 
 		relid = RangeVarGetRelidExtended(rvedge, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 		// TODO: check relkind, relpersistence
 
-		if (list_member_oid(edge_relids, relid))
+		if (rvedge->alias)
+			aliasname = rvedge->alias->aliasname;
+		else
+			aliasname = rvedge->relname;
+
+		if (list_member(edge_aliases, makeString(aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("table \"%s\" specified more than once as edge table", get_rel_name(relid))));
+					 errmsg("alias \"%s\" used more than once as edge table", aliasname)));
 		// XXX: also check that it's not already a vertex table?
 
 		// TODO: check for primary key or graph table key clause
 
+		// FIXME: this should look up the vertex aliases, not the table names
 		relid2 = RangeVarGetRelidExtended(rvsource, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 		if (!list_member_oid(vertex_relids, relid2))
 			ereport(ERROR,
@@ -115,6 +123,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		// TODO: check for appropriate foreign keys
 
 		edge_relids = lappend_oid(edge_relids, relid);
+		edge_aliases = lappend(edge_aliases, makeString(aliasname));
 	}
 
 	cstmt->relation = stmt->pgname;
@@ -154,6 +163,51 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		/* Add dependency on the relation */
 		ObjectAddressSet(referenced, RelationRelationId, relid);
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+	}
+
+	forboth(lc, edge_relids, lc2, edge_aliases)
+	{
+		Oid			relid = lfirst_oid(lc);
+		char	   *aliasstr = strVal(lfirst(lc2));
+		NameData	aliasname;
+		Oid			peoid;
+		Datum		values[Natts_pg_propgraph_edge] = {0};
+		bool		nulls[Natts_pg_propgraph_edge] = {0};
+		HeapTuple	tup;
+		ObjectAddress myself;
+		ObjectAddress referenced;
+
+		peoid = GetNewOidWithIndex(edgerel, PropgraphEdgeObjectIndexId,
+								   Anum_pg_propgraph_edge_oid);
+		values[Anum_pg_propgraph_edge_oid - 1] = ObjectIdGetDatum(peoid);
+		values[Anum_pg_propgraph_edge_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
+		values[Anum_pg_propgraph_edge_pgerelid - 1] = ObjectIdGetDatum(relid);
+		namestrcpy(&aliasname, aliasstr);
+		values[Anum_pg_propgraph_edge_pgealias - 1] = NameGetDatum(&aliasname);
+		values[Anum_pg_propgraph_edge_pgesrcrelid - 1] = 0; // TODO
+		values[Anum_pg_propgraph_edge_pgedestrelid - 1] = 0; // TODO
+		values[Anum_pg_propgraph_edge_pgekey - 1] = PointerGetDatum(buildint2vector(NULL, 0));
+
+		tup = heap_form_tuple(RelationGetDescr(edgerel), values, nulls);
+		CatalogTupleInsert(edgerel, tup);
+		heap_freetuple(tup);
+
+		ObjectAddressSet(myself, PropgraphEdgeRelationId, peoid);
+
+		/* Add dependency on the property graph */
+		recordDependencyOn(&myself, &pgaddress, DEPENDENCY_INTERNAL);
+
+		/* Add dependency on the relation */
+		ObjectAddressSet(referenced, RelationRelationId, relid);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+
+#if 0
+		/* Add dependencies on vertices */
+		ObjectAddressSet(referenced, PropgraphVertexRelationId, XXX);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+		ObjectAddressSet(referenced, PropgraphVertexRelationId, YYY);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+#endif
 	}
 
 	table_close(edgerel, RowExclusiveLock);

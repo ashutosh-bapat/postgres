@@ -9,7 +9,15 @@ CREATE TABLE t1 (a int, b text);
 CREATE TABLE t2 (i int, j int, k int);
 CREATE TABLE t3 (x int, y text, z text);
 
-CREATE PROPERTY GRAPH g2 VERTEX TABLES (t1, t2);
+CREATE TABLE e1 (a int, i int, t text);
+CREATE TABLE e2 (a int, x int, t text);
+
+CREATE PROPERTY GRAPH g2
+    VERTEX TABLES (t1, t2, t3)
+    EDGE TABLES (
+        e1 SOURCE t1 DESTINATION t2,
+        e2 SOURCE t1 DESTINATION t3
+    );
 
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
