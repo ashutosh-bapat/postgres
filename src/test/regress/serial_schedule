@@ -81,6 +81,7 @@ test: roleattributes
 test: create_am
 test: hash_func
 test: errors
+test: create_property_graph
 test: sanity_check
 test: select_into
 test: select_distinct
@@ -134,6 +135,7 @@ test: sysviews
 test: tsrf
 test: tidscan
 test: collate.icu.utf8
+test: graph_table
 test: rules
 test: psql
 test: psql_crosstab
@@ -196,5 +198,4 @@ test: tuplesort
 test: explain
 test: event_trigger
 test: fast_default
-test: graph_table
 test: stats
