@@ -137,6 +137,8 @@ pg_opfamily|t
 pg_partitioned_table|t
 pg_policy|t
 pg_proc|t
+pg_propgraph_edge|t
+pg_propgraph_vertex|t
 pg_publication|t
 pg_publication_rel|t
 pg_range|t

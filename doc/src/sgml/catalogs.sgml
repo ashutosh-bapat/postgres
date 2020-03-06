@@ -236,6 +236,16 @@
      </row>
 
      <row>
+      <entry><link linkend="catalog-pg-propgraph-edge"><structname>pg_propgraph_edge</structname></link></entry>
+      <entry>property graph edges</entry>
+     </row>
+
+     <row>
+      <entry><link linkend="catalog-pg-propgraph-vertex"><structname>pg_propgraph_vertex</structname></link></entry>
+      <entry>property graph vertices</entry>
+     </row>
+
+     <row>
       <entry><link linkend="catalog-pg-publication"><structname>pg_publication</structname></link></entry>
       <entry>publications for logical replication</entry>
      </row>
@@ -5348,6 +5358,26 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    shared library file containing the function.
   </para>
 
+ </sect1>
+
+ <sect1 id="catalog-pg-propgraph-edge">
+  <title><structname>pg_propgraph_edge</structname></title>
+
+  <indexterm zone="catalog-pg-propgraph-edge">
+   <primary>pg_propgraph_edge</primary>
+  </indexterm>
+
+  <para>TODO</para>
+ </sect1>
+
+ <sect1 id="catalog-pg-propgraph-vertex">
+  <title><structname>pg_propgraph_vertex</structname></title>
+
+  <indexterm zone="catalog-pg-propgraph-vertex">
+   <primary>pg_propgraph_vertex</primary>
+  </indexterm>
+
+  <para>TODO</para>
  </sect1>
 
  <sect1 id="catalog-pg-publication">
