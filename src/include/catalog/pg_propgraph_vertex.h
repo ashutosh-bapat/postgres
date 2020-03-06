@@ -30,7 +30,7 @@ CATALOG(pg_propgraph_vertex,8298,PropgraphVertexRelationId)
 	Oid			oid;
 	Oid			pgvpgid;		/* OID of the property graph */
 	Oid			pgvrelid;		/* OID of underlying relation */
-	NameData	pgvlabel;		/* vertex label */
+	NameData	pgvalias;		/* vertex alias */
 	int2vector	pgvkey;			/* column numbers in pgvrelid relation */
 } FormData_pg_propgraph_vertex;
 

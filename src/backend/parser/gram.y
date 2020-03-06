@@ -593,7 +593,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
 %type <list>	opt_vertex_tables_clause opt_edge_tables_clause
+				vertex_table_list
 				edge_table_list edge_table_definition
+%type <range>	vertex_table_definition
+%type <alias>	opt_propgraph_table_alias
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -8375,11 +8378,31 @@ CreatePropGraphStmt: CREATE OptTemp PROPERTY GRAPH qualified_name opt_vertex_tab
 		;
 
 opt_vertex_tables_clause:
-			vertex_synonym TABLES '(' qualified_name_list ')'	{ $$ = $4; }
+			vertex_synonym TABLES '(' vertex_table_list ')'	{ $$ = $4; }
 			| /*EMPTY*/							{ $$ = NIL; }
 		;
 
 vertex_synonym: NODE | VERTEX
+		;
+
+vertex_table_list: vertex_table_definition						{ $$ = list_make1($1); }
+			| vertex_table_list ',' vertex_table_definition		{ $$ = lappend($1, $3); }
+		;
+
+vertex_table_definition: qualified_name opt_propgraph_table_alias
+				{
+					$1->alias = $2;
+					$$ = $1;
+				}
+		;
+
+opt_propgraph_table_alias:
+			AS ColId
+				{
+					$$ = makeNode(Alias);
+					$$->aliasname = $2;
+				}
+			| /*EMPTY*/								{ $$ = NULL; }
 		;
 
 opt_edge_tables_clause:
@@ -8394,9 +8417,10 @@ edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
 			| edge_table_list ',' edge_table_definition		{ $$ = lappend($1, $3); }
 		;
 
-edge_table_definition: qualified_name SOURCE qualified_name DESTINATION qualified_name
+edge_table_definition: qualified_name opt_propgraph_table_alias SOURCE qualified_name DESTINATION qualified_name
 				{
-					$$ = list_make3($1, $3, $5);
+					$1->alias = $2;
+					$$ = list_make3($1, $4, $6);
 				}
 		;
 

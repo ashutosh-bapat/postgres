@@ -347,10 +347,11 @@ F865	<offset row count> in <result offset clause>			YES
 F866	FETCH FIRST clause: PERCENT option			NO	
 F867	FETCH FIRST clause: WITH TIES option			NO	
 G001	Property Graph Queries			NO	TODO
-G010	DDL-based SQL-property graphs			NO	
-G011	Extended DDL for SQL-property graphs			NO	
+G010	DDL-based SQL-property graphs			NO	TODO
+G011	Extended DDL for SQL-property graphs			NO	TODO
 G012	Enhanced DDL for labels and properties			NO	
 G013	In-line views as graph tables			NO	
+G014	Aliases for property graph element tables			NO	TODO
 R010	Row pattern recognition: FROM clause			NO	
 R020	Row pattern recognition: WINDOW clause			NO	
 R030	Row pattern recognition: full aggregate support			NO	

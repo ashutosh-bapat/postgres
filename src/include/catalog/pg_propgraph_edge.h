@@ -30,7 +30,7 @@ CATALOG(pg_propgraph_edge,8299,PropgraphEdgeRelationId)
 	Oid			oid;
 	Oid			pgepgid;		/* OID of the property graph */
 	Oid			pgerelid;		/* OID of the underlying relation */
-	NameData	pgelabel;		/* edge label */
+	NameData	pgealias;		/* edge alias */
 	Oid			pgesrcrelid;	/* source vertex relation */
 	Oid			pgedestrelid;	/* destination vertex relation */
 	int2vector	pgekey;			/* column numbers in pgerelid relation */
