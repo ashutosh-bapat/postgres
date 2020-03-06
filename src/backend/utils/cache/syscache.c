@@ -50,6 +50,8 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_propgraph_edge.h"
+#include "catalog/pg_propgraph_vertex.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_range.h"
@@ -601,6 +603,28 @@ static const struct cachedesc cacheinfo[] = {
 		1,
 		{
 			Anum_pg_proc_oid,
+			0,
+			0,
+			0
+		},
+		128
+	},
+	{PropgraphEdgeRelationId,	/* PROPGRAPHEDGEOID */
+		PropgraphEdgeObjectIndexId,
+		1,
+		{
+			Anum_pg_propgraph_edge_oid,
+			0,
+			0,
+			0
+		},
+		128
+	},
+	{PropgraphVertexRelationId,	/* PROPGRAPHVERTEXOID */
+		PropgraphVertexObjectIndexId,
+		1,
+		{
+			Anum_pg_propgraph_vertex_oid,
 			0,
 			0,
 			0

@@ -9,7 +9,7 @@ CREATE PROPERTY GRAPH g2 VERTEX TABLES (t1, t2);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
-ERROR:  table "t1" specified more than once as vertex table
+ERROR:  alias "t1" used more than once as vertex table
 SELECT gt.creation_date, gt.content
 FROM g1 GRAPH_TABLE (
   MATCH

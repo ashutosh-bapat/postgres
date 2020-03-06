@@ -646,6 +646,8 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 		case OCLASS_EXTENSION:
 		case OCLASS_EVENT_TRIGGER:
 		case OCLASS_POLICY:
+		case OCLASS_PROPGRAPH_EDGE:
+		case OCLASS_PROPGRAPH_VERTEX:
 		case OCLASS_PUBLICATION:
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:

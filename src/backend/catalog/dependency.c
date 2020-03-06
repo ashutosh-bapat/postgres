@@ -47,6 +47,8 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_propgraph_edge.h"
+#include "catalog/pg_propgraph_vertex.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_rewrite.h"
@@ -67,6 +69,7 @@
 #include "commands/extension.h"
 #include "commands/policy.h"
 #include "commands/proclang.h"
+#include "commands/propgraphcmds.h"
 #include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
 #include "commands/seclabel.h"
@@ -178,6 +181,8 @@ static const Oid object_classes[] = {
 	ExtensionRelationId,		/* OCLASS_EXTENSION */
 	EventTriggerRelationId,		/* OCLASS_EVENT_TRIGGER */
 	PolicyRelationId,			/* OCLASS_POLICY */
+	PropgraphEdgeRelationId,	/* OCLASS_PROPGRAPH_EDGE */
+	PropgraphVertexRelationId,	/* OCLASS_PROPGRAPH_VERTEX */
 	PublicationRelationId,		/* OCLASS_PUBLICATION */
 	PublicationRelRelationId,	/* OCLASS_PUBLICATION_REL */
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
@@ -1492,6 +1497,14 @@ doDeletion(const ObjectAddress *object, int flags)
 
 		case OCLASS_POLICY:
 			RemovePolicyById(object->objectId);
+			break;
+
+		case OCLASS_PROPGRAPH_EDGE:
+			RemovePropgraphEdgeById(object->objectId);
+			break;
+
+		case OCLASS_PROPGRAPH_VERTEX:
+			RemovePropgraphVertexById(object->objectId);
 			break;
 
 		case OCLASS_PUBLICATION:
@@ -2833,6 +2846,12 @@ getObjectClass(const ObjectAddress *object)
 
 		case PolicyRelationId:
 			return OCLASS_POLICY;
+
+		case PropgraphEdgeRelationId:
+			return OCLASS_PROPGRAPH_EDGE;
+
+		case PropgraphVertexRelationId:
+			return OCLASS_PROPGRAPH_VERTEX;
 
 		case PublicationRelationId:
 			return OCLASS_PUBLICATION;
