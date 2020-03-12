@@ -340,6 +340,7 @@ heap_create(const char *relname,
 		case RELKIND_VIEW:
 		case RELKIND_COMPOSITE_TYPE:
 		case RELKIND_FOREIGN_TABLE:
+		case RELKIND_PROPGRAPH:
 
 			/*
 			 * Force reltablespace to zero if the relation has no physical
@@ -422,6 +423,7 @@ heap_create(const char *relname,
 			case RELKIND_FOREIGN_TABLE:
 			case RELKIND_PARTITIONED_TABLE:
 			case RELKIND_PARTITIONED_INDEX:
+			case RELKIND_PROPGRAPH:
 				Assert(false);
 				break;
 
@@ -1944,7 +1946,8 @@ heap_drop_with_catalog(Oid relid)
 	if (rel->rd_rel->relkind != RELKIND_VIEW &&
 		rel->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
 		rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&
-		rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+		rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE &&
+		rel->rd_rel->relkind != RELKIND_PROPGRAPH)
 	{
 		RelationDropStorage(rel);
 	}

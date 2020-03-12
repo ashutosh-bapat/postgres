@@ -1196,6 +1196,7 @@ RelationBuildDesc(Oid targetRelId, bool insertIt)
 		case RELKIND_COMPOSITE_TYPE:
 		case RELKIND_FOREIGN_TABLE:
 		case RELKIND_PARTITIONED_TABLE:
+		case RELKIND_PROPGRAPH:
 			Assert(relation->rd_rel->relam == InvalidOid);
 			break;
 	}

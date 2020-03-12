@@ -732,16 +732,8 @@ DROP FOREIGN DATA WRAPPER alt_fdw3 CASCADE;
 NOTICE:  drop cascades to server alt_fserv3
 DROP LANGUAGE alt_lang2 CASCADE;
 DROP LANGUAGE alt_lang3 CASCADE;
--- FIXME
-DROP PROPERTY GRAPH alt_graph1;
-ERROR:  property graph "alt_graph1" does not exist
-DROP PROPERTY GRAPH alt_graph2;
-DROP PROPERTY GRAPH alt_graph3;
-DROP PROPERTY GRAPH alt_graph4;
-ERROR:  property graph "alt_graph4" does not exist
-DROP PROPERTY GRAPH alt_graph6;
 DROP SCHEMA alt_nsp1 CASCADE;
-NOTICE:  drop cascades to 28 other objects
+NOTICE:  drop cascades to 31 other objects
 DETAIL:  drop cascades to function alt_func3(integer)
 drop cascades to function alt_agg3(integer)
 drop cascades to function alt_func4(integer)
@@ -758,6 +750,9 @@ drop cascades to operator family alt_opc1 for access method hash
 drop cascades to operator family alt_opc2 for access method hash
 drop cascades to operator family alt_opf4 for access method hash
 drop cascades to operator family alt_opf2 for access method hash
+drop cascades to property graph alt_graph2
+drop cascades to property graph alt_graph3
+drop cascades to property graph alt_graph6
 drop cascades to table alt_regress_1
 drop cascades to table alt_regress_2
 drop cascades to text search dictionary alt_ts_dict3

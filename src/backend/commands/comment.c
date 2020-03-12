@@ -96,6 +96,7 @@ CommentObject(CommentStmt *stmt)
 				relation->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
 				relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&
 				relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+				// FIXME
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("\"%s\" is not a table, view, materialized view, composite type, or foreign table",
