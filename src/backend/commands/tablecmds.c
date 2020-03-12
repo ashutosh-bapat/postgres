@@ -15479,11 +15479,14 @@ RangeVarCallbackForAlterRelation(const RangeVar *rv, Oid relid, Oid oldrelid,
 		relkind != RELKIND_MATVIEW &&
 		relkind != RELKIND_SEQUENCE &&
 		relkind != RELKIND_FOREIGN_TABLE &&
-		relkind != RELKIND_PARTITIONED_TABLE)
+		relkind != RELKIND_PARTITIONED_TABLE &&
+		relkind != RELKIND_PROPGRAPH)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, view, materialized view, sequence, or foreign table",
-						rv->relname)));
+				 errmsg("schema of relation \"%s\" cannot be changed",
+						rv->relname),
+				 (relkind == RELKIND_INDEX || relkind == RELKIND_PARTITIONED_INDEX ? errhint("Change the schema of the table instead.") :
+				  (relkind == RELKIND_COMPOSITE_TYPE ? errhint("Use ALTER TYPE instead.") : 0))));
 
 	ReleaseSysCache(tuple);
 }

@@ -8711,7 +8711,7 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER PROPERTY GRAPH relation_expr RENAME TO name
+			| ALTER PROPERTY GRAPH qualified_name RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_PROPGRAPH;
@@ -8720,7 +8720,7 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER PROPERTY GRAPH IF_P EXISTS relation_expr RENAME TO name
+			| ALTER PROPERTY GRAPH IF_P EXISTS qualified_name RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_PROPGRAPH;
@@ -9315,8 +9315,7 @@ AlterObjectSchemaStmt:
 					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
-/*
-			| ALTER PROPERTY GRAPH relation_expr SET SCHEMA name
+			| ALTER PROPERTY GRAPH qualified_name SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_PROPGRAPH;
@@ -9325,7 +9324,7 @@ AlterObjectSchemaStmt:
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER PROPERTY GRAPH IF_P EXISTS relation_expr SET SCHEMA name
+			| ALTER PROPERTY GRAPH IF_P EXISTS qualified_name SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_PROPGRAPH;
@@ -9334,7 +9333,6 @@ AlterObjectSchemaStmt:
 					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
-*/
 			| ALTER STATISTICS any_name SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);

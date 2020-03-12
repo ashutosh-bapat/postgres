@@ -442,22 +442,24 @@ DROP OPERATOR FAMILY alt_opf18 USING btree;
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
 CREATE PROPERTY GRAPH alt_graph1;
 CREATE PROPERTY GRAPH alt_graph2;
+CREATE PROPERTY GRAPH alt_graph3;
 
 ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph2; -- failed (name conflict)
-ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph3; -- OK
+ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph4; -- OK
 ALTER PROPERTY GRAPH alt_graph2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
 ALTER PROPERTY GRAPH alt_graph2 OWNER TO regress_alter_generic_user3;  -- OK
---TODO: ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- OK
+ALTER PROPERTY GRAPH alt_graph4 SET SCHEMA alt_nsp2;  -- OK
+ALTER PROPERTY GRAPH alt_nsp2.alt_graph4 RENAME TO alt_graph2;  -- OK
+ALTER PROPERTY GRAPH alt_graph2 SET SCHEMA alt_nsp2;  -- failed (name conflict)
 
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
-CREATE PROPERTY GRAPH alt_graph4;
+CREATE PROPERTY GRAPH alt_graph5;
 
 ALTER PROPERTY GRAPH alt_graph3 RENAME TO alt_graph5;  -- failed (not owner)
-ALTER PROPERTY GRAPH alt_graph4 RENAME TO alt_graph5;  -- OK
+ALTER PROPERTY GRAPH alt_graph5 RENAME TO alt_graph6;  -- OK
 ALTER PROPERTY GRAPH alt_graph3 OWNER TO regress_alter_generic_user2;  -- failed (not owner)
-ALTER PROPERTY GRAPH alt_graph5 OWNER TO regress_alter_generic_user3;  -- failed (no role membership)
--- TODO: ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- failed (not owner)
--- TODO: ALTER PROPERTY GRAPH alt_graph2 SET SCHEMA alt_nsp2;  -- failed (name conflict) XXX
+ALTER PROPERTY GRAPH alt_graph6 OWNER TO regress_alter_generic_user3;  -- failed (no role membership)
+ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- failed (not owner)
 
 RESET SESSION AUTHORIZATION;
 
@@ -625,7 +627,7 @@ DROP PROPERTY GRAPH alt_graph1;
 DROP PROPERTY GRAPH alt_graph2;
 DROP PROPERTY GRAPH alt_graph3;
 DROP PROPERTY GRAPH alt_graph4;
-DROP PROPERTY GRAPH alt_graph5;
+DROP PROPERTY GRAPH alt_graph6;
 
 DROP SCHEMA alt_nsp1 CASCADE;
 DROP SCHEMA alt_nsp2 CASCADE;

@@ -506,24 +506,28 @@ DROP OPERATOR FAMILY alt_opf18 USING btree;
 SET SESSION AUTHORIZATION regress_alter_generic_user1;
 CREATE PROPERTY GRAPH alt_graph1;
 CREATE PROPERTY GRAPH alt_graph2;
+CREATE PROPERTY GRAPH alt_graph3;
 ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph2; -- failed (name conflict)
 ERROR:  relation "alt_graph2" already exists
-ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph3; -- OK
+ALTER PROPERTY GRAPH alt_graph1 RENAME TO alt_graph4; -- OK
 ALTER PROPERTY GRAPH alt_graph2 OWNER TO regress_alter_generic_user2;  -- failed (no role membership)
 ERROR:  must be member of role "regress_alter_generic_user2"
 ALTER PROPERTY GRAPH alt_graph2 OWNER TO regress_alter_generic_user3;  -- OK
---TODO: ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- OK
+ALTER PROPERTY GRAPH alt_graph4 SET SCHEMA alt_nsp2;  -- OK
+ALTER PROPERTY GRAPH alt_nsp2.alt_graph4 RENAME TO alt_graph2;  -- OK
+ALTER PROPERTY GRAPH alt_graph2 SET SCHEMA alt_nsp2;  -- failed (name conflict)
+ERROR:  relation "alt_graph2" already exists in schema "alt_nsp2"
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
-CREATE PROPERTY GRAPH alt_graph4;
+CREATE PROPERTY GRAPH alt_graph5;
 ALTER PROPERTY GRAPH alt_graph3 RENAME TO alt_graph5;  -- failed (not owner)
 ERROR:  must be owner of table alt_graph3
-ALTER PROPERTY GRAPH alt_graph4 RENAME TO alt_graph5;  -- OK
+ALTER PROPERTY GRAPH alt_graph5 RENAME TO alt_graph6;  -- OK
 ALTER PROPERTY GRAPH alt_graph3 OWNER TO regress_alter_generic_user2;  -- failed (not owner)
 ERROR:  must be owner of table alt_graph3
-ALTER PROPERTY GRAPH alt_graph5 OWNER TO regress_alter_generic_user3;  -- failed (no role membership)
+ALTER PROPERTY GRAPH alt_graph6 OWNER TO regress_alter_generic_user3;  -- failed (no role membership)
 ERROR:  must be member of role "regress_alter_generic_user3"
--- TODO: ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- failed (not owner)
--- TODO: ALTER PROPERTY GRAPH alt_graph2 SET SCHEMA alt_nsp2;  -- failed (name conflict) XXX
+ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- failed (not owner)
+ERROR:  must be owner of table alt_graph3
 RESET SESSION AUTHORIZATION;
 SELECT nspname, relname, rolname
   FROM pg_class c, pg_namespace n, pg_authid a
@@ -535,8 +539,9 @@ SELECT nspname, relname, rolname
 ----------+------------+-----------------------------
  alt_nsp1 | alt_graph2 | regress_alter_generic_user3
  alt_nsp1 | alt_graph3 | regress_alter_generic_user1
- alt_nsp1 | alt_graph5 | regress_alter_generic_user2
-(3 rows)
+ alt_nsp1 | alt_graph6 | regress_alter_generic_user2
+ alt_nsp2 | alt_graph2 | regress_alter_generic_user1
+(4 rows)
 
 --
 -- Statistics
@@ -734,7 +739,7 @@ DROP PROPERTY GRAPH alt_graph2;
 DROP PROPERTY GRAPH alt_graph3;
 DROP PROPERTY GRAPH alt_graph4;
 ERROR:  property graph "alt_graph4" does not exist
-DROP PROPERTY GRAPH alt_graph5;
+DROP PROPERTY GRAPH alt_graph6;
 DROP SCHEMA alt_nsp1 CASCADE;
 NOTICE:  drop cascades to 28 other objects
 DETAIL:  drop cascades to function alt_func3(integer)
@@ -766,12 +771,13 @@ drop cascades to text search template alt_ts_temp2
 drop cascades to text search parser alt_ts_prs3
 drop cascades to text search parser alt_ts_prs2
 DROP SCHEMA alt_nsp2 CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 10 other objects
 DETAIL:  drop cascades to function alt_nsp2.alt_func2(integer)
 drop cascades to function alt_nsp2.alt_agg2(integer)
 drop cascades to conversion alt_nsp2.alt_conv2
 drop cascades to operator alt_nsp2.@-@(integer,integer)
 drop cascades to operator family alt_nsp2.alt_opf2 for access method hash
+drop cascades to property graph alt_nsp2.alt_graph2
 drop cascades to text search dictionary alt_nsp2.alt_ts_dict2
 drop cascades to text search configuration alt_nsp2.alt_ts_conf2
 drop cascades to text search template alt_nsp2.alt_ts_temp2
