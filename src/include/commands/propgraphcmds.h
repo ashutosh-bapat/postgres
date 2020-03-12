@@ -15,7 +15,7 @@
 #define PROPGRAPHCMDS_H
 
 #include "catalog/objectaddress.h"
-#include "nodes/parsenodes.h"
+#include "parser/parse_node.h"
 
 extern ObjectAddress CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt);
 extern void RemovePropgraphEdgeById(Oid peid);

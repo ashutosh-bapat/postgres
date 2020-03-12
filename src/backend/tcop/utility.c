@@ -163,6 +163,7 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 		case T_AlterTableMoveAllStmt:
 		case T_AlterTableSpaceOptionsStmt:
 		case T_AlterTableStmt:
+		case T_AlterTypeStmt:
 		case T_AlterUserMappingStmt:
 		case T_CommentStmt:
 		case T_CompositeTypeStmt:
@@ -1719,6 +1720,10 @@ ProcessUtilitySlow(ParseState *pstate,
 				address = AlterOperator((AlterOperatorStmt *) parsetree);
 				break;
 
+			case T_AlterTypeStmt:
+				address = AlterType((AlterTypeStmt *) parsetree);
+				break;
+
 			case T_CommentStmt:
 				address = CommentObject((CommentStmt *) parsetree);
 				break;
@@ -2912,6 +2917,10 @@ CreateCommandTag(Node *parsetree)
 			tag = CMDTAG_ALTER_OPERATOR;
 			break;
 
+		case T_AlterTypeStmt:
+			tag = CMDTAG_ALTER_TYPE;
+			break;
+
 		case T_AlterTSDictionaryStmt:
 			tag = CMDTAG_ALTER_TEXT_SEARCH_DICTIONARY;
 			break;
@@ -3265,6 +3274,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_AlterOperatorStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterTypeStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

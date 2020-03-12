@@ -85,6 +85,7 @@
 #include "storage/procarray.h"
 #include "tcop/dest.h"
 #include "tcop/tcopprot.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -2768,7 +2769,7 @@ retry:
 
 		snprintf(activitymsg, sizeof(activitymsg), "streaming %X/%X",
 				 (uint32) (sentPtr >> 32), (uint32) sentPtr);
-		set_ps_display(activitymsg, false);
+		set_ps_display(activitymsg);
 	}
 }
 
