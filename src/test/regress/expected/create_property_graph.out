@@ -22,6 +22,25 @@ CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
 ERROR:  alias "t1" used more than once as vertex table
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
+\dG
+                      List of relations
+           Schema            | Name |      Type      | Owner 
+-----------------------------+------+----------------+-------
+ create_property_graph_tests | g1   | property graph | peter
+ create_property_graph_tests | g2   | property graph | peter
+(2 rows)
+
+-- TODO
+\d g1
+Property graph "create_property_graph_tests.g1"
+ Column | Type 
+--------+------
+
+\d+ g1
+Property graph "create_property_graph_tests.g1"
+ Column | Type | Storage 
+--------+------+---------
+
 DROP TABLE g2;  -- error: wrong object type
 ERROR:  "g2" is not a table
 HINT:  Use DROP PROPERTY GRAPH to remove a property graph.

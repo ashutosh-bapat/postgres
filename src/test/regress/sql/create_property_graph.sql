@@ -26,6 +26,11 @@ CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 
+\dG
+
+-- TODO
+\d g1
+\d+ g1
 
 DROP TABLE g2;  -- error: wrong object type
 
