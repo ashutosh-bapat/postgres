@@ -1,6 +1,7 @@
 CREATE SCHEMA create_property_graph_tests;
 SET search_path = create_property_graph_tests;
 CREATE PROPERTY GRAPH g1;
+COMMENT ON PROPERTY GRAPH g1 IS 'a graph';
 CREATE PROPERTY GRAPH g1;  -- error: duplicate
 ERROR:  relation "g1" already exists
 CREATE TABLE t1 (a int, b text);
@@ -19,6 +20,8 @@ CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
 ERROR:  alias "t1" used more than once as vertex table
+COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
+ERROR:  relation "gx" does not exist
 DROP TABLE g2;  -- error: wrong object type
 ERROR:  "g2" is not a table
 HINT:  Use DROP PROPERTY GRAPH to remove a property graph.

@@ -6456,7 +6456,7 @@ opt_restart_seqs:
  *                 DATABASE | DOMAIN |
  *                 EXTENSION | EVENT TRIGGER | FOREIGN DATA WRAPPER |
  *                 FOREIGN TABLE | INDEX | [PROCEDURAL] LANGUAGE |
- *                 MATERIALIZED VIEW | POLICY | ROLE | SCHEMA | SEQUENCE |
+ *                 MATERIALIZED VIEW | POLICY | PROPERTY GRAPH | ROLE | SCHEMA | SEQUENCE |
  *                 SERVER | STATISTICS | TABLE | TABLESPACE |
  *                 TEXT SEARCH CONFIGURATION | TEXT SEARCH DICTIONARY |
  *                 TEXT SEARCH PARSER | TEXT SEARCH TEMPLATE | TYPE |
@@ -6641,6 +6641,7 @@ CommentStmt:
 comment_type_any_name:
 			COLUMN								{ $$ = OBJECT_COLUMN; }
 			| INDEX								{ $$ = OBJECT_INDEX; }
+			| PROPERTY GRAPH					{ $$ = OBJECT_PROPGRAPH; }
 			| SEQUENCE							{ $$ = OBJECT_SEQUENCE; }
 			| STATISTICS						{ $$ = OBJECT_STATISTIC_EXT; }
 			| TABLE								{ $$ = OBJECT_TABLE; }
@@ -6787,6 +6788,7 @@ opt_provider:	FOR NonReservedWord_or_Sconst	{ $$ = $2; }
 security_label_type_any_name:
 			COLUMN								{ $$ = OBJECT_COLUMN; }
 			| FOREIGN TABLE						{ $$ = OBJECT_FOREIGN_TABLE; }
+			| PROPERTY GRAPH					{ $$ = OBJECT_PROPGRAPH; }
 			| SEQUENCE							{ $$ = OBJECT_SEQUENCE; }
 			| TABLE								{ $$ = OBJECT_TABLE; }
 			| VIEW								{ $$ = OBJECT_VIEW; }

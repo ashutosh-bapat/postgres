@@ -3,6 +3,8 @@ SET search_path = create_property_graph_tests;
 
 CREATE PROPERTY GRAPH g1;
 
+COMMENT ON PROPERTY GRAPH g1 IS 'a graph';
+
 CREATE PROPERTY GRAPH g1;  -- error: duplicate
 
 CREATE TABLE t1 (a int, b text);
@@ -22,6 +24,7 @@ CREATE PROPERTY GRAPH g2
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
+COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 
 
 DROP TABLE g2;  -- error: wrong object type

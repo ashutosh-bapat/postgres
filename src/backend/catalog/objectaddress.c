@@ -870,6 +870,7 @@ get_object_address(ObjectType objtype, Node *object,
 			case OBJECT_VIEW:
 			case OBJECT_MATVIEW:
 			case OBJECT_FOREIGN_TABLE:
+			case OBJECT_PROPGRAPH:
 				address =
 					get_relation_by_qualified_name(objtype, castNode(List, object),
 												   &relation, lockmode,
@@ -1268,6 +1269,13 @@ get_relation_by_qualified_name(ObjectType objtype, List *object,
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("\"%s\" is not an index",
+								RelationGetRelationName(relation))));
+			break;
+		case OBJECT_PROPGRAPH:
+			if (relation->rd_rel->relkind != RELKIND_PROPGRAPH)
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("\"%s\" is not a property graph",
 								RelationGetRelationName(relation))));
 			break;
 		case OBJECT_SEQUENCE:
@@ -2290,6 +2298,7 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
 		case OBJECT_FOREIGN_TABLE:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_COLUMN:
 		case OBJECT_RULE:
 		case OBJECT_TRIGGER:
