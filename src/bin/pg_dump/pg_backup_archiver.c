@@ -3468,6 +3468,7 @@ _getObjectDescription(PQExpBuffer buf, TocEntry *te, ArchiveHandle *AH)
 		strcmp(type, "TABLE") == 0 ||
 		strcmp(type, "TYPE") == 0 ||
 		strcmp(type, "FOREIGN TABLE") == 0 ||
+		strcmp(type, "PROPERTY GRAPH") == 0 ||
 		strcmp(type, "TEXT SEARCH DICTIONARY") == 0 ||
 		strcmp(type, "TEXT SEARCH CONFIGURATION") == 0 ||
 		strcmp(type, "STATISTICS") == 0 ||
@@ -3650,6 +3651,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData)
 			strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||
 			strcmp(te->desc, "SEQUENCE") == 0 ||
 			strcmp(te->desc, "FOREIGN TABLE") == 0 ||
+			strcmp(te->desc, "PROPERTY GRAPH") == 0 ||
 			strcmp(te->desc, "TEXT SEARCH DICTIONARY") == 0 ||
 			strcmp(te->desc, "TEXT SEARCH CONFIGURATION") == 0 ||
 			strcmp(te->desc, "FOREIGN DATA WRAPPER") == 0 ||

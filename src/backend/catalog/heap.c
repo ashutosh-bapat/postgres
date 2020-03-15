@@ -1193,7 +1193,7 @@ heap_create_with_catalog(const char *relname,
 			(relkind == RELKIND_RELATION || relkind == RELKIND_SEQUENCE ||
 			 relkind == RELKIND_VIEW || relkind == RELKIND_MATVIEW ||
 			 relkind == RELKIND_COMPOSITE_TYPE || relkind == RELKIND_FOREIGN_TABLE ||
-			 relkind == RELKIND_PARTITIONED_TABLE))
+			 relkind == RELKIND_PARTITIONED_TABLE || relkind == RELKIND_PROPGRAPH))
 		{
 			if (!OidIsValid(binary_upgrade_next_heap_pg_class_oid))
 				ereport(ERROR,

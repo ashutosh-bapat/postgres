@@ -1368,10 +1368,10 @@ expand_table_name_patterns(Archive *fout,
 						  "\n     LEFT JOIN pg_catalog.pg_namespace n"
 						  "\n     ON n.oid OPERATOR(pg_catalog.=) c.relnamespace"
 						  "\nWHERE c.relkind OPERATOR(pg_catalog.=) ANY"
-						  "\n    (array['%c', '%c', '%c', '%c', '%c', '%c'])\n",
+						  "\n    (array['%c', '%c', '%c', '%c', '%c', '%c', '%c'])\n",
 						  RELKIND_RELATION, RELKIND_SEQUENCE, RELKIND_VIEW,
 						  RELKIND_MATVIEW, RELKIND_FOREIGN_TABLE,
-						  RELKIND_PARTITIONED_TABLE);
+						  RELKIND_PARTITIONED_TABLE, RELKIND_PROPGRAPH);
 		processSQLNamePattern(GetConnection(fout), query, cell->val, true,
 							  false, "n.nspname", "c.relname", NULL,
 							  "pg_catalog.pg_table_is_visible(c.oid)");
@@ -2333,6 +2333,9 @@ makeTableDataInfo(DumpOptions *dopt, TableInfo *tbinfo)
 	if (tbinfo->dataObj != NULL)
 		return;
 
+	/* Skip property graphs (no data to dump) */
+	if (tbinfo->relkind == RELKIND_PROPGRAPH)
+		return;
 	/* Skip VIEWs (no data to dump) */
 	if (tbinfo->relkind == RELKIND_VIEW)
 		return;
@@ -2568,8 +2571,9 @@ guessConstraintInheritance(TableInfo *tblinfo, int numTables)
 		TableInfo **parents;
 		TableInfo  *parent;
 
-		/* Sequences and views never have parents */
-		if (tbinfo->relkind == RELKIND_SEQUENCE ||
+		/* These relkinds never have parents */
+		if (tbinfo->relkind == RELKIND_PROPGRAPH ||
+			tbinfo->relkind == RELKIND_SEQUENCE ||
 			tbinfo->relkind == RELKIND_VIEW)
 			continue;
 
@@ -6129,7 +6133,7 @@ getTables(Archive *fout, int *numTables)
 						  "(c.oid = pip.objoid "
 						  "AND pip.classoid = 'pg_class'::regclass "
 						  "AND pip.objsubid = 0) "
-						  "WHERE c.relkind in ('%c', '%c', '%c', '%c', '%c', '%c', '%c') "
+						  "WHERE c.relkind in ('%c', '%c', '%c', '%c', '%c', '%c', '%c', '%c') "
 						  "ORDER BY c.oid",
 						  acl_subquery->data,
 						  racl_subquery->data,
@@ -6150,7 +6154,7 @@ getTables(Archive *fout, int *numTables)
 						  RELKIND_RELATION, RELKIND_SEQUENCE,
 						  RELKIND_VIEW, RELKIND_COMPOSITE_TYPE,
 						  RELKIND_MATVIEW, RELKIND_FOREIGN_TABLE,
-						  RELKIND_PARTITIONED_TABLE);
+						  RELKIND_PARTITIONED_TABLE, RELKIND_PROPGRAPH);
 
 		destroyPQExpBuffer(acl_subquery);
 		destroyPQExpBuffer(racl_subquery);
@@ -15623,8 +15627,6 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 
 		reltypename = "VIEW";
 
-		appendPQExpBuffer(delq, "DROP VIEW %s;\n", qualrelname);
-
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 tbinfo->dobj.catId.oid, false);
@@ -15648,6 +15650,47 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 
 		if (tbinfo->checkoption != NULL && !tbinfo->dummy_view)
 			appendPQExpBuffer(q, "\n  WITH %s CHECK OPTION", tbinfo->checkoption);
+		appendPQExpBufferStr(q, ";\n");
+	}
+	else if (tbinfo->relkind == RELKIND_PROPGRAPH)
+	{
+		PQExpBuffer query = createPQExpBuffer();
+		PGresult   *res;
+		int			len;
+
+		reltypename = "PROPERTY GRAPH";
+
+		if (dopt->binary_upgrade)
+			binary_upgrade_set_pg_class_oids(fout, q,
+											 tbinfo->dobj.catId.oid, false);
+
+		appendPQExpBuffer(query,
+						  "SELECT pg_catalog.pg_get_propgraphdef('%u'::pg_catalog.oid) AS pgdef",
+						  tbinfo->dobj.catId.oid);
+
+		res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+		if (PQntuples(res) != 1)
+		{
+			if (PQntuples(res) < 1)
+				fatal("query to obtain definition of property graph \"%s\" returned no data",
+					  tbinfo->dobj.name);
+			else
+				fatal("query to obtain definition of property graph \"%s\" returned more than one definition",
+					  tbinfo->dobj.name);
+		}
+
+		len = PQgetlength(res, 0, 0);
+
+		if (len == 0)
+			fatal("definition of property graph \"%s\" appears to be empty (length zero)",
+				  tbinfo->dobj.name);
+
+		appendPQExpBufferStr(q, PQgetvalue(res, 0, 0));
+
+		PQclear(res);
+		destroyPQExpBuffer(query);
+
 		appendPQExpBufferStr(q, ";\n");
 	}
 	else
@@ -15698,8 +15741,6 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 
 		numParents = tbinfo->numParents;
 		parents = tbinfo->parents;
-
-		appendPQExpBuffer(delq, "DROP %s %s;\n", reltypename, qualrelname);
 
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
@@ -16284,6 +16325,8 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 		appendPQExpBuffer(q, "\nALTER TABLE ONLY %s FORCE ROW LEVEL SECURITY;\n",
 						  qualrelname);
 
+	appendPQExpBuffer(delq, "DROP %s %s;\n", reltypename, qualrelname);
+
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &tbinfo->dobj,
 										reltypename, qrelname,
@@ -16300,7 +16343,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 		ArchiveEntry(fout, tbinfo->dobj.catId, tbinfo->dobj.dumpId,
 					 ARCHIVE_OPTS(.tag = tbinfo->dobj.name,
 								  .namespace = tbinfo->dobj.namespace->dobj.name,
-								  .tablespace = (tbinfo->relkind == RELKIND_VIEW) ?
+								  .tablespace = (tbinfo->relkind == RELKIND_PROPGRAPH || tbinfo->relkind == RELKIND_VIEW) ?
 								  NULL : tbinfo->reltablespace,
 								  .tableam = tableam,
 								  .owner = tbinfo->rolname,
