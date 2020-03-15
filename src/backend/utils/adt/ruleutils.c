@@ -1488,6 +1488,43 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 }
 
 /*
+ * pg_get_propgraph - get the definition of a property graph
+ */
+Datum
+pg_get_propgraphdef(PG_FUNCTION_ARGS)
+{
+	Oid			pgrelid = PG_GETARG_OID(0);
+	StringInfoData buf;
+	HeapTuple	classtup;
+	Form_pg_class classform;
+	char	   *name;
+	char	   *nsp;
+
+	initStringInfo(&buf);
+
+	classtup = SearchSysCache1(RELOID, ObjectIdGetDatum(pgrelid));
+	if (!HeapTupleIsValid(classtup))
+		PG_RETURN_NULL();
+
+	classform = (Form_pg_class) GETSTRUCT(classtup);
+	name = NameStr(classform->relname);
+
+	if (classform->relkind != RELKIND_PROPGRAPH)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a property graph", name)));
+
+	nsp = get_namespace_name(classform->relnamespace);
+
+	appendStringInfo(&buf, "CREATE PROPERTY GRAPH %s",
+					 quote_qualified_identifier(nsp, name));
+
+	ReleaseSysCache(classtup);
+
+	PG_RETURN_TEXT_P(string_to_text(buf.data));
+}
+
+/*
  * pg_get_statisticsobjdef
  *		Get the definition of an extended statistics object
  */

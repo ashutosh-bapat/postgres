@@ -18118,6 +18118,10 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
    </indexterm>
 
    <indexterm>
+    <primary>pg_get_propgraphdef</primary>
+   </indexterm>
+
+   <indexterm>
     <primary>pg_get_ruledef</primary>
    </indexterm>
 
@@ -18281,6 +18285,11 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
        <entry><literal><function>pg_get_keywords()</function></literal></entry>
        <entry><type>setof record</type></entry>
        <entry>get list of SQL keywords and their categories</entry>
+      </row>
+      <row>
+       <entry><literal><function>pg_get_propgraphdef(<parameter>property_graph_oid</parameter>)</function></literal></entry>
+       <entry><type>text</type></entry>
+       <entry>get <command>CREATE PROPERTY GRAPH</command> command for property graph</entry>
       </row>
       <row>
        <entry><literal><function>pg_get_ruledef(<parameter>rule_oid</parameter>)</function></literal></entry>

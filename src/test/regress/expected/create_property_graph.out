@@ -40,6 +40,8 @@ Property graph "create_property_graph_tests.g1"
 Property graph "create_property_graph_tests.g1"
  Column | Type | Storage 
 --------+------+---------
+Property graph definition:
+ CREATE PROPERTY GRAPH create_property_graph_tests.g1
 
 DROP TABLE g2;  -- error: wrong object type
 ERROR:  "g2" is not a table

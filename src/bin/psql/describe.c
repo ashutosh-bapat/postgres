@@ -2873,6 +2873,32 @@ describeOneTableDetails(const char *schemaname,
 		}
 	}
 
+	/* Add property graph definition in verbose mode */
+	if (tableinfo.relkind == RELKIND_PROPGRAPH && verbose)
+	{
+		PGresult   *result;
+		char	   *pgdef = NULL;
+
+		printfPQExpBuffer(&buf,
+						  "SELECT pg_catalog.pg_get_propgraphdef('%s'::pg_catalog.oid);",
+						  oid);
+		result = PSQLexec(buf.data);
+		if (!result)
+			goto error_return;
+
+		if (PQntuples(result) > 0)
+			pgdef = pg_strdup(PQgetvalue(result, 0, 0));
+
+		PQclear(result);
+
+		if (pgdef)
+		{
+			printTableAddFooter(&cont, _("Property graph definition:"));
+			printfPQExpBuffer(&buf, " %s", pgdef);
+			printTableAddFooter(&cont, buf.data);
+		}
+	}
+
 	/* Get view_def if table is a view or materialized view */
 	if ((tableinfo.relkind == RELKIND_VIEW ||
 		 tableinfo.relkind == RELKIND_MATVIEW) && verbose)
