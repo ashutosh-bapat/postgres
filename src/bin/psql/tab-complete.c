@@ -2283,7 +2283,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("ACCESS METHOD", "CAST", "COLLATION", "CONVERSION",
 					  "DATABASE", "EVENT TRIGGER", "EXTENSION",
 					  "FOREIGN DATA WRAPPER", "FOREIGN TABLE", "SERVER",
-					  "INDEX", "LANGUAGE", "POLICY", "PUBLICATION", "RULE",
+					  "INDEX", "LANGUAGE", "POLICY", "PROPERTY GRAPH", "PUBLICATION", "RULE",
 					  "SCHEMA", "SEQUENCE", "STATISTICS", "SUBSCRIPTION",
 					  "TABLE", "TYPE", "VIEW", "MATERIALIZED VIEW",
 					  "COLUMN", "AGGREGATE", "FUNCTION",
@@ -2294,6 +2294,8 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_QUERY(Query_for_list_of_access_methods);
 	else if (Matches("COMMENT", "ON", "FOREIGN"))
 		COMPLETE_WITH("DATA WRAPPER", "TABLE");
+	else if (Matches("COMMENT", "ON", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs, NULL);
 	else if (Matches("COMMENT", "ON", "TEXT", "SEARCH"))
 		COMPLETE_WITH("CONFIGURATION", "DICTIONARY", "PARSER", "TEMPLATE");
 	else if (Matches("COMMENT", "ON", "CONSTRAINT"))
@@ -3492,8 +3494,10 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("TABLE", "COLUMN", "AGGREGATE", "DATABASE", "DOMAIN",
 					  "EVENT TRIGGER", "FOREIGN TABLE", "FUNCTION",
 					  "LARGE OBJECT", "MATERIALIZED VIEW", "LANGUAGE",
-					  "PUBLICATION", "PROCEDURE", "ROLE", "ROUTINE", "SCHEMA",
+					  "PROPERTY GRAPH", "PUBLICATION", "PROCEDURE", "ROLE", "ROUTINE", "SCHEMA",
 					  "SEQUENCE", "SUBSCRIPTION", "TABLESPACE", "TYPE", "VIEW");
+	else if (Matches("SECURITY", "LABEL", "ON", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs, NULL);
 	else if (Matches("SECURITY", "LABEL", "ON", MatchAny, MatchAny))
 		COMPLETE_WITH("IS");
 
