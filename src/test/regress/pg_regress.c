@@ -292,7 +292,7 @@ stop_postmaster(void)
  * remove the directory.  Ignore errors; leaking a temporary directory is
  * unimportant.  This can run from a signal handler.  The code is not
  * acceptable in a Windows signal handler (see initdb.c:trapsig()), but
- * Windows is not a HAVE_UNIX_SOCKETS platform.
+ * on Windows, pg_regress does not use Unix sockets.
  */
 static void
 remove_temp(void)
@@ -330,7 +330,8 @@ signal_remove_temp(int signum)
 static const char *
 make_temp_sockdir(void)
 {
-	char	   *template = pg_strdup("/tmp/pg_regress-XXXXXX");
+	char	   *template = psprintf("%s/pg_regress-XXXXXX",
+									getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
 
 	temp_sockdir = mkdtemp(template);
 	if (temp_sockdir == NULL)
@@ -2120,8 +2121,12 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 
 	atexit(stop_postmaster);
 
-#ifndef HAVE_UNIX_SOCKETS
-	/* no unix domain sockets available, so change default */
+#if !defined(HAVE_UNIX_SOCKETS) || defined(WIN32)
+	/*
+	 * No Unix-domain sockets available, so change default.  For now, we also
+	 * don't use them on Windows, even if the build supports them.  (See
+	 * comment at remove_temp() for a reason.)
+	 */
 	hostname = "localhost";
 #endif
 
@@ -2334,7 +2339,7 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 		fputs("\n# Configuration added by pg_regress\n\n", pg_conf);
 		fputs("log_autovacuum_min_duration = 0\n", pg_conf);
 		fputs("log_checkpoints = on\n", pg_conf);
-		fputs("log_line_prefix = '%m [%p] %q%a '\n", pg_conf);
+		fputs("log_line_prefix = '%m %b[%p] %q%a '\n", pg_conf);
 		fputs("log_lock_waits = on\n", pg_conf);
 		fputs("log_temp_files = 128kB\n", pg_conf);
 		fputs("max_prepared_transactions = 2\n", pg_conf);

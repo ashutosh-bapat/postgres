@@ -404,10 +404,6 @@ ConstructTupleDescriptor(Relation heapRelation,
 		 */
 		keyType = amroutine->amkeytype;
 
-		/*
-		 * Code below is concerned to the opclasses which are not used with
-		 * the included columns.
-		 */
 		if (i < indexInfo->ii_NumIndexKeyAttrs)
 		{
 			tuple = SearchSysCache1(CLAOID, ObjectIdGetDatum(classObjectId[i]));
@@ -422,6 +418,10 @@ ConstructTupleDescriptor(Relation heapRelation,
 			 * If keytype is specified as ANYELEMENT, and opcintype is
 			 * ANYARRAY, then the attribute type must be an array (else it'd
 			 * not have matched this opclass); use its element type.
+			 *
+			 * We could also allow ANYCOMPATIBLE/ANYCOMPATIBLEARRAY here, but
+			 * there seems no need to do so; there's no reason to declare an
+			 * opclass as taking ANYCOMPATIBLEARRAY rather than ANYARRAY.
 			 */
 			if (keyType == ANYELEMENTOID && opclassTup->opcintype == ANYARRAYOID)
 			{
@@ -1531,7 +1531,7 @@ index_concurrently_swap(Oid newIndexId, Oid oldIndexId, const char *oldName)
 	newIndexForm->indisclustered = oldIndexForm->indisclustered;
 
 	/*
-	 * Mark the old index as valid, and the new index as invalid similarly
+	 * Mark the new index as valid, and the old index as invalid similarly
 	 * to what index_set_state_flags() does.
 	 */
 	newIndexForm->indisvalid = true;
