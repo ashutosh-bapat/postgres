@@ -16,7 +16,7 @@ PostgreSQL documentation
 
  <refnamediv>
   <refname>DROP PROPERTY GRAPH</refname>
-  <refpurpose>destroy an SQL-property graph</refpurpose>
+  <refpurpose>remove an SQL-property graph</refpurpose>
  </refnamediv>
 
  <refsynopsisdiv>
