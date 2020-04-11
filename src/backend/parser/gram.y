@@ -769,7 +769,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
-%nonassoc	IDENT GENERATED NULL_P PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
+%nonassoc	IDENT GENERATED NULL_P PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP COLUMNS
 %left		Op OPERATOR LEFT_ARROW RIGHT_ARROW	/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -15390,6 +15390,7 @@ unreserved_keyword:
 			| CLASS
 			| CLOSE
 			| CLUSTER
+			| COLUMNS
 			| COMMENT
 			| COMMENTS
 			| COMMIT
@@ -15782,7 +15783,6 @@ reserved_keyword:
 			| CHECK
 			| COLLATE
 			| COLUMN
-			| COLUMNS
 			| CONSTRAINT
 			| CREATE
 			| CURRENT_CATALOG
