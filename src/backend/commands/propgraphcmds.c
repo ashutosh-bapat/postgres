@@ -33,6 +33,7 @@ ObjectAddress
 CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 {
 	CreateStmt *cstmt = makeNode(CreateStmt);
+	char		components_persistence;
 	ListCell   *lc, *lc2, *lc3;
 	ObjectAddress pgaddress;
 	List	   *vertex_relids = NIL;
@@ -49,7 +50,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("property graphs cannot be unlogged because they do not have storage")));
 
-	// TODO: check whether it's using temp relations (see view.c)
+	components_persistence = RELPERSISTENCE_PERMANENT;
 
 	vertexrel = table_open(PropgraphVertexRelationId, RowExclusiveLock);
 	edgerel = table_open(PropgraphEdgeRelationId, RowExclusiveLock);
@@ -65,9 +66,20 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		int2vector *iv;
 
 		relid = RangeVarGetRelidExtended(rv, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
-		// TODO: check relkind, relpersistence
 
 		rel = table_open(relid, NoLock);
+
+		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
+			components_persistence = RELPERSISTENCE_TEMP;
+
+		if (!(rel->rd_rel->relkind == RELKIND_RELATION ||
+			  rel->rd_rel->relkind == RELKIND_VIEW ||
+			  rel->rd_rel->relkind == RELKIND_MATVIEW ||
+			  rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE ||
+			  rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("invalid relkind TODO")));
 
 		if (rv->alias)
 			aliasname = rv->alias->aliasname;
@@ -154,9 +166,20 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		int2vector *iv;
 
 		relid = RangeVarGetRelidExtended(rvedge, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
-		// TODO: check relkind, relpersistence
 
 		rel = table_open(relid, NoLock);
+
+		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
+			components_persistence = RELPERSISTENCE_TEMP;
+
+		if (!(rel->rd_rel->relkind == RELKIND_RELATION ||
+			  rel->rd_rel->relkind == RELKIND_VIEW ||
+			  rel->rd_rel->relkind == RELKIND_MATVIEW ||
+			  rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE ||
+			  rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("invalid relkind TODO")));
 
 		if (rvedge->alias)
 			aliasname = rvedge->alias->aliasname;
@@ -247,6 +270,21 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	cstmt->relation = stmt->pgname;
 	cstmt->oncommit = ONCOMMIT_NOOP;
+
+	/*
+	 * Automatically make it temporary if any component tables are temporary
+	 * (see also DefineView()).
+	 */
+	if (stmt->pgname->relpersistence == RELPERSISTENCE_PERMANENT
+		&& components_persistence == RELPERSISTENCE_TEMP)
+	{
+		cstmt->relation = copyObject(cstmt->relation);
+		cstmt->relation->relpersistence = RELPERSISTENCE_TEMP;
+		ereport(NOTICE,
+				(errmsg("property graph \"%s\" will be temporary",
+						stmt->pgname->relname)));
+	}
+
 	pgaddress = DefineRelation(cstmt, RELKIND_PROPGRAPH, InvalidOid, NULL, NULL);
 
 	forthree(lc, vertex_relids,
