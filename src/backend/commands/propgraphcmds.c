@@ -146,14 +146,12 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		List	   *etl = lfirst_node(List, lc);
 		RangeVar   *rvedge = list_nth_node(RangeVar, etl, 0);
 		List	   *key = list_nth_node(List, etl, 1);
-		RangeVar   *rvsource = list_nth_node(RangeVar, etl, 2);
-		RangeVar   *rvdest = list_nth_node(RangeVar, etl, 3);
+		List	   *sourceinfo = list_nth_node(List, etl, 2);
+		List	   *destinfo = list_nth_node(List, etl, 3);
 		Oid			relid;
 		Relation	rel;
 		char	   *aliasname;
 		int2vector *iv;
-		Oid			relid2;
-		Oid			relid3;
 
 		relid = RangeVarGetRelidExtended(rvedge, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 		// TODO: check relkind, relpersistence
@@ -226,22 +224,17 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 			iv = buildint2vector(attnums, numattrs);
 		}
 
-		// FIXME: this should look up the vertex aliases, not the table names
-		relid2 = RangeVarGetRelidExtended(rvsource, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
-		if (!list_member_oid(vertex_relids, relid2))
+		if (!list_member(vertex_aliases, linitial(sourceinfo)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("table \"%s\" specified as source vertex table is not in the vertex table list",
-							get_rel_name(relid2)),
-					 parser_errposition(pstate, rvsource->location)));
+					 errmsg("source vertex \"%s\" of edge \"%s\" does not exist",
+							strVal(linitial(sourceinfo)), aliasname)));
 
-		relid3 = RangeVarGetRelidExtended(rvdest, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
-		if (!list_member_oid(vertex_relids, relid3))
+		if (!list_member(vertex_aliases, linitial(destinfo)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("table \"%s\" specified as destination vertex table is not in the vertex table list",
-							get_rel_name(relid3)),
-					 parser_errposition(pstate, rvdest->location)));
+					 errmsg("destination vertex \"%s\" of edge \"%s\" does not exist",
+							strVal(linitial(destinfo)), aliasname)));
 
 		// TODO: check for appropriate foreign keys
 
@@ -316,8 +309,8 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_edge_pgerelid - 1] = ObjectIdGetDatum(relid);
 		namestrcpy(&aliasname, aliasstr);
 		values[Anum_pg_propgraph_edge_pgealias - 1] = NameGetDatum(&aliasname);
-		values[Anum_pg_propgraph_edge_pgesrcrelid - 1] = 0; // TODO
-		values[Anum_pg_propgraph_edge_pgedestrelid - 1] = 0; // TODO
+		values[Anum_pg_propgraph_edge_pgesrcvertexid - 1] = 0; // TODO
+		values[Anum_pg_propgraph_edge_pgedestvertexid - 1] = 0; // TODO
 		values[Anum_pg_propgraph_edge_pgekey - 1] = PointerGetDatum(key);
 
 		tup = heap_form_tuple(RelationGetDescr(edgerel), values, nulls);

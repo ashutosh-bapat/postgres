@@ -596,6 +596,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				vertex_table_list vertex_table_definition
 				opt_graph_table_key_clause
 				edge_table_list edge_table_definition
+				source_vertex_table destination_vertex_table
 %type <alias>	opt_propgraph_table_alias
 
 /*
@@ -8426,10 +8427,22 @@ edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
 		;
 
 edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
-				SOURCE qualified_name DESTINATION qualified_name
+				source_vertex_table destination_vertex_table
 				{
 					$1->alias = $2;
-					$$ = list_make4($1, $3, $5, $7);
+					$$ = list_make4($1, $3, $4, $5);
+				}
+		;
+
+source_vertex_table: SOURCE ColId
+				{
+					$$ = list_make1(makeString($2));
+				}
+		;
+
+destination_vertex_table: DESTINATION ColId
+				{
+					$$ = list_make1(makeString($2));
 				}
 		;
 
