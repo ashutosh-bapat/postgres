@@ -5,20 +5,20 @@ COMMENT ON PROPERTY GRAPH g1 IS 'a graph';
 CREATE PROPERTY GRAPH g1;  -- error: duplicate
 ERROR:  relation "g1" already exists
 CREATE TABLE t1 (a int, b text);
-CREATE TABLE t2 (i int, j int, k int);
+CREATE TABLE t2 (i int PRIMARY KEY, j int, k int);
 CREATE TABLE t3 (x int, y text, z text);
-CREATE TABLE e1 (a int, i int, t text);
+CREATE TABLE e1 (a int, i int, t text, PRIMARY KEY (a, i));
 CREATE TABLE e2 (a int, x int, t text);
 CREATE PROPERTY GRAPH g2
-    VERTEX TABLES (t1, t2, t3)
+    VERTEX TABLES (t1 KEY (a), t2, t3 KEY (x))
     EDGE TABLES (
         e1 SOURCE t1 DESTINATION t2,
-        e2 SOURCE t1 DESTINATION t3
+        e2 KEY (a, x) SOURCE t1 DESTINATION t3
     );
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
-CREATE PROPERTY GRAPH gx VERTEX TABLES (t1, t2, t1);
+CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));
 ERROR:  alias "t1" used more than once as vertex table
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist

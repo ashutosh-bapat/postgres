@@ -593,9 +593,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
 %type <list>	opt_vertex_tables_clause opt_edge_tables_clause
-				vertex_table_list
+				vertex_table_list vertex_table_definition
+				opt_graph_table_key_clause
 				edge_table_list edge_table_definition
-%type <range>	vertex_table_definition
 %type <alias>	opt_propgraph_table_alias
 
 /*
@@ -8392,10 +8392,10 @@ vertex_table_list: vertex_table_definition						{ $$ = list_make1($1); }
 			| vertex_table_list ',' vertex_table_definition		{ $$ = lappend($1, $3); }
 		;
 
-vertex_table_definition: qualified_name opt_propgraph_table_alias
+vertex_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
 				{
 					$1->alias = $2;
-					$$ = $1;
+					$$ = list_make2($1, $3);
 				}
 		;
 
@@ -8406,6 +8406,11 @@ opt_propgraph_table_alias:
 					$$->aliasname = $2;
 				}
 			| /*EMPTY*/								{ $$ = NULL; }
+		;
+
+opt_graph_table_key_clause:
+			KEY '(' columnList ')'					{ $$ = $3; }
+			| /*EMPTY*/								{ $$ = NIL; }
 		;
 
 opt_edge_tables_clause:
@@ -8420,10 +8425,11 @@ edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
 			| edge_table_list ',' edge_table_definition		{ $$ = lappend($1, $3); }
 		;
 
-edge_table_definition: qualified_name opt_propgraph_table_alias SOURCE qualified_name DESTINATION qualified_name
+edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
+				SOURCE qualified_name DESTINATION qualified_name
 				{
 					$1->alias = $2;
-					$$ = list_make3($1, $4, $6);
+					$$ = list_make4($1, $3, $5, $7);
 				}
 		;
 

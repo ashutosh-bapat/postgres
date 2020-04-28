@@ -12,6 +12,7 @@
  */
 #include "postgres.h"
 
+#include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/table.h"
 #include "catalog/catalog.h"
@@ -32,12 +33,14 @@ ObjectAddress
 CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 {
 	CreateStmt *cstmt = makeNode(CreateStmt);
-	ListCell   *lc, *lc2;
+	ListCell   *lc, *lc2, *lc3;
 	ObjectAddress pgaddress;
 	List	   *vertex_relids = NIL;
 	List	   *vertex_aliases = NIL;
+	List	   *vertex_keys = NIL;
 	List	   *edge_relids = NIL;
 	List	   *edge_aliases = NIL;
+	List	   *edge_keys = NIL;
 	Relation	vertexrel;
 	Relation	edgerel;
 
@@ -53,12 +56,18 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	foreach (lc, stmt->vertex_tables)
 	{
-		RangeVar   *rv = lfirst_node(RangeVar, lc);
+		List	   *vtl = lfirst_node(List, lc);
+		RangeVar   *rv = list_nth_node(RangeVar, vtl, 0);
+		List	   *key = list_nth_node(List, vtl, 1);
 		Oid			relid;
+		Relation	rel;
 		char	   *aliasname;
+		int2vector *iv;
 
 		relid = RangeVarGetRelidExtended(rv, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 		// TODO: check relkind, relpersistence
+
+		rel = table_open(relid, NoLock);
 
 		if (rv->alias)
 			aliasname = rv->alias->aliasname;
@@ -70,25 +79,86 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					(errcode(ERRCODE_DUPLICATE_TABLE),
 					 errmsg("alias \"%s\" used more than once as vertex table", aliasname)));
 
-		// TODO: check for primary key or graph table key clause
+		if (key == NIL)
+		{
+			Oid			pkidx = RelationGetPrimaryKeyIndex(rel);
+
+			if (!pkidx)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("vertex table key must be specified for table without primary key")));
+			else
+			{
+				Relation	indexDesc;
+
+				indexDesc = index_open(pkidx, AccessShareLock);
+				iv = buildint2vector(indexDesc->rd_index->indkey.values, indexDesc->rd_index->indkey.dim1);
+				index_close(indexDesc, NoLock);
+			}
+		}
+		else
+		{
+			int			numattrs;
+			int16	   *attnums;
+			int			i;
+
+			numattrs = list_length(key);
+			attnums = palloc(numattrs * sizeof(int16));
+
+			i = 0;
+			foreach(lc2, key)
+			{
+				char	   *colname = strVal(lfirst(lc2));
+				AttrNumber	attnum;
+
+				attnum = get_attnum(relid, colname);
+				if (!attnum)
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_COLUMN),
+							 errmsg("column \"%s\" of relation \"%s\" does not exist",
+									colname, get_rel_name(relid))));
+				attnums[i++] = attnum;
+			}
+
+			for (int j = 0; j < numattrs; j++)
+			{
+				for (int k = j + 1; k < numattrs; k++)
+				{
+					if (attnums[j] == attnums[k])
+						ereport(ERROR,
+								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+								 errmsg("graph key columns list must not contain duplicates")));
+				}
+			}
+
+			iv = buildint2vector(attnums, numattrs);
+		}
+
+		table_close(rel, NoLock);
 
 		vertex_relids = lappend_oid(vertex_relids, relid);
 		vertex_aliases = lappend(vertex_aliases, makeString(aliasname));
+		vertex_keys = lappend(vertex_keys, iv);
 	}
 
 	foreach (lc, stmt->edge_tables)
 	{
 		List	   *etl = lfirst_node(List, lc);
-		RangeVar   *rvedge = linitial_node(RangeVar, etl);
-		RangeVar   *rvsource = lsecond_node(RangeVar, etl);
-		RangeVar   *rvdest = lthird_node(RangeVar, etl);
+		RangeVar   *rvedge = list_nth_node(RangeVar, etl, 0);
+		List	   *key = list_nth_node(List, etl, 1);
+		RangeVar   *rvsource = list_nth_node(RangeVar, etl, 2);
+		RangeVar   *rvdest = list_nth_node(RangeVar, etl, 3);
 		Oid			relid;
+		Relation	rel;
 		char	   *aliasname;
+		int2vector *iv;
 		Oid			relid2;
 		Oid			relid3;
 
 		relid = RangeVarGetRelidExtended(rvedge, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 		// TODO: check relkind, relpersistence
+
+		rel = table_open(relid, NoLock);
 
 		if (rvedge->alias)
 			aliasname = rvedge->alias->aliasname;
@@ -101,7 +171,60 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					 errmsg("alias \"%s\" used more than once as edge table", aliasname)));
 		// XXX: also check that it's not already a vertex table?
 
-		// TODO: check for primary key or graph table key clause
+		if (key == NIL)
+		{
+			Oid			pkidx = RelationGetPrimaryKeyIndex(rel);
+
+			if (!pkidx)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("edge table key must be specified for table without primary key")));
+			else
+			{
+				Relation	indexDesc;
+
+				indexDesc = index_open(pkidx, AccessShareLock);
+				iv = buildint2vector(indexDesc->rd_index->indkey.values, indexDesc->rd_index->indkey.dim1);
+				index_close(indexDesc, NoLock);
+			}
+		}
+		else
+		{
+			int			numattrs;
+			int16	   *attnums;
+			int			i;
+
+			numattrs = list_length(key);
+			attnums = palloc(numattrs * sizeof(int16));
+
+			i = 0;
+			foreach(lc2, key)
+			{
+				char	   *colname = strVal(lfirst(lc2));
+				AttrNumber	attnum;
+
+				attnum = get_attnum(relid, colname);
+				if (!attnum)
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_COLUMN),
+							 errmsg("column \"%s\" of relation \"%s\" does not exist",
+									colname, get_rel_name(relid))));
+				attnums[i++] = attnum;
+			}
+
+			for (int j = 0; j < numattrs; j++)
+			{
+				for (int k = j + 1; k < numattrs; k++)
+				{
+					if (attnums[j] == attnums[k])
+						ereport(ERROR,
+								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+								 errmsg("graph key columns list must not contain duplicates")));
+				}
+			}
+
+			iv = buildint2vector(attnums, numattrs);
+		}
 
 		// FIXME: this should look up the vertex aliases, not the table names
 		relid2 = RangeVarGetRelidExtended(rvsource, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
@@ -122,18 +245,24 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 		// TODO: check for appropriate foreign keys
 
+		table_close(rel, NoLock);
+
 		edge_relids = lappend_oid(edge_relids, relid);
 		edge_aliases = lappend(edge_aliases, makeString(aliasname));
+		edge_keys = lappend(edge_keys, iv);
 	}
 
 	cstmt->relation = stmt->pgname;
 	cstmt->oncommit = ONCOMMIT_NOOP;
 	pgaddress = DefineRelation(cstmt, RELKIND_PROPGRAPH, InvalidOid, NULL, NULL);
 
-	forboth(lc, vertex_relids, lc2, vertex_aliases)
+	forthree(lc, vertex_relids,
+			 lc2, vertex_aliases,
+			 lc3, vertex_keys)
 	{
 		Oid			relid = lfirst_oid(lc);
 		char	   *aliasstr = strVal(lfirst(lc2));
+		int2vector *key = lfirst(lc3);
 		NameData	aliasname;
 		Oid			pvoid;
 		Datum		values[Natts_pg_propgraph_vertex] = {0};
@@ -149,7 +278,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_vertex_pgvrelid - 1] = ObjectIdGetDatum(relid);
 		namestrcpy(&aliasname, aliasstr);
 		values[Anum_pg_propgraph_vertex_pgvalias - 1] = NameGetDatum(&aliasname);
-		values[Anum_pg_propgraph_vertex_pgvkey - 1] = PointerGetDatum(buildint2vector(NULL, 0));
+		values[Anum_pg_propgraph_vertex_pgvkey - 1] = PointerGetDatum(key);
 
 		tup = heap_form_tuple(RelationGetDescr(vertexrel), values, nulls);
 		CatalogTupleInsert(vertexrel, tup);
@@ -165,10 +294,13 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 	}
 
-	forboth(lc, edge_relids, lc2, edge_aliases)
+	forthree(lc, edge_relids,
+			 lc2, edge_aliases,
+			 lc3, edge_keys)
 	{
 		Oid			relid = lfirst_oid(lc);
 		char	   *aliasstr = strVal(lfirst(lc2));
+		int2vector *key = lfirst(lc3);
 		NameData	aliasname;
 		Oid			peoid;
 		Datum		values[Natts_pg_propgraph_edge] = {0};
@@ -186,7 +318,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_edge_pgealias - 1] = NameGetDatum(&aliasname);
 		values[Anum_pg_propgraph_edge_pgesrcrelid - 1] = 0; // TODO
 		values[Anum_pg_propgraph_edge_pgedestrelid - 1] = 0; // TODO
-		values[Anum_pg_propgraph_edge_pgekey - 1] = PointerGetDatum(buildint2vector(NULL, 0));
+		values[Anum_pg_propgraph_edge_pgekey - 1] = PointerGetDatum(key);
 
 		tup = heap_form_tuple(RelationGetDescr(edgerel), values, nulls);
 		CatalogTupleInsert(edgerel, tup);
