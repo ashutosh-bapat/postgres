@@ -3416,6 +3416,24 @@ typedef struct CreatePropGraphStmt
 	List	   *edge_tables;
 } CreatePropGraphStmt;
 
+typedef struct PropGraphVertex
+{
+	NodeTag		type;
+	RangeVar   *vtable;
+	List	   *vkey;
+	int			location;
+} PropGraphVertex;
+
+typedef struct PropGraphEdge
+{
+	NodeTag		type;
+	RangeVar   *etable;
+	List	   *ekey;
+	char	   *esrcvertex;
+	char	   *edestvertex;
+	int			location;
+} PropGraphEdge;
+
 /* ----------------------
  *	CREATE TRANSFORM Statement
  * ----------------------

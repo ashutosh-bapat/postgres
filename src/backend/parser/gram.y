@@ -593,10 +593,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
 %type <list>	opt_vertex_tables_clause opt_edge_tables_clause
-				vertex_table_list vertex_table_definition
+				vertex_table_list
 				opt_graph_table_key_clause
-				edge_table_list edge_table_definition
-				source_vertex_table destination_vertex_table
+				edge_table_list
+%type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
 
 /*
@@ -8395,8 +8395,14 @@ vertex_table_list: vertex_table_definition						{ $$ = list_make1($1); }
 
 vertex_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
 				{
+					PropGraphVertex *n = makeNode(PropGraphVertex);
+
 					$1->alias = $2;
-					$$ = list_make2($1, $3);
+					n->vtable = $1;
+					n->vkey = $3;
+					n->location = @1;
+
+					$$ = (Node *) n;
 				}
 		;
 
@@ -8427,22 +8433,19 @@ edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
 		;
 
 edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
-				source_vertex_table destination_vertex_table
+				SOURCE ColId
+				DESTINATION ColId
 				{
+					PropGraphEdge *n = makeNode(PropGraphEdge);
+
 					$1->alias = $2;
-					$$ = list_make4($1, $3, $4, $5);
-				}
-		;
+					n->etable = $1;
+					n->ekey = $3;
+					n->esrcvertex = $5;
+					n->edestvertex = $7;
+					n->location = @1;
 
-source_vertex_table: SOURCE ColId
-				{
-					$$ = list_make1(makeString($2));
-				}
-		;
-
-destination_vertex_table: DESTINATION ColId
-				{
-					$$ = list_make1(makeString($2));
+					$$ = (Node *) n;
 				}
 		;
 

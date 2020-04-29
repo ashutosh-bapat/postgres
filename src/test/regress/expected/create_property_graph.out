@@ -20,18 +20,24 @@ CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));
 ERROR:  alias "t1" used more than once as vertex table
+LINE 1: ...Y GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a)...
+                                                             ^
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (t1 AS tt KEY (a), t2 KEY (i))
     EDGE TABLES (
         e1 SOURCE t1 DESTINATION t2
     );
 ERROR:  source vertex "t1" of edge "e1" does not exist
+LINE 4:         e1 SOURCE t1 DESTINATION t2
+                ^
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (t1 KEY (a), t2 KEY (i))
     EDGE TABLES (
         e1 SOURCE t1 DESTINATION tx
     );
 ERROR:  destination vertex "tx" of edge "e1" does not exist
+LINE 4:         e1 SOURCE t1 DESTINATION tx
+                ^
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
 \dG

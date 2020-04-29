@@ -2000,6 +2000,28 @@ _equalCreatePropGraphStmt(const CreatePropGraphStmt *a, const CreatePropGraphStm
 }
 
 static bool
+_equalPropGraphVertex(const PropGraphVertex *a, const PropGraphVertex *b)
+{
+	COMPARE_NODE_FIELD(vtable);
+	COMPARE_NODE_FIELD(vkey);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalPropGraphEdge(const PropGraphEdge *a, const PropGraphEdge *b)
+{
+	COMPARE_NODE_FIELD(etable);
+	COMPARE_NODE_FIELD(ekey);
+	COMPARE_STRING_FIELD(esrcvertex);
+	COMPARE_STRING_FIELD(edestvertex);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
 _equalCreateTransformStmt(const CreateTransformStmt *a, const CreateTransformStmt *b)
 {
 	COMPARE_SCALAR_FIELD(replace);
@@ -3536,6 +3558,12 @@ equal(const void *a, const void *b)
 			break;
 		case T_CreatePropGraphStmt:
 			retval = _equalCreatePropGraphStmt(a, b);
+			break;
+		case T_PropGraphVertex:
+			retval = _equalPropGraphVertex(a, b);
+			break;
+		case T_PropGraphEdge:
+			retval = _equalPropGraphEdge(a, b);
 			break;
 		case T_CreateTransformStmt:
 			retval = _equalCreateTransformStmt(a, b);

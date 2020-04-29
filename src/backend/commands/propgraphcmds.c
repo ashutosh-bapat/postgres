@@ -57,15 +57,13 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	foreach (lc, stmt->vertex_tables)
 	{
-		List	   *vtl = lfirst_node(List, lc);
-		RangeVar   *rv = list_nth_node(RangeVar, vtl, 0);
-		List	   *key = list_nth_node(List, vtl, 1);
+		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
 		Oid			relid;
 		Relation	rel;
 		char	   *aliasname;
 		int2vector *iv;
 
-		relid = RangeVarGetRelidExtended(rv, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
+		relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 
 		rel = table_open(relid, NoLock);
 
@@ -81,24 +79,26 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("invalid relkind TODO")));
 
-		if (rv->alias)
-			aliasname = rv->alias->aliasname;
+		if (vertex->vtable->alias)
+			aliasname = vertex->vtable->alias->aliasname;
 		else
-			aliasname = rv->relname;
+			aliasname = vertex->vtable->relname;
 
 		if (list_member(vertex_aliases, makeString(aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("alias \"%s\" used more than once as vertex table", aliasname)));
+					 errmsg("alias \"%s\" used more than once as vertex table", aliasname),
+					 parser_errposition(pstate, vertex->location)));
 
-		if (key == NIL)
+		if (vertex->vkey == NIL)
 		{
 			Oid			pkidx = RelationGetPrimaryKeyIndex(rel);
 
 			if (!pkidx)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("vertex table key must be specified for table without primary key")));
+						 errmsg("vertex table key must be specified for table without primary key"),
+						 parser_errposition(pstate, vertex->location)));
 			else
 			{
 				Relation	indexDesc;
@@ -114,11 +114,11 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 			int16	   *attnums;
 			int			i;
 
-			numattrs = list_length(key);
+			numattrs = list_length(vertex->vkey);
 			attnums = palloc(numattrs * sizeof(int16));
 
 			i = 0;
-			foreach(lc2, key)
+			foreach(lc2, vertex->vkey)
 			{
 				char	   *colname = strVal(lfirst(lc2));
 				AttrNumber	attnum;
@@ -128,7 +128,8 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					ereport(ERROR,
 							(errcode(ERRCODE_UNDEFINED_COLUMN),
 							 errmsg("column \"%s\" of relation \"%s\" does not exist",
-									colname, get_rel_name(relid))));
+									colname, get_rel_name(relid)),
+							 parser_errposition(pstate, vertex->location)));
 				attnums[i++] = attnum;
 			}
 
@@ -139,7 +140,8 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					if (attnums[j] == attnums[k])
 						ereport(ERROR,
 								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-								 errmsg("graph key columns list must not contain duplicates")));
+								 errmsg("graph key columns list must not contain duplicates"),
+								 parser_errposition(pstate, vertex->location)));
 				}
 			}
 
@@ -155,17 +157,13 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	foreach (lc, stmt->edge_tables)
 	{
-		List	   *etl = lfirst_node(List, lc);
-		RangeVar   *rvedge = list_nth_node(RangeVar, etl, 0);
-		List	   *key = list_nth_node(List, etl, 1);
-		List	   *sourceinfo = list_nth_node(List, etl, 2);
-		List	   *destinfo = list_nth_node(List, etl, 3);
+		PropGraphEdge *edge = lfirst_node(PropGraphEdge, lc);
 		Oid			relid;
 		Relation	rel;
 		char	   *aliasname;
 		int2vector *iv;
 
-		relid = RangeVarGetRelidExtended(rvedge, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
+		relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
 
 		rel = table_open(relid, NoLock);
 
@@ -181,25 +179,28 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("invalid relkind TODO")));
 
-		if (rvedge->alias)
-			aliasname = rvedge->alias->aliasname;
+		if (edge->etable->alias)
+			aliasname = edge->etable->alias->aliasname;
 		else
-			aliasname = rvedge->relname;
+			aliasname = edge->etable->relname;
 
 		if (list_member(edge_aliases, makeString(aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("alias \"%s\" used more than once as edge table", aliasname)));
+					 errmsg("alias \"%s\" used more than once as edge table", aliasname),
+					 parser_errposition(pstate, edge->location)));
+
 		// XXX: also check that it's not already a vertex table?
 
-		if (key == NIL)
+		if (edge->ekey == NIL)
 		{
 			Oid			pkidx = RelationGetPrimaryKeyIndex(rel);
 
 			if (!pkidx)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("edge table key must be specified for table without primary key")));
+						 errmsg("edge table key must be specified for table without primary key"),
+						 parser_errposition(pstate, edge->location)));
 			else
 			{
 				Relation	indexDesc;
@@ -215,11 +216,11 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 			int16	   *attnums;
 			int			i;
 
-			numattrs = list_length(key);
+			numattrs = list_length(edge->ekey);
 			attnums = palloc(numattrs * sizeof(int16));
 
 			i = 0;
-			foreach(lc2, key)
+			foreach(lc2, edge->ekey)
 			{
 				char	   *colname = strVal(lfirst(lc2));
 				AttrNumber	attnum;
@@ -229,7 +230,8 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					ereport(ERROR,
 							(errcode(ERRCODE_UNDEFINED_COLUMN),
 							 errmsg("column \"%s\" of relation \"%s\" does not exist",
-									colname, get_rel_name(relid))));
+									colname, get_rel_name(relid)),
+							 parser_errposition(pstate, edge->location)));
 				attnums[i++] = attnum;
 			}
 
@@ -240,24 +242,27 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					if (attnums[j] == attnums[k])
 						ereport(ERROR,
 								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-								 errmsg("graph key columns list must not contain duplicates")));
+								 errmsg("graph key columns list must not contain duplicates"),
+								 parser_errposition(pstate, edge->location)));
 				}
 			}
 
 			iv = buildint2vector(attnums, numattrs);
 		}
 
-		if (!list_member(vertex_aliases, linitial(sourceinfo)))
+		if (!list_member(vertex_aliases, makeString(edge->esrcvertex)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("source vertex \"%s\" of edge \"%s\" does not exist",
-							strVal(linitial(sourceinfo)), aliasname)));
+							edge->esrcvertex, aliasname),
+					 parser_errposition(pstate, edge->location)));
 
-		if (!list_member(vertex_aliases, linitial(destinfo)))
+		if (!list_member(vertex_aliases, makeString(edge->edestvertex)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("destination vertex \"%s\" of edge \"%s\" does not exist",
-							strVal(linitial(destinfo)), aliasname)));
+							edge->edestvertex, aliasname),
+					 parser_errposition(pstate, edge->location)));
 
 		// TODO: check for appropriate foreign keys
 

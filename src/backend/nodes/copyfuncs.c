@@ -4261,6 +4261,32 @@ _copyCreatePropGraphStmt(const CreatePropGraphStmt *from)
 	return newnode;
 }
 
+static PropGraphVertex *
+_copyPropGraphVertex(const PropGraphVertex *from)
+{
+	PropGraphVertex *newnode = makeNode(PropGraphVertex);
+
+	COPY_NODE_FIELD(vtable);
+	COPY_NODE_FIELD(vkey);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static PropGraphEdge *
+_copyPropGraphEdge(const PropGraphEdge *from)
+{
+	PropGraphEdge *newnode = makeNode(PropGraphEdge);
+
+	COPY_NODE_FIELD(etable);
+	COPY_NODE_FIELD(ekey);
+	COPY_STRING_FIELD(esrcvertex);
+	COPY_STRING_FIELD(edestvertex);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static CreateTransformStmt *
 _copyCreateTransformStmt(const CreateTransformStmt *from)
 {
@@ -5446,6 +5472,12 @@ copyObjectImpl(const void *from)
 			break;
 		case T_CreatePropGraphStmt:
 			retval = _copyCreatePropGraphStmt(from);
+			break;
+		case T_PropGraphVertex:
+			retval = _copyPropGraphVertex(from);
+			break;
+		case T_PropGraphEdge:
+			retval = _copyPropGraphEdge(from);
 			break;
 		case T_CreateTransformStmt:
 			retval = _copyCreateTransformStmt(from);
