@@ -596,6 +596,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				vertex_table_list
 				opt_graph_table_key_clause
 				edge_table_list
+				source_vertex_table destination_vertex_table
 %type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
 
@@ -8433,19 +8434,42 @@ edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
 		;
 
 edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
-				SOURCE ColId
-				DESTINATION ColId
+				source_vertex_table destination_vertex_table
 				{
 					PropGraphEdge *n = makeNode(PropGraphEdge);
 
 					$1->alias = $2;
 					n->etable = $1;
 					n->ekey = $3;
-					n->esrcvertex = $5;
-					n->edestvertex = $7;
+					n->esrckey = linitial($4);
+					n->esrcvertex = lsecond($4);
+					n->esrcvertexcols = lthird($4);
+					n->edestkey = linitial($5);
+					n->edestvertex = lsecond($5);
+					n->edestvertexcols = lthird($5);
 					n->location = @1;
 
 					$$ = (Node *) n;
+				}
+		;
+
+source_vertex_table: SOURCE ColId
+				{
+					$$ = list_make3(NULL, $2, NULL);
+				}
+				| SOURCE KEY '(' columnList ')' REFERENCES ColId '(' columnList ')'
+				{
+					$$ = list_make3($4, $7, $9);
+				}
+		;
+
+destination_vertex_table: DESTINATION ColId
+				{
+					$$ = list_make3(NULL, $2, NULL);
+				}
+				| DESTINATION KEY '(' columnList ')' REFERENCES ColId '(' columnList ')'
+				{
+					$$ = list_make3($4, $7, $9);
 				}
 		;
 

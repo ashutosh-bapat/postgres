@@ -355,6 +355,10 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_edge_pgesrcvertexid - 1] = 0; // TODO
 		values[Anum_pg_propgraph_edge_pgedestvertexid - 1] = 0; // TODO
 		values[Anum_pg_propgraph_edge_pgekey - 1] = PointerGetDatum(key);
+		nulls[Anum_pg_propgraph_edge_pgesrckey - 1] = true; // TODO
+		nulls[Anum_pg_propgraph_edge_pgesrcref - 1] = true; // TODO
+		nulls[Anum_pg_propgraph_edge_pgedestkey - 1] = true; // TODO
+		nulls[Anum_pg_propgraph_edge_pgedestref - 1] = true; // TODO
 
 		tup = heap_form_tuple(RelationGetDescr(edgerel), values, nulls);
 		CatalogTupleInsert(edgerel, tup);

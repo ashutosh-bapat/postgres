@@ -33,7 +33,13 @@ CATALOG(pg_propgraph_edge,8299,PropgraphEdgeRelationId)
 	NameData	pgealias;		/* edge alias */
 	Oid			pgesrcvertexid;	/* source vertex */
 	Oid			pgedestvertexid;/* destination vertex */
+#ifdef CATALOG_VARLEN			/* variable-length fields start here */
 	int2vector	pgekey;			/* column numbers in pgerelid relation */
+	int2vector	pgesrckey;		/* column numbers in pgerelid relation */
+	int2vector	pgesrcref;		/* column numbers in pgesrcvertexid relation */
+	int2vector	pgedestkey;		/* column numbers in pgerelid relation */
+	int2vector	pgedestref;		/* column numbers in pgedestvertexid relation */
+#endif
 } FormData_pg_propgraph_edge;
 
 /* ----------------

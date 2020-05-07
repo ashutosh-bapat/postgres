@@ -4280,8 +4280,12 @@ _copyPropGraphEdge(const PropGraphEdge *from)
 
 	COPY_NODE_FIELD(etable);
 	COPY_NODE_FIELD(ekey);
+	COPY_NODE_FIELD(esrckey);
 	COPY_STRING_FIELD(esrcvertex);
+	COPY_NODE_FIELD(esrcvertexcols);
+	COPY_NODE_FIELD(edestkey);
 	COPY_STRING_FIELD(edestvertex);
+	COPY_NODE_FIELD(edestvertexcols);
 	COPY_LOCATION_FIELD(location);
 
 	return newnode;

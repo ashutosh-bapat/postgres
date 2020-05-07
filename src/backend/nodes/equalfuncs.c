@@ -2014,8 +2014,12 @@ _equalPropGraphEdge(const PropGraphEdge *a, const PropGraphEdge *b)
 {
 	COMPARE_NODE_FIELD(etable);
 	COMPARE_NODE_FIELD(ekey);
+	COMPARE_NODE_FIELD(esrckey);
 	COMPARE_STRING_FIELD(esrcvertex);
+	COMPARE_NODE_FIELD(esrcvertexcols);
+	COMPARE_NODE_FIELD(edestkey);
 	COMPARE_STRING_FIELD(edestvertex);
+	COMPARE_NODE_FIELD(edestvertexcols);
 	COMPARE_LOCATION_FIELD(location);
 
 	return true;

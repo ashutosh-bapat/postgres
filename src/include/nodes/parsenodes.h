@@ -3429,8 +3429,12 @@ typedef struct PropGraphEdge
 	NodeTag		type;
 	RangeVar   *etable;
 	List	   *ekey;
+	List	   *esrckey;
 	char	   *esrcvertex;
+	List	   *esrcvertexcols;
+	List	   *edestkey;
 	char	   *edestvertex;
+	List	   *edestvertexcols;
 	int			location;
 } PropGraphEdge;
 
