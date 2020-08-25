@@ -95,6 +95,10 @@ extern void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
 								 RelOptInfo *outerrel, RelOptInfo *innerrel,
 								 JoinType jointype, SpecialJoinInfo *sjinfo,
 								 List *restrictlist);
+extern void add_empty_inner_paths_to_joinrel(PlannerInfo *root,
+					 RelOptInfo *joinrel, RelOptInfo *outerrel,
+					 RelOptInfo *innerrel, JoinType jointype,
+					 SpecialJoinInfo *sjinfo, List *restrictlist);
 
 /*
  * joinrels.c

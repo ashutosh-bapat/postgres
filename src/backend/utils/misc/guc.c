@@ -1067,6 +1067,16 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
+		{"enable_empty_inner_rel_join", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables empty inner relation join optimization."),
+			NULL,
+			GUC_EXPLAIN
+		},
+		&enable_empty_inner_rel_join,
+		false,
+		NULL, NULL, NULL
+	},
+	{
 		{"enable_partitionwise_aggregate", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables partitionwise aggregation and grouping."),
 			NULL,

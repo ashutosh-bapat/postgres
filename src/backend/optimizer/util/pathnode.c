@@ -4164,3 +4164,95 @@ reparameterize_pathlist_by_child(PlannerInfo *root,
 
 	return result;
 }
+
+/*
+ * create_empty_inner_path
+ *	  Creates a pathnode corresponding to a join between an outer relation and
+ *	  an empty inner relation.
+ *
+ * 'joinrel' is the join relation.
+ * 'jointype' is the type of join required
+ * 'outer_path' is the outer path
+ * 'restrict_clauses' are the RestrictInfo nodes to apply at the join
+ * 'required_outer' is the set of required outer rels
+ *
+ * Returns the resulting path node.
+ */
+NestPath *
+create_empty_inner_path(PlannerInfo *root, RelOptInfo *joinrel,
+						JoinType jointype, Path *outer_path,
+						List *restrict_clauses,
+						Relids required_outer)
+{
+	NestPath   *pathnode = makeNode(NestPath);
+#if CHECK_IF_REQUIRED
+	Relids		inner_req_outer = PATH_REQ_OUTER(inner_path);
+
+	/*
+	 * If the inner path is parameterized by the outer, we must drop any
+	 * restrict_clauses that are due to be moved into the inner path.  We have
+	 * to do this now, rather than postpone the work till createplan time,
+	 * because the restrict_clauses list can affect the size and cost
+	 * estimates for this path.
+	 */
+	if (bms_overlap(inner_req_outer, outer_path->parent->relids))
+	{
+		Relids		inner_and_outer = bms_union(inner_path->parent->relids,
+												inner_req_outer);
+		List	   *jclauses = NIL;
+		ListCell   *lc;
+
+		foreach(lc, restrict_clauses)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+			if (!join_clause_is_movable_into(rinfo,
+											 inner_path->parent->relids,
+											 inner_and_outer))
+				jclauses = lappend(jclauses, rinfo);
+		}
+		restrict_clauses = jclauses;
+	}
+#endif /* CHECK_IF_REQUIRED */
+
+	pathnode->path.pathtype = T_EmptyInnerJoin;
+	pathnode->path.parent = joinrel;
+	pathnode->path.pathtarget = joinrel->reltarget;
+	/*
+	 * TODO: For now leave this aside. There's no inner path, what parameter
+	 * info it can contribute?
+	 */
+/*	pathnode->path.param_info =
+		get_joinrel_parampathinfo(root,
+								  joinrel,
+								  outer_path,
+								  inner_path,
+								  extra->sjinfo,
+								  required_outer,
+								  &restrict_clauses); */
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = joinrel->consider_parallel &&
+		outer_path->parallel_safe;
+	/* This is a foolish way to estimate parallel_workers, but for now... */
+	pathnode->path.parallel_workers = outer_path->parallel_workers;
+	pathnode->path.pathkeys = outer_path->pathkeys;
+	pathnode->jointype = jointype;
+	/* TODO: is this required? */
+	/* pathnode->inner_unique = extra->inner_unique; */
+	pathnode->outerjoinpath = outer_path;
+	pathnode->innerjoinpath = NULL;
+	pathnode->joinrestrictinfo = restrict_clauses;
+
+	/*
+	 * Cost of this path is cost of the outer path + cost of
+	 * projecting an outer tuple with inner columns replaced with NULL + cost
+	 * of applying quals.
+	 * TODO: refine the costs.
+	 */
+	pathnode->path.rows = outer_path->rows;
+	pathnode->path.startup_cost = outer_path->startup_cost;
+	pathnode->path.total_cost = outer_path->total_cost;
+
+	return pathnode;
+}
+

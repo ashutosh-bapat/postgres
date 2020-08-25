@@ -273,6 +273,10 @@ extern LimitPath *create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 extern void adjust_limit_rows_costs(double *rows,
 									Cost *startup_cost, Cost *total_cost,
 									int64 offset_est, int64 count_est);
+extern NestPath *create_empty_inner_path(PlannerInfo *root, RelOptInfo *joinrel,
+						JoinType jointype, Path *outer_path,
+						List *restrict_clauses,
+						Relids required_outer);
 
 extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 								 Relids required_outer,

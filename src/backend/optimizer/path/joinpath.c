@@ -71,6 +71,9 @@ static void consider_parallel_mergejoin(PlannerInfo *root,
 static void hash_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
 								 RelOptInfo *outerrel, RelOptInfo *innerrel,
 								 JoinType jointype, JoinPathExtraData *extra);
+static void join_with_empty_inner_rel(PlannerInfo *root, RelOptInfo *joinrel,
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinType jointype, JoinPathExtraData *extra);
 static List *select_mergejoin_clauses(PlannerInfo *root,
 									  RelOptInfo *joinrel,
 									  RelOptInfo *outerrel,
@@ -306,6 +309,13 @@ add_paths_to_joinrel(PlannerInfo *root,
 	if (enable_hashjoin || jointype == JOIN_FULL)
 		hash_inner_and_outer(root, joinrel, outerrel, innerrel,
 							 jointype, &extra);
+
+	/*
+	 * Add special paths where the inner relation is dummy.
+	 */
+	if (enable_empty_inner_rel_join && is_dummy_rel(innerrel))
+		join_with_empty_inner_rel(root, joinrel, outerrel, innerrel, jointype,
+								  &extra);
 
 	/*
 	 * 5. If inner and outer relations are foreign tables (or joins) belonging
@@ -2025,4 +2035,23 @@ select_mergejoin_clauses(PlannerInfo *root,
 	}
 
 	return result_list;
+}
+
+static void
+join_with_empty_inner_rel(PlannerInfo *root, RelOptInfo *joinrel,
+						  RelOptInfo *outerrel, RelOptInfo *innerrel,
+						  JoinType jointype, JoinPathExtraData *extra)
+{
+	ListCell	   *lc;
+	/* For every outer path add a path with empty inner relation. */
+	foreach (lc, outerrel->pathlist)
+	{
+		Path	   *outer_path = lfirst(lc);
+		/*
+		 * TODO: what about required outer, how to compute that here? Also what
+		 * about restrictlist?
+		 */
+		NestPath *path = create_empty_inner_path(root, joinrel, jointype, outer_path, extra->restrictlist, NULL);
+		add_path(joinrel, (Path *)path);
+	}
 }

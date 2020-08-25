@@ -140,6 +140,8 @@ bool		enable_partitionwise_aggregate = false;
 bool		enable_parallel_append = true;
 bool		enable_parallel_hash = true;
 bool		enable_partition_pruning = true;
+/* TODO: Remove finally */
+bool		enable_empty_inner_rel_join = false;
 
 typedef struct
 {
