@@ -310,12 +310,14 @@ add_paths_to_joinrel(PlannerInfo *root,
 		hash_inner_and_outer(root, joinrel, outerrel, innerrel,
 							 jointype, &extra);
 
+#ifdef NOT_USED
 	/*
 	 * Add special paths where the inner relation is dummy.
 	 */
 	if (enable_empty_inner_rel_join && is_dummy_rel(innerrel))
 		join_with_empty_inner_rel(root, joinrel, outerrel, innerrel, jointype,
 								  &extra);
+#endif /* NOT_USED */
 
 	/*
 	 * 5. If inner and outer relations are foreign tables (or joins) belonging

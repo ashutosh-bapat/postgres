@@ -58,6 +58,7 @@ typedef struct
 	indexed_tlist *inner_itlist;
 	Index		acceptable_rel;
 	int			rtoffset;
+	bool		empty_inner;
 } fix_join_expr_context;
 
 typedef struct
@@ -133,7 +134,8 @@ static List *fix_join_expr(PlannerInfo *root,
 						   List *clauses,
 						   indexed_tlist *outer_itlist,
 						   indexed_tlist *inner_itlist,
-						   Index acceptable_rel, int rtoffset);
+						   Index acceptable_rel, int rtoffset,
+						   bool empty_inner);
 static Node *fix_join_expr_mutator(Node *node,
 								   fix_join_expr_context *context);
 static Node *fix_upper_expr(PlannerInfo *root,
@@ -662,6 +664,15 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_MergeJoin:
 		case T_HashJoin:
 			set_join_references(root, (Join *) plan, rtoffset);
+	/*
+	 * TODO:
+	 * If the inner side is empty somehow convert the join plan into a scan
+	 * plan. set_join_references() has already wiped out all the references to
+	 * the inner variable. Converting this into a projection of a scan plan
+	 * avoids unnecessary join condition evaluation and crafting projection
+	 * list in join with NULL inner side. We could also do some constant
+	 * evaluation when creating a projection plan.
+	 */
 			break;
 
 		case T_Gather:
@@ -874,13 +885,13 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 						fix_join_expr(root, splan->onConflictSet,
 									  NULL, itlist,
 									  linitial_int(splan->resultRelations),
-									  rtoffset);
+									  rtoffset, false);
 
 					splan->onConflictWhere = (Node *)
 						fix_join_expr(root, (List *) splan->onConflictWhere,
 									  NULL, itlist,
 									  linitial_int(splan->resultRelations),
-									  rtoffset);
+									  rtoffset, false);
 
 					pfree(itlist);
 
@@ -1776,7 +1787,8 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 								   outer_itlist,
 								   inner_itlist,
 								   (Index) 0,
-								   rtoffset);
+								   rtoffset,
+								   join->empty_inner);
 
 	/* Now do join-type-specific stuff */
 	if (IsA(join, NestLoop))
@@ -1808,7 +1820,8 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 										 outer_itlist,
 										 inner_itlist,
 										 (Index) 0,
-										 rtoffset);
+										 rtoffset,
+										 join->empty_inner);
 	}
 	else if (IsA(join, HashJoin))
 	{
@@ -1819,7 +1832,8 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 										outer_itlist,
 										inner_itlist,
 										(Index) 0,
-										rtoffset);
+										rtoffset,
+										join->empty_inner);
 
 		/*
 		 * HashJoin's hashkeys are used to look for matching tuples from its
@@ -1867,13 +1881,15 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 										  outer_itlist,
 										  inner_itlist,
 										  (Index) 0,
-										  rtoffset);
+										  rtoffset,
+										  join->empty_inner);
 	join->plan.qual = fix_join_expr(root,
 									join->plan.qual,
 									outer_itlist,
 									inner_itlist,
 									(Index) 0,
-									rtoffset);
+									rtoffset,
+									join->empty_inner);
 
 	pfree(outer_itlist);
 	pfree(inner_itlist);
@@ -2399,7 +2415,8 @@ fix_join_expr(PlannerInfo *root,
 			  indexed_tlist *outer_itlist,
 			  indexed_tlist *inner_itlist,
 			  Index acceptable_rel,
-			  int rtoffset)
+			  int rtoffset,
+			  bool empty_inner)
 {
 	fix_join_expr_context context;
 
@@ -2441,7 +2458,19 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 												  INNER_VAR,
 												  context->rtoffset);
 			if (newvar)
+			{
+				/*
+				 * If the inner relation is known to be empty, it will emit
+				 * NULL for any column projected from it.
+				 */
+				if (context->empty_inner)
+				{
+					return (Node *) makeNullConst(newvar->vartype,
+												  newvar->vartypmod,
+												  newvar->varcollid);
+				}
 				return (Node *) newvar;
+			}
 		}
 
 		/* If it's for acceptable_rel, adjust and return it */
@@ -2476,7 +2505,19 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 													  context->inner_itlist,
 													  INNER_VAR);
 			if (newvar)
+			{
+				/*
+				 * If the inner relation is known to be empty, it will emit
+				 * NULL for any column projected from it.
+				 */
+				if (context->empty_inner)
+				{
+					return (Node *) makeNullConst(newvar->vartype,
+												  newvar->vartypmod,
+												  newvar->varcollid);
+				}
 				return (Node *) newvar;
+			}
 		}
 
 		/* If not supplied by input plans, evaluate the contained expr */
@@ -2497,7 +2538,19 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 												  context->inner_itlist,
 												  INNER_VAR);
 		if (newvar)
+		{
+			/*
+			 * If the inner relation is known to be empty, it will emit
+			 * NULL for any column projected from it.
+			 */
+			if (context->empty_inner)
+			{
+				return (Node *) makeNullConst(newvar->vartype,
+											  newvar->vartypmod,
+											  newvar->varcollid);
+			}
 			return (Node *) newvar;
+		}
 	}
 	/* Special cases (apply only AFTER failing to match to lower tlist) */
 	if (IsA(node, Param))
@@ -2687,7 +2740,8 @@ set_returning_clause_references(PlannerInfo *root,
 						  itlist,
 						  NULL,
 						  resultRelation,
-						  rtoffset);
+						  rtoffset,
+						  false);
 
 	pfree(itlist);
 

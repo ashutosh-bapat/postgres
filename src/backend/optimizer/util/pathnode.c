@@ -2392,6 +2392,7 @@ create_nestloop_path(PlannerInfo *root,
 	pathnode->outerjoinpath = outer_path;
 	pathnode->innerjoinpath = inner_path;
 	pathnode->joinrestrictinfo = restrict_clauses;
+	pathnode->inner_empty = IS_DUMMY_APPEND(inner_path);
 
 	final_cost_nestloop(root, pathnode, workspace, extra);
 
@@ -2456,6 +2457,7 @@ create_mergejoin_path(PlannerInfo *root,
 	pathnode->jpath.outerjoinpath = outer_path;
 	pathnode->jpath.innerjoinpath = inner_path;
 	pathnode->jpath.joinrestrictinfo = restrict_clauses;
+	pathnode->jpath.inner_empty = IS_DUMMY_APPEND(inner_path);
 	pathnode->path_mergeclauses = mergeclauses;
 	pathnode->outersortkeys = outersortkeys;
 	pathnode->innersortkeys = innersortkeys;
@@ -2533,6 +2535,7 @@ create_hashjoin_path(PlannerInfo *root,
 	pathnode->jpath.outerjoinpath = outer_path;
 	pathnode->jpath.innerjoinpath = inner_path;
 	pathnode->jpath.joinrestrictinfo = restrict_clauses;
+	pathnode->jpath.inner_empty = IS_DUMMY_APPEND(inner_path);
 	pathnode->path_hashclauses = hashclauses;
 	/* final_cost_hashjoin will fill in pathnode->num_batches */
 
@@ -4215,7 +4218,7 @@ create_empty_inner_path(PlannerInfo *root, RelOptInfo *joinrel,
 	}
 #endif /* CHECK_IF_REQUIRED */
 
-	pathnode->path.pathtype = T_EmptyInnerJoin;
+	pathnode->path.pathtype = T_NestLoop;
 	pathnode->path.parent = joinrel;
 	pathnode->path.pathtarget = joinrel->reltarget;
 	/*

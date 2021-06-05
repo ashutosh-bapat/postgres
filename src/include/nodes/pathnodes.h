@@ -1532,6 +1532,7 @@ typedef struct JoinPath
 	 * joinrestrictinfo is needed in JoinPath, and can't be merged into the
 	 * parent RelOptInfo.
 	 */
+	bool		inner_empty;	/* Is inner side empty */
 } JoinPath;
 
 /*

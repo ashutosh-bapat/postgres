@@ -676,6 +676,8 @@ typedef struct CustomScan
  * tuple could match any given outer tuple.  This allows the executor to
  * skip searching for additional matches.  (This must be provable from just
  * the joinquals, ignoring plan.qual, due to where the executor tests it.)
+ *
+ * empty_inner is set if the inner relation is deemed empty.
  * ----------------
  */
 typedef struct Join
@@ -684,6 +686,7 @@ typedef struct Join
 	JoinType	jointype;
 	bool		inner_unique;
 	List	   *joinqual;		/* JOIN quals (in addition to plan.qual) */
+	bool		empty_inner;
 } Join;
 
 /* ----------------
