@@ -13,7 +13,7 @@ INSERT INTO bttest_a SELECT * FROM generate_series(1, 100000);
 INSERT INTO bttest_b SELECT * FROM generate_series(100000, 1, -1);
 INSERT INTO bttest_multi SELECT i, i%2  FROM generate_series(1, 100000) as i;
 
-CREATE INDEX bttest_a_idx ON bttest_a USING btree (id);
+CREATE INDEX bttest_a_idx ON bttest_a USING btree (id) WITH (deduplicate_items = ON);
 CREATE INDEX bttest_b_idx ON bttest_b USING btree (id);
 CREATE UNIQUE INDEX bttest_multi_idx ON bttest_multi
 USING btree (id) INCLUDE (data);
@@ -67,6 +67,11 @@ WHERE relation = ANY(ARRAY['bttest_a', 'bttest_a_idx', 'bttest_b', 'bttest_b_idx
     AND pid = pg_backend_pid();
 COMMIT;
 
+-- Deduplication
+TRUNCATE bttest_a;
+INSERT INTO bttest_a SELECT 42 FROM generate_series(1, 2000);
+SELECT bt_index_check('bttest_a_idx', true);
+
 -- normal check outside of xact for index with included columns
 SELECT bt_index_check('bttest_multi_idx');
 -- more expansive tests for index with included columns
@@ -94,11 +99,17 @@ SELECT bt_index_parent_check('delete_test_table_pkey', true);
 -- tuple.  Bloom filter must fingerprint normalized index tuple representation.
 --
 CREATE TABLE toast_bug(buggy text);
-ALTER TABLE toast_bug ALTER COLUMN buggy SET STORAGE plain;
--- pg_attribute entry for toasty.buggy will have plain storage:
-CREATE INDEX toasty ON toast_bug(buggy);
--- Whereas pg_attribute entry for toast_bug.buggy now has extended storage:
 ALTER TABLE toast_bug ALTER COLUMN buggy SET STORAGE extended;
+CREATE INDEX toasty ON toast_bug(buggy);
+
+-- pg_attribute entry for toasty.buggy (the index) will have plain storage:
+UPDATE pg_attribute SET attstorage = 'p'
+WHERE attrelid = 'toasty'::regclass AND attname = 'buggy';
+
+-- Whereas pg_attribute entry for toast_bug.buggy (the table) still has extended storage:
+SELECT attstorage FROM pg_attribute
+WHERE attrelid = 'toast_bug'::regclass AND attname = 'buggy';
+
 -- Insert compressible heap tuple (comfortably exceeds TOAST_TUPLE_THRESHOLD):
 INSERT INTO toast_bug SELECT repeat('a', 2200);
 -- Should not get false positive report of corruption:

@@ -249,6 +249,7 @@
    &dropdb;
    &dropuser;
    &ecpgRef;
+   &pgamcheck;
    &pgBasebackup;
    &pgbench;
    &pgConfig;
@@ -258,6 +259,7 @@
    &pgReceivewal;
    &pgRecvlogical;
    &pgRestore;
+   &pgVerifyBackup;
    &psqlRef;
    &reindexdb;
    &vacuumdb;

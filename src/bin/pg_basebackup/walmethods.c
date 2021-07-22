@@ -5,7 +5,7 @@
  * NOTE! The caller must ensure that only one method is instantiated in
  *		 any given program, and that it's only instantiated once!
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/walmethods.c
@@ -68,20 +68,32 @@ dir_getlasterror(void)
 	return strerror(errno);
 }
 
+static char *
+dir_get_file_name(const char *pathname, const char *temp_suffix)
+{
+	char	   *filename = pg_malloc0(MAXPGPATH * sizeof(char));
+
+	snprintf(filename, MAXPGPATH, "%s%s%s",
+			 pathname, dir_data->compression > 0 ? ".gz" : "",
+			 temp_suffix ? temp_suffix : "");
+
+	return filename;
+}
+
 static Walfile
 dir_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_size)
 {
 	static char tmppath[MAXPGPATH];
+	char	   *filename;
 	int			fd;
 	DirectoryMethodFile *f;
 #ifdef HAVE_LIBZ
 	gzFile		gzfp = NULL;
 #endif
 
-	snprintf(tmppath, sizeof(tmppath), "%s/%s%s%s",
-			 dir_data->basedir, pathname,
-			 dir_data->compression > 0 ? ".gz" : "",
-			 temp_suffix ? temp_suffix : "");
+	filename = dir_get_file_name(pathname, temp_suffix);
+	snprintf(tmppath, sizeof(tmppath), "%s/%s",
+			 dir_data->basedir, filename);
 
 	/*
 	 * Open a file for non-compressed as well as compressed files. Tracking
@@ -232,26 +244,31 @@ dir_close(Walfile f, WalCloseMethod method)
 		/* Build path to the current version of the file */
 		if (method == CLOSE_NORMAL && df->temp_suffix)
 		{
+			char	   *filename;
+			char	   *filename2;
+
 			/*
 			 * If we have a temp prefix, normal operation is to rename the
 			 * file.
 			 */
-			snprintf(tmppath, sizeof(tmppath), "%s/%s%s%s",
-					 dir_data->basedir, df->pathname,
-					 dir_data->compression > 0 ? ".gz" : "",
-					 df->temp_suffix);
-			snprintf(tmppath2, sizeof(tmppath2), "%s/%s%s",
-					 dir_data->basedir, df->pathname,
-					 dir_data->compression > 0 ? ".gz" : "");
+			filename = dir_get_file_name(df->pathname, df->temp_suffix);
+			snprintf(tmppath, sizeof(tmppath), "%s/%s",
+					 dir_data->basedir, filename);
+
+			/* permanent name, so no need for the prefix */
+			filename2 = dir_get_file_name(df->pathname, NULL);
+			snprintf(tmppath2, sizeof(tmppath2), "%s/%s",
+					 dir_data->basedir, filename2);
 			r = durable_rename(tmppath, tmppath2);
 		}
 		else if (method == CLOSE_UNLINK)
 		{
+			char	   *filename;
+
 			/* Unlink the file once it's closed */
-			snprintf(tmppath, sizeof(tmppath), "%s/%s%s%s",
-					 dir_data->basedir, df->pathname,
-					 dir_data->compression > 0 ? ".gz" : "",
-					 df->temp_suffix ? df->temp_suffix : "");
+			filename = dir_get_file_name(df->pathname, df->temp_suffix);
+			snprintf(tmppath, sizeof(tmppath), "%s/%s",
+					 dir_data->basedir, filename);
 			r = unlink(tmppath);
 		}
 		else
@@ -313,6 +330,12 @@ dir_get_file_size(const char *pathname)
 	return statbuf.st_size;
 }
 
+static int
+dir_compression(void)
+{
+	return dir_data->compression;
+}
+
 static bool
 dir_existsfile(const char *pathname)
 {
@@ -355,6 +378,8 @@ CreateWalDirectoryMethod(const char *basedir, int compression, bool sync)
 	method->write = dir_write;
 	method->get_current_pos = dir_get_current_pos;
 	method->get_file_size = dir_get_file_size;
+	method->get_file_name = dir_get_file_name;
+	method->compression = dir_compression;
 	method->close = dir_close;
 	method->sync = dir_sync;
 	method->existsfile = dir_existsfile;
@@ -386,7 +411,7 @@ typedef struct TarMethodFile
 {
 	off_t		ofs_start;		/* Where does the *header* for this file start */
 	off_t		currpos;
-	char		header[512];
+	char		header[TAR_BLOCK_SIZE];
 	char	   *pathname;
 	size_t		pad_to_size;
 } TarMethodFile;
@@ -527,11 +552,22 @@ tar_write_padding_data(TarMethodFile *f, size_t bytes)
 	return true;
 }
 
+static char *
+tar_get_file_name(const char *pathname, const char *temp_suffix)
+{
+	char	   *filename = pg_malloc0(MAXPGPATH * sizeof(char));
+
+	snprintf(filename, MAXPGPATH, "%s%s",
+			 pathname, temp_suffix ? temp_suffix : "");
+
+	return filename;
+}
+
 static Walfile
 tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_size)
 {
 	int			save_errno;
-	static char tmppath[MAXPGPATH];
+	char	   *tmppath;
 
 	tar_clear_error();
 
@@ -583,8 +619,7 @@ tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 
 	tar_data->currentfile = pg_malloc0(sizeof(TarMethodFile));
 
-	snprintf(tmppath, sizeof(tmppath), "%s%s",
-			 pathname, temp_suffix ? temp_suffix : "");
+	tmppath = tar_get_file_name(pathname, temp_suffix);
 
 	/* Create a header with size set to 0 - we will fill out the size on close */
 	if (tarCreateHeader(tar_data->currentfile->header, tmppath, NULL, 0, S_IRUSR | S_IWUSR, 0, 0, time(NULL)) != TAR_OK)
@@ -625,7 +660,8 @@ tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 	if (!tar_data->compression)
 	{
 		errno = 0;
-		if (write(tar_data->fd, tar_data->currentfile->header, 512) != 512)
+		if (write(tar_data->fd, tar_data->currentfile->header,
+				  TAR_BLOCK_SIZE) != TAR_BLOCK_SIZE)
 		{
 			save_errno = errno;
 			pg_free(tar_data->currentfile);
@@ -639,7 +675,8 @@ tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 	else
 	{
 		/* Write header through the zlib APIs but with no compression */
-		if (!tar_write_compressed_data(tar_data->currentfile->header, 512, true))
+		if (!tar_write_compressed_data(tar_data->currentfile->header,
+									   TAR_BLOCK_SIZE, true))
 			return NULL;
 
 		/* Re-enable compression for the rest of the file */
@@ -665,7 +702,9 @@ tar_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 			/* Uncompressed, so pad now */
 			tar_write_padding_data(tar_data->currentfile, pad_to_size);
 			/* Seek back to start */
-			if (lseek(tar_data->fd, tar_data->currentfile->ofs_start + 512, SEEK_SET) != tar_data->currentfile->ofs_start + 512)
+			if (lseek(tar_data->fd,
+					  tar_data->currentfile->ofs_start + TAR_BLOCK_SIZE,
+					  SEEK_SET) != tar_data->currentfile->ofs_start + TAR_BLOCK_SIZE)
 				return NULL;
 
 			tar_data->currentfile->currpos = 0;
@@ -683,6 +722,12 @@ tar_get_file_size(const char *pathname)
 	/* Currently not used, so not supported */
 	errno = ENOSYS;
 	return -1;
+}
+
+static int
+tar_compression(void)
+{
+	return tar_data->compression;
 }
 
 static off_t
@@ -778,14 +823,14 @@ tar_close(Walfile f, WalCloseMethod method)
 	}
 
 	/*
-	 * Get the size of the file, and pad the current data up to the nearest
-	 * 512 byte boundary.
+	 * Get the size of the file, and pad out to a multiple of the tar block
+	 * size.
 	 */
 	filesize = tar_get_current_pos(f);
-	padding = ((filesize + 511) & ~511) - filesize;
+	padding = tarPaddingBytesRequired(filesize);
 	if (padding)
 	{
-		char		zerobuf[512];
+		char		zerobuf[TAR_BLOCK_SIZE];
 
 		MemSet(zerobuf, 0, padding);
 		if (tar_write(f, zerobuf, padding) != padding)
@@ -826,7 +871,7 @@ tar_close(Walfile f, WalCloseMethod method)
 	if (!tar_data->compression)
 	{
 		errno = 0;
-		if (write(tar_data->fd, tf->header, 512) != 512)
+		if (write(tar_data->fd, tf->header, TAR_BLOCK_SIZE) != TAR_BLOCK_SIZE)
 		{
 			/* if write didn't set errno, assume problem is no disk space */
 			if (errno == 0)
@@ -845,7 +890,8 @@ tar_close(Walfile f, WalCloseMethod method)
 		}
 
 		/* Overwrite the header, assuming the size will be the same */
-		if (!tar_write_compressed_data(tar_data->currentfile->header, 512, true))
+		if (!tar_write_compressed_data(tar_data->currentfile->header,
+									   TAR_BLOCK_SIZE, true))
 			return -1;
 
 		/* Turn compression back on */
@@ -989,6 +1035,8 @@ CreateWalTarMethod(const char *tarbase, int compression, bool sync)
 	method->write = tar_write;
 	method->get_current_pos = tar_get_current_pos;
 	method->get_file_size = tar_get_file_size;
+	method->get_file_name = tar_get_file_name;
+	method->compression = tar_compression;
 	method->close = tar_close;
 	method->sync = tar_sync;
 	method->existsfile = tar_existsfile;

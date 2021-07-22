@@ -1,8 +1,12 @@
 # -*-perl-*- hey - emacs - this is a perl file
 
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 # src/tools/msvc/pgbison.pl
 
 use strict;
+use warnings;
+
 use File::Basename;
 
 # assume we are in the postgres source root

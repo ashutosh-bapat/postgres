@@ -3,7 +3,7 @@
  * foreigncmds.c
  *	  foreign-data wrapper/server creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -515,7 +515,7 @@ lookup_fdw_validator_func(DefElem *validator)
  * Process function options of CREATE/ALTER FDW
  */
 static void
-parse_func_options(List *func_options,
+parse_func_options(ParseState *pstate, List *func_options,
 				   bool *handler_given, Oid *fdwhandler,
 				   bool *validator_given, Oid *fdwvalidator)
 {
@@ -534,18 +534,14 @@ parse_func_options(List *func_options,
 		if (strcmp(def->defname, "handler") == 0)
 		{
 			if (*handler_given)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+				errorConflictingDefElem(def, pstate);
 			*handler_given = true;
 			*fdwhandler = lookup_fdw_handler_func(def);
 		}
 		else if (strcmp(def->defname, "validator") == 0)
 		{
 			if (*validator_given)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+				errorConflictingDefElem(def, pstate);
 			*validator_given = true;
 			*fdwvalidator = lookup_fdw_validator_func(def);
 		}
@@ -559,7 +555,7 @@ parse_func_options(List *func_options,
  * Create a foreign-data wrapper
  */
 ObjectAddress
-CreateForeignDataWrapper(CreateFdwStmt *stmt)
+CreateForeignDataWrapper(ParseState *pstate, CreateFdwStmt *stmt)
 {
 	Relation	rel;
 	Datum		values[Natts_pg_foreign_data_wrapper];
@@ -611,7 +607,7 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
 	values[Anum_pg_foreign_data_wrapper_fdwowner - 1] = ObjectIdGetDatum(ownerId);
 
 	/* Lookup handler and validator functions, if given */
-	parse_func_options(stmt->func_options,
+	parse_func_options(pstate, stmt->func_options,
 					   &handler_given, &fdwhandler,
 					   &validator_given, &fdwvalidator);
 
@@ -675,7 +671,7 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
  * Alter foreign-data wrapper
  */
 ObjectAddress
-AlterForeignDataWrapper(AlterFdwStmt *stmt)
+AlterForeignDataWrapper(ParseState *pstate, AlterFdwStmt *stmt)
 {
 	Relation	rel;
 	HeapTuple	tp;
@@ -717,7 +713,7 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 	memset(repl_null, false, sizeof(repl_null));
 	memset(repl_repl, false, sizeof(repl_repl));
 
-	parse_func_options(stmt->func_options,
+	parse_func_options(pstate, stmt->func_options,
 					   &handler_given, &fdwhandler,
 					   &validator_given, &fdwvalidator);
 
@@ -832,30 +828,6 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 	table_close(rel, RowExclusiveLock);
 
 	return myself;
-}
-
-
-/*
- * Drop foreign-data wrapper by OID
- */
-void
-RemoveForeignDataWrapperById(Oid fdwId)
-{
-	HeapTuple	tp;
-	Relation	rel;
-
-	rel = table_open(ForeignDataWrapperRelationId, RowExclusiveLock);
-
-	tp = SearchSysCache1(FOREIGNDATAWRAPPEROID, ObjectIdGetDatum(fdwId));
-
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for foreign-data wrapper %u", fdwId);
-
-	CatalogTupleDelete(rel, &tp->t_self);
-
-	ReleaseSysCache(tp);
-
-	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -1082,30 +1054,6 @@ AlterForeignServer(AlterForeignServerStmt *stmt)
 	table_close(rel, RowExclusiveLock);
 
 	return address;
-}
-
-
-/*
- * Drop foreign server by OID
- */
-void
-RemoveForeignServerById(Oid srvId)
-{
-	HeapTuple	tp;
-	Relation	rel;
-
-	rel = table_open(ForeignServerRelationId, RowExclusiveLock);
-
-	tp = SearchSysCache1(FOREIGNSERVEROID, ObjectIdGetDatum(srvId));
-
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for foreign server %u", srvId);
-
-	CatalogTupleDelete(rel, &tp->t_self);
-
-	ReleaseSysCache(tp);
-
-	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -1343,6 +1291,9 @@ AlterUserMapping(AlterUserMappingStmt *stmt)
 
 	CatalogTupleUpdate(rel, &tp->t_self, tp);
 
+	InvokeObjectPostAlterHook(UserMappingRelationId,
+							  umId, 0);
+
 	ObjectAddressSet(address, UserMappingRelationId, umId);
 
 	heap_freetuple(tp);
@@ -1431,29 +1382,6 @@ RemoveUserMapping(DropUserMappingStmt *stmt)
 	return umId;
 }
 
-
-/*
- * Drop user mapping by OID.  This is called to clean up dependencies.
- */
-void
-RemoveUserMappingById(Oid umId)
-{
-	HeapTuple	tp;
-	Relation	rel;
-
-	rel = table_open(UserMappingRelationId, RowExclusiveLock);
-
-	tp = SearchSysCache1(USERMAPPINGOID, ObjectIdGetDatum(umId));
-
-	if (!HeapTupleIsValid(tp))
-		elog(ERROR, "cache lookup failed for user mapping %u", umId);
-
-	CatalogTupleDelete(rel, &tp->t_self);
-
-	ReleaseSysCache(tp);
-
-	table_close(rel, RowExclusiveLock);
-}
 
 /*
  * Create a foreign table
@@ -1638,8 +1566,7 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 			pstmt->stmt_len = rs->stmt_len;
 
 			/* Execute statement */
-			ProcessUtility(pstmt,
-						   cmd,
+			ProcessUtility(pstmt, cmd, false,
 						   PROCESS_UTILITY_SUBCOMMAND, NULL, NULL,
 						   None_Receiver, NULL);
 

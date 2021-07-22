@@ -92,7 +92,7 @@
  * heap's TOAST table will go through the normal bufmgr.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * IDENTIFICATION
@@ -136,7 +136,6 @@ typedef struct RewriteStateData
 	Page		rs_buffer;		/* page currently being built */
 	BlockNumber rs_blockno;		/* block where page will go */
 	bool		rs_buffer_valid;	/* T if any tuples in buffer */
-	bool		rs_use_wal;		/* must we WAL-log inserts? */
 	bool		rs_logical_rewrite; /* do we need to do logical rewriting */
 	TransactionId rs_oldest_xmin;	/* oldest xmin used by caller to determine
 									 * tuple visibility */
@@ -230,15 +229,13 @@ static void logical_end_heap_rewrite(RewriteState state);
  * oldest_xmin	xid used by the caller to determine which tuples are dead
  * freeze_xid	xid before which tuples will be frozen
  * cutoff_multi	multixact before which multis will be removed
- * use_wal		should the inserts to the new heap be WAL-logged?
  *
  * Returns an opaque RewriteState, allocated in current memory context,
  * to be used in subsequent calls to the other functions.
  */
 RewriteState
 begin_heap_rewrite(Relation old_heap, Relation new_heap, TransactionId oldest_xmin,
-				   TransactionId freeze_xid, MultiXactId cutoff_multi,
-				   bool use_wal)
+				   TransactionId freeze_xid, MultiXactId cutoff_multi)
 {
 	RewriteState state;
 	MemoryContext rw_cxt;
@@ -263,14 +260,12 @@ begin_heap_rewrite(Relation old_heap, Relation new_heap, TransactionId oldest_xm
 	/* new_heap needn't be empty, just locked */
 	state->rs_blockno = RelationGetNumberOfBlocks(new_heap);
 	state->rs_buffer_valid = false;
-	state->rs_use_wal = use_wal;
 	state->rs_oldest_xmin = oldest_xmin;
 	state->rs_freeze_xid = freeze_xid;
 	state->rs_cutoff_multi = cutoff_multi;
 	state->rs_cxt = rw_cxt;
 
 	/* Initialize hash tables used to track update chains */
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(TidHashKey);
 	hash_ctl.entrysize = sizeof(UnresolvedTupData);
 	hash_ctl.hcxt = state->rs_cxt;
@@ -322,33 +317,28 @@ end_heap_rewrite(RewriteState state)
 	/* Write the last page, if any */
 	if (state->rs_buffer_valid)
 	{
-		if (state->rs_use_wal)
+		if (RelationNeedsWAL(state->rs_new_rel))
 			log_newpage(&state->rs_new_rel->rd_node,
 						MAIN_FORKNUM,
 						state->rs_blockno,
 						state->rs_buffer,
 						true);
-		RelationOpenSmgr(state->rs_new_rel);
 
 		PageSetChecksumInplace(state->rs_buffer, state->rs_blockno);
 
-		smgrextend(state->rs_new_rel->rd_smgr, MAIN_FORKNUM, state->rs_blockno,
-				   (char *) state->rs_buffer, true);
+		smgrextend(RelationGetSmgr(state->rs_new_rel), MAIN_FORKNUM,
+				   state->rs_blockno, (char *) state->rs_buffer, true);
 	}
 
 	/*
-	 * If the rel is WAL-logged, must fsync before commit.  We use heap_sync
-	 * to ensure that the toast table gets fsync'd too.
-	 *
-	 * It's obvious that we must do this when not WAL-logging. It's less
-	 * obvious that we have to do it even if we did WAL-log the pages. The
+	 * When we WAL-logged rel pages, we must nonetheless fsync them.  The
 	 * reason is the same as in storage.c's RelationCopyStorage(): we're
 	 * writing data that's not in shared buffers, and so a CHECKPOINT
 	 * occurring during the rewriteheap operation won't have fsync'd data we
 	 * wrote before the checkpoint.
 	 */
 	if (RelationNeedsWAL(state->rs_new_rel))
-		heap_sync(state->rs_new_rel);
+		smgrimmedsync(RelationGetSmgr(state->rs_new_rel), MAIN_FORKNUM);
 
 	logical_end_heap_rewrite(state);
 
@@ -646,9 +636,6 @@ raw_heap_insert(RewriteState state, HeapTuple tup)
 	{
 		int			options = HEAP_INSERT_SKIP_FSM;
 
-		if (!state->rs_use_wal)
-			options |= HEAP_INSERT_SKIP_WAL;
-
 		/*
 		 * While rewriting the heap for VACUUM FULL / CLUSTER, make sure data
 		 * for the TOAST table are not logically decoded.  The main heap is
@@ -684,10 +671,14 @@ raw_heap_insert(RewriteState state, HeapTuple tup)
 
 		if (len + saveFreeSpace > pageFreeSpace)
 		{
-			/* Doesn't fit, so write out the existing page */
+			/*
+			 * Doesn't fit, so write out the existing page.  It always
+			 * contains a tuple.  Hence, unlike RelationGetBufferForTuple(),
+			 * enforce saveFreeSpace unconditionally.
+			 */
 
 			/* XLOG stuff */
-			if (state->rs_use_wal)
+			if (RelationNeedsWAL(state->rs_new_rel))
 				log_newpage(&state->rs_new_rel->rd_node,
 							MAIN_FORKNUM,
 							state->rs_blockno,
@@ -699,11 +690,9 @@ raw_heap_insert(RewriteState state, HeapTuple tup)
 			 * need for smgr to schedule an fsync for this write; we'll do it
 			 * ourselves in end_heap_rewrite.
 			 */
-			RelationOpenSmgr(state->rs_new_rel);
-
 			PageSetChecksumInplace(page, state->rs_blockno);
 
-			smgrextend(state->rs_new_rel->rd_smgr, MAIN_FORKNUM,
+			smgrextend(RelationGetSmgr(state->rs_new_rel), MAIN_FORKNUM,
 					   state->rs_blockno, (char *) page, true);
 
 			state->rs_blockno++;
@@ -835,7 +824,6 @@ logical_begin_heap_rewrite(RewriteState state)
 	state->rs_begin_lsn = GetXLogInsertRecPtr();
 	state->rs_num_rewrite_mappings = 0;
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(TransactionId);
 	hash_ctl.entrysize = sizeof(RewriteMappingFile);
 	hash_ctl.hcxt = state->rs_cxt;
@@ -1010,8 +998,7 @@ logical_rewrite_log_mapping(RewriteState state, TransactionId xid,
 		snprintf(path, MAXPGPATH,
 				 "pg_logical/mappings/" LOGICAL_REWRITE_FORMAT,
 				 dboid, relid,
-				 (uint32) (state->rs_begin_lsn >> 32),
-				 (uint32) state->rs_begin_lsn,
+				 LSN_FORMAT_ARGS(state->rs_begin_lsn),
 				 xid, GetCurrentTransactionId());
 
 		dlist_init(&src->mappings);
@@ -1133,8 +1120,7 @@ heap_xlog_logical_rewrite(XLogReaderState *r)
 	snprintf(path, MAXPGPATH,
 			 "pg_logical/mappings/" LOGICAL_REWRITE_FORMAT,
 			 xlrec->mapped_db, xlrec->mapped_rel,
-			 (uint32) (xlrec->start_lsn >> 32),
-			 (uint32) xlrec->start_lsn,
+			 LSN_FORMAT_ARGS(xlrec->start_lsn),
 			 xlrec->mapped_xid, XLogRecGetXid(r));
 
 	fd = OpenTransientFile(path,
@@ -1269,8 +1255,8 @@ CheckPointLogicalRewriteHeap(void)
 
 			/*
 			 * The file cannot vanish due to concurrency since this function
-			 * is the only one removing logical mappings and it's run while
-			 * CheckpointLock is held exclusively.
+			 * is the only one removing logical mappings and only one
+			 * checkpoint can be in progress at a time.
 			 */
 			if (fd < 0)
 				ereport(ERROR,

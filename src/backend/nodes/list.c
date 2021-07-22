@@ -6,7 +6,7 @@
  * See comments in pg_list.h.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,6 +18,7 @@
 #include "postgres.h"
 
 #include "nodes/pg_list.h"
+#include "port/pg_bitutils.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
 
@@ -119,9 +120,7 @@ new_list(NodeTag type, int min_size)
 	 * that's more than twice the size of an existing list, so the size limits
 	 * within palloc will ensure that we don't overflow here.
 	 */
-	max_size = 8;				/* semi-arbitrary small power of 2 */
-	while (max_size < min_size + LIST_HEADER_OVERHEAD)
-		max_size *= 2;
+	max_size = pg_nextpower2_32(Max(8, min_size + LIST_HEADER_OVERHEAD));
 	max_size -= LIST_HEADER_OVERHEAD;
 #else
 
@@ -160,12 +159,12 @@ enlarge_list(List *list, int min_size)
 
 	/*
 	 * As above, we prefer power-of-two total allocations; but here we need
-	 * not account for list header overhead.  The existing max length might
-	 * not be a power of 2, so don't rely on that.
+	 * not account for list header overhead.
 	 */
-	new_max_len = 16;			/* semi-arbitrary small power of 2 */
-	while (new_max_len < min_size)
-		new_max_len *= 2;
+
+	/* clamp the minimum value to 16, a semi-arbitrary small power of 2 */
+	new_max_len = pg_nextpower2_32(Max(16, min_size));
+
 #else
 	/* As above, don't allocate anything extra */
 	new_max_len = min_size;
@@ -278,6 +277,21 @@ list_make4_impl(NodeTag t, ListCell datum1, ListCell datum2,
 	return list;
 }
 
+List *
+list_make5_impl(NodeTag t, ListCell datum1, ListCell datum2,
+				ListCell datum3, ListCell datum4, ListCell datum5)
+{
+	List	   *list = new_list(t, 5);
+
+	list->elements[0] = datum1;
+	list->elements[1] = datum2;
+	list->elements[2] = datum3;
+	list->elements[3] = datum4;
+	list->elements[4] = datum5;
+	check_list_invariants(list);
+	return list;
+}
+
 /*
  * Make room for a new head cell in the given (non-NIL) list.
  *
@@ -328,7 +342,7 @@ lappend(List *list, void *datum)
 	else
 		new_tail_cell(list);
 
-	lfirst(list_tail(list)) = datum;
+	llast(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -346,7 +360,7 @@ lappend_int(List *list, int datum)
 	else
 		new_tail_cell(list);
 
-	lfirst_int(list_tail(list)) = datum;
+	llast_int(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -364,7 +378,7 @@ lappend_oid(List *list, Oid datum)
 	else
 		new_tail_cell(list);
 
-	lfirst_oid(list_tail(list)) = datum;
+	llast_oid(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -460,7 +474,7 @@ lcons(void *datum, List *list)
 	else
 		new_head_cell(list);
 
-	lfirst(list_head(list)) = datum;
+	linitial(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -478,7 +492,7 @@ lcons_int(int datum, List *list)
 	else
 		new_head_cell(list);
 
-	lfirst_int(list_head(list)) = datum;
+	linitial_int(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -496,7 +510,7 @@ lcons_oid(Oid datum, List *list)
 	else
 		new_head_cell(list);
 
-	lfirst_oid(list_head(list)) = datum;
+	linitial_oid(list) = datum;
 	check_list_invariants(list);
 	return list;
 }
@@ -1490,6 +1504,22 @@ list_sort(List *list, list_sort_comparator cmp)
 	len = list_length(list);
 	if (len > 1)
 		qsort(list->elements, len, sizeof(ListCell), (qsort_comparator) cmp);
+}
+
+/*
+ * list_sort comparator for sorting a list into ascending int order.
+ */
+int
+list_int_cmp(const ListCell *p1, const ListCell *p2)
+{
+	int			v1 = lfirst_int(p1);
+	int			v2 = lfirst_int(p2);
+
+	if (v1 < v2)
+		return -1;
+	if (v1 > v2)
+		return 1;
+	return 0;
 }
 
 /*

@@ -4,7 +4,7 @@
  *	  interface routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -62,6 +62,7 @@ gisthandler(PG_FUNCTION_ARGS)
 
 	amroutine->amstrategies = 0;
 	amroutine->amsupport = GISTNProcs;
+	amroutine->amoptsprocnum = GIST_OPTIONS_PROC;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = true;
 	amroutine->amcanbackward = false;
@@ -91,6 +92,7 @@ gisthandler(PG_FUNCTION_ARGS)
 	amroutine->amproperty = gistproperty;
 	amroutine->ambuildphasename = NULL;
 	amroutine->amvalidate = gistvalidate;
+	amroutine->amadjustmembers = gistadjustmembers;
 	amroutine->ambeginscan = gistbeginscan;
 	amroutine->amrescan = gistrescan;
 	amroutine->amgettuple = gistgettuple;
@@ -154,6 +156,7 @@ bool
 gistinsert(Relation r, Datum *values, bool *isnull,
 		   ItemPointer ht_ctid, Relation heapRel,
 		   IndexUniqueCheck checkUnique,
+		   bool indexUnchanged,
 		   IndexInfo *indexInfo)
 {
 	GISTSTATE  *giststate = (GISTSTATE *) indexInfo->ii_AmCache;
@@ -244,6 +247,9 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 	 */
 	if (GistFollowRight(page))
 		elog(ERROR, "concurrent GiST page split was incomplete");
+
+	/* should never try to insert to a deleted page */
+	Assert(!GistPageIsDeleted(page));
 
 	*splitinfo = NIL;
 
@@ -860,7 +866,7 @@ gistdoinsert(Relation r, IndexTuple itup, Size freespace,
 					 */
 				}
 				else if ((GistFollowRight(stack->page) ||
-						  stack->parent->lsn < GistPageGetNSN(stack->page)) &&
+						  stack->parent->lsn < GistPageGetNSN(stack->page)) ||
 						 GistPageIsDeleted(stack->page))
 				{
 					/*
@@ -1165,8 +1171,9 @@ gistfixsplit(GISTInsertState *state, GISTSTATE *giststate)
 	Page		page;
 	List	   *splitinfo = NIL;
 
-	elog(LOG, "fixing incomplete split in index \"%s\", block %u",
-		 RelationGetRelationName(state->r), stack->blkno);
+	ereport(LOG,
+			(errmsg("fixing incomplete split in index \"%s\", block %u",
+					RelationGetRelationName(state->r), stack->blkno)));
 
 	Assert(GistFollowRight(stack->page));
 	Assert(OffsetNumberIsValid(stack->downlinkoffnum));
@@ -1346,8 +1353,8 @@ gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 							 left->buf, right->buf, false, false))
 		{
 			/*
-			 * If the parent page was split, the existing downlink might
-			 * have moved.
+			 * If the parent page was split, the existing downlink might have
+			 * moved.
 			 */
 			stack->downlinkoffnum = InvalidOffsetNumber;
 		}
@@ -1369,9 +1376,10 @@ gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 						 tuples, 2,
 						 stack->downlinkoffnum,
 						 left->buf, right->buf,
-						 true,		/* Unlock parent */
-						 unlockbuf	/* Unlock stack->buffer if caller wants that */
-			))
+						 true,	/* Unlock parent */
+						 unlockbuf	/* Unlock stack->buffer if caller wants
+									 * that */
+						 ))
 	{
 		/*
 		 * If the parent page was split, the downlink might have moved.
@@ -1637,7 +1645,6 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 	int			ndeletable = 0;
 	OffsetNumber offnum,
 				maxoff;
-	TransactionId latestRemovedXid = InvalidTransactionId;
 
 	Assert(GistPageIsLeaf(page));
 
@@ -1656,13 +1663,15 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 			deletable[ndeletable++] = offnum;
 	}
 
-	if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
-		latestRemovedXid =
-			index_compute_xid_horizon_for_tuples(rel, heapRel, buffer,
-												 deletable, ndeletable);
-
 	if (ndeletable > 0)
 	{
+		TransactionId latestRemovedXid = InvalidTransactionId;
+
+		if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
+			latestRemovedXid =
+				index_compute_xid_horizon_for_tuples(rel, heapRel, buffer,
+													 deletable, ndeletable);
+
 		START_CRIT_SECTION();
 
 		PageIndexMultiDelete(page, deletable, ndeletable);

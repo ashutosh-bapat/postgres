@@ -4,7 +4,7 @@
  *	  Definitions for PostgreSQL attribute mappings
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/attmap.h
@@ -40,7 +40,7 @@ typedef struct AttrMap
 extern AttrMap *make_attrmap(int maplen);
 extern void free_attrmap(AttrMap *map);
 
-/* Convertion routines to build mappings */
+/* Conversion routines to build mappings */
 extern AttrMap *build_attrmap_by_name(TupleDesc indesc,
 									  TupleDesc outdesc);
 extern AttrMap *build_attrmap_by_name_if_req(TupleDesc indesc,

@@ -35,6 +35,22 @@ insert into gin_test_tbl select array[1, 3, g] from generate_series(1, 1000) g;
 delete from gin_test_tbl where i @> array[2];
 vacuum gin_test_tbl;
 
+-- Test for "rare && frequent" searches
+explain (costs off)
+select count(*) from gin_test_tbl where i @> array[1, 999];
+
+select count(*) from gin_test_tbl where i @> array[1, 999];
+
+-- Very weak test for gin_fuzzy_search_limit
+set gin_fuzzy_search_limit = 1000;
+
+explain (costs off)
+select count(*) > 0 as ok from gin_test_tbl where i @> array[1];
+
+select count(*) > 0 as ok from gin_test_tbl where i @> array[1];
+
+reset gin_fuzzy_search_limit;
+
 -- Test optimization of empty queries
 create temp table t_gin_test_tbl(i int4[], j int4[]);
 create index on t_gin_test_tbl using gin (i, j);
@@ -118,6 +134,38 @@ from
   lateral explain_query_json($$select * from t_gin_test_tbl where $$ || query) js,
   lateral execute_text_query_index($$select string_agg((i, j)::text, ' ') from t_gin_test_tbl where $$ || query) res_index,
   lateral execute_text_query_heap($$select string_agg((i, j)::text, ' ') from t_gin_test_tbl where $$ || query) res_heap;
+
+reset enable_seqscan;
+reset enable_bitmapscan;
+
+-- re-purpose t_gin_test_tbl to test scans involving posting trees
+insert into t_gin_test_tbl select array[1, g, g/10], array[2, g, g/10]
+  from generate_series(1, 20000) g;
+
+select gin_clean_pending_list('t_gin_test_tbl_i_j_idx') is not null;
+
+analyze t_gin_test_tbl;
+
+set enable_seqscan = off;
+set enable_bitmapscan = on;
+
+explain (costs off)
+select count(*) from t_gin_test_tbl where j @> array[50];
+select count(*) from t_gin_test_tbl where j @> array[50];
+explain (costs off)
+select count(*) from t_gin_test_tbl where j @> array[2];
+select count(*) from t_gin_test_tbl where j @> array[2];
+explain (costs off)
+select count(*) from t_gin_test_tbl where j @> '{}'::int[];
+select count(*) from t_gin_test_tbl where j @> '{}'::int[];
+
+-- test vacuuming of posting trees
+delete from t_gin_test_tbl where j @> array[2];
+vacuum t_gin_test_tbl;
+
+select count(*) from t_gin_test_tbl where j @> array[50];
+select count(*) from t_gin_test_tbl where j @> array[2];
+select count(*) from t_gin_test_tbl where j @> '{}'::int[];
 
 reset enable_seqscan;
 reset enable_bitmapscan;

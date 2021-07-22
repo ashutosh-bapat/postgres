@@ -15,6 +15,7 @@ include $(top_builddir)/src/Makefile.global
 # be-fsstubs is here for historical reasons, probably belongs elsewhere
 
 OBJS = \
+	auth-sasl.o \
 	auth-scram.o \
 	auth.o \
 	be-fsstubs.o \
@@ -28,7 +29,7 @@ OBJS = \
 	pqmq.o \
 	pqsignal.o
 
-ifeq ($(with_openssl),yes)
+ifeq ($(with_ssl),openssl)
 OBJS += be-secure-openssl.o
 endif
 

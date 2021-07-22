@@ -3,7 +3,7 @@
  * dummy_index_am.c
  *		Index AM template main file.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -31,10 +31,11 @@ relopt_parse_elt di_relopt_tab[6];
 /* Kind of relation options for dummy index */
 relopt_kind di_relopt_kind;
 
-typedef enum DummyAmEnum {
+typedef enum DummyAmEnum
+{
 	DUMMY_AM_ENUM_ONE,
 	DUMMY_AM_ENUM_TWO
-} DummyAmEnum;
+}			DummyAmEnum;
 
 /* Dummy index options */
 typedef struct DummyIndexOptions
@@ -43,16 +44,16 @@ typedef struct DummyIndexOptions
 	int			option_int;
 	double		option_real;
 	bool		option_bool;
-	DummyAmEnum	option_enum;
+	DummyAmEnum option_enum;
 	int			option_string_val_offset;
 	int			option_string_null_offset;
-} DummyIndexOptions;
+}			DummyIndexOptions;
 
 relopt_enum_elt_def dummyAmEnumValues[] =
 {
 	{"one", DUMMY_AM_ENUM_ONE},
 	{"two", DUMMY_AM_ENUM_TWO},
-	{(const char *)NULL}		/* list terminator */
+	{(const char *) NULL}		/* list terminator */
 };
 
 /* Handler for index AM */
@@ -152,7 +153,7 @@ dibuild(Relation heap, Relation index, IndexInfo *indexInfo)
 }
 
 /*
- * Build an empty index for the initialiation fork.
+ * Build an empty index for the initialization fork.
  */
 static void
 dibuildempty(Relation index)
@@ -167,6 +168,7 @@ static bool
 diinsert(Relation index, Datum *values, bool *isnull,
 		 ItemPointer ht_ctid, Relation heapRel,
 		 IndexUniqueCheck checkUnique,
+		 bool indexUnchanged,
 		 IndexInfo *indexInfo)
 {
 	/* nothing to do */

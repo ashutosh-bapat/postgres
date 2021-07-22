@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 package VSObjectFactory;
 
 #
@@ -120,7 +123,7 @@ sub DetermineVisualStudioVersion
 		$? >> 8 == 0
 		  or croak
 		  "Unable to determine Visual Studio version: The nmake command wasn't found.";
-		if ($output =~ /(\d+)\.(\d+)\.\d+(\.\d+)?$/m)
+		if ($output =~ /(\d+)\.(\d+)\.\d+(\.\d+)?/)
 		{
 			return _GetVisualStudioVersion($1, $2);
 		}

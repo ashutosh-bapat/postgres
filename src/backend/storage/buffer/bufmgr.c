@@ -3,7 +3,7 @@
  * bufmgr.c
  *	  buffer manager interface routines
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -49,6 +49,8 @@
 #include "storage/proc.h"
 #include "storage/smgr.h"
 #include "storage/standby.h"
+#include "utils/memdebug.h"
+#include "utils/ps_status.h"
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
 #include "utils/timestamp.h"
@@ -66,7 +68,15 @@
 #define BUF_WRITTEN				0x01
 #define BUF_REUSABLE			0x02
 
-#define DROP_RELS_BSEARCH_THRESHOLD		20
+#define RELS_BSEARCH_THRESHOLD		20
+
+/*
+ * This is the size (in the number of blocks) above which we scan the
+ * entire buffer pool to remove the buffers for all the pages of relation
+ * being dropped. For the relations with size below this threshold, we find
+ * the buffers by doing lookups in BufMapping table.
+ */
+#define BUF_DROP_FULL_SCAN_THRESHOLD		(uint64) (NBuffers / 32)
 
 typedef struct PrivateRefCountEntry
 {
@@ -104,6 +114,19 @@ typedef struct CkptTsStatus
 	/* current offset in CkptBufferIds for this tablespace */
 	int			index;
 } CkptTsStatus;
+
+/*
+ * Type for array used to sort SMgrRelations
+ *
+ * FlushRelationsAllBuffers shares the same comparator function with
+ * DropRelFileNodesAllBuffers. Pointer to this struct and RelFileNode must be
+ * compatible.
+ */
+typedef struct SMgrSortArray
+{
+	RelFileNode rnode;			/* This must be the first member */
+	SMgrRelation srel;
+} SMgrSortArray;
 
 /* GUC variables */
 bool		zero_damaged_pages = false;
@@ -458,13 +481,83 @@ static BufferDesc *BufferAlloc(SMgrRelation smgr,
 							   BufferAccessStrategy strategy,
 							   bool *foundPtr);
 static void FlushBuffer(BufferDesc *buf, SMgrRelation reln);
+static void FindAndDropRelFileNodeBuffers(RelFileNode rnode,
+										  ForkNumber forkNum,
+										  BlockNumber nForkBlock,
+										  BlockNumber firstDelBlock);
 static void AtProcExit_Buffers(int code, Datum arg);
 static void CheckForBufferLeaks(void);
 static int	rnode_comparator(const void *p1, const void *p2);
-static int	buffertag_comparator(const void *p1, const void *p2);
-static int	ckpt_buforder_comparator(const void *pa, const void *pb);
+static inline int buffertag_comparator(const BufferTag *a, const BufferTag *b);
+static inline int ckpt_buforder_comparator(const CkptSortItem *a, const CkptSortItem *b);
 static int	ts_ckpt_progress_comparator(Datum a, Datum b, void *arg);
 
+
+/*
+ * Implementation of PrefetchBuffer() for shared buffers.
+ */
+PrefetchBufferResult
+PrefetchSharedBuffer(SMgrRelation smgr_reln,
+					 ForkNumber forkNum,
+					 BlockNumber blockNum)
+{
+	PrefetchBufferResult result = {InvalidBuffer, false};
+	BufferTag	newTag;			/* identity of requested block */
+	uint32		newHash;		/* hash value for newTag */
+	LWLock	   *newPartitionLock;	/* buffer partition lock for it */
+	int			buf_id;
+
+	Assert(BlockNumberIsValid(blockNum));
+
+	/* create a tag so we can lookup the buffer */
+	INIT_BUFFERTAG(newTag, smgr_reln->smgr_rnode.node,
+				   forkNum, blockNum);
+
+	/* determine its hash code and partition lock ID */
+	newHash = BufTableHashCode(&newTag);
+	newPartitionLock = BufMappingPartitionLock(newHash);
+
+	/* see if the block is in the buffer pool already */
+	LWLockAcquire(newPartitionLock, LW_SHARED);
+	buf_id = BufTableLookup(&newTag, newHash);
+	LWLockRelease(newPartitionLock);
+
+	/* If not in buffers, initiate prefetch */
+	if (buf_id < 0)
+	{
+#ifdef USE_PREFETCH
+		/*
+		 * Try to initiate an asynchronous read.  This returns false in
+		 * recovery if the relation file doesn't exist.
+		 */
+		if (smgrprefetch(smgr_reln, forkNum, blockNum))
+			result.initiated_io = true;
+#endif							/* USE_PREFETCH */
+	}
+	else
+	{
+		/*
+		 * Report the buffer it was in at that time.  The caller may be able
+		 * to avoid a buffer table lookup, but it's not pinned and it must be
+		 * rechecked!
+		 */
+		result.recent_buffer = buf_id + 1;
+	}
+
+	/*
+	 * If the block *is* in buffers, we do nothing.  This is not really ideal:
+	 * the block might be just about to be evicted, which would be stupid
+	 * since we know we are going to need it soon.  But the only easy answer
+	 * is to bump the usage_count, which does not seem like a great solution:
+	 * when the caller does ultimately touch the block, usage_count would get
+	 * bumped again, resulting in too much favoritism for blocks that are
+	 * involved in a prefetch sequence. A real fix would involve some
+	 * additional per-buffer state, and it's not clear that there's enough of
+	 * a problem to justify that.
+	 */
+
+	return result;
+}
 
 /*
  * PrefetchBuffer -- initiate asynchronous read of a block of a relation
@@ -472,17 +565,29 @@ static int	ts_ckpt_progress_comparator(Datum a, Datum b, void *arg);
  * This is named by analogy to ReadBuffer but doesn't actually allocate a
  * buffer.  Instead it tries to ensure that a future ReadBuffer for the given
  * block will not be delayed by the I/O.  Prefetching is optional.
- * No-op if prefetching isn't compiled in.
+ *
+ * There are three possible outcomes:
+ *
+ * 1.  If the block is already cached, the result includes a valid buffer that
+ * could be used by the caller to avoid the need for a later buffer lookup, but
+ * it's not pinned, so the caller must recheck it.
+ *
+ * 2.  If the kernel has been asked to initiate I/O, the initiated_io member is
+ * true.  Currently there is no way to know if the data was already cached by
+ * the kernel and therefore didn't really initiate I/O, and no way to know when
+ * the I/O completes other than using synchronous ReadBuffer().
+ *
+ * 3.  Otherwise, the buffer wasn't already cached by PostgreSQL, and either
+ * USE_PREFETCH is not defined (this build doesn't support prefetching due to
+ * lack of a kernel facility), or the underlying relation file wasn't found and
+ * we are in recovery.  (If the relation file wasn't found and we are not in
+ * recovery, an error is raised).
  */
-void
+PrefetchBufferResult
 PrefetchBuffer(Relation reln, ForkNumber forkNum, BlockNumber blockNum)
 {
-#ifdef USE_PREFETCH
 	Assert(RelationIsValid(reln));
 	Assert(BlockNumberIsValid(blockNum));
-
-	/* Open it at the smgr level if not already done */
-	RelationOpenSmgr(reln);
 
 	if (RelationUsesLocalBuffers(reln))
 	{
@@ -493,47 +598,93 @@ PrefetchBuffer(Relation reln, ForkNumber forkNum, BlockNumber blockNum)
 					 errmsg("cannot access temporary tables of other sessions")));
 
 		/* pass it off to localbuf.c */
-		LocalPrefetchBuffer(reln->rd_smgr, forkNum, blockNum);
+		return PrefetchLocalBuffer(RelationGetSmgr(reln), forkNum, blockNum);
 	}
 	else
 	{
-		BufferTag	newTag;		/* identity of requested block */
-		uint32		newHash;	/* hash value for newTag */
-		LWLock	   *newPartitionLock;	/* buffer partition lock for it */
-		int			buf_id;
-
-		/* create a tag so we can lookup the buffer */
-		INIT_BUFFERTAG(newTag, reln->rd_smgr->smgr_rnode.node,
-					   forkNum, blockNum);
-
-		/* determine its hash code and partition lock ID */
-		newHash = BufTableHashCode(&newTag);
-		newPartitionLock = BufMappingPartitionLock(newHash);
-
-		/* see if the block is in the buffer pool already */
-		LWLockAcquire(newPartitionLock, LW_SHARED);
-		buf_id = BufTableLookup(&newTag, newHash);
-		LWLockRelease(newPartitionLock);
-
-		/* If not in buffers, initiate prefetch */
-		if (buf_id < 0)
-			smgrprefetch(reln->rd_smgr, forkNum, blockNum);
-
-		/*
-		 * If the block *is* in buffers, we do nothing.  This is not really
-		 * ideal: the block might be just about to be evicted, which would be
-		 * stupid since we know we are going to need it soon.  But the only
-		 * easy answer is to bump the usage_count, which does not seem like a
-		 * great solution: when the caller does ultimately touch the block,
-		 * usage_count would get bumped again, resulting in too much
-		 * favoritism for blocks that are involved in a prefetch sequence. A
-		 * real fix would involve some additional per-buffer state, and it's
-		 * not clear that there's enough of a problem to justify that.
-		 */
+		/* pass it to the shared buffer version */
+		return PrefetchSharedBuffer(RelationGetSmgr(reln), forkNum, blockNum);
 	}
-#endif							/* USE_PREFETCH */
 }
 
+/*
+ * ReadRecentBuffer -- try to pin a block in a recently observed buffer
+ *
+ * Compared to ReadBuffer(), this avoids a buffer mapping lookup when it's
+ * successful.  Return true if the buffer is valid and still has the expected
+ * tag.  In that case, the buffer is pinned and the usage count is bumped.
+ */
+bool
+ReadRecentBuffer(RelFileNode rnode, ForkNumber forkNum, BlockNumber blockNum,
+				 Buffer recent_buffer)
+{
+	BufferDesc *bufHdr;
+	BufferTag	tag;
+	uint32		buf_state;
+	bool		have_private_ref;
+
+	Assert(BufferIsValid(recent_buffer));
+
+	ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
+	ReservePrivateRefCountEntry();
+	INIT_BUFFERTAG(tag, rnode, forkNum, blockNum);
+
+	if (BufferIsLocal(recent_buffer))
+	{
+		bufHdr = GetBufferDescriptor(-recent_buffer - 1);
+		buf_state = pg_atomic_read_u32(&bufHdr->state);
+
+		/* Is it still valid and holding the right tag? */
+		if ((buf_state & BM_VALID) && BUFFERTAGS_EQUAL(tag, bufHdr->tag))
+		{
+			/* Bump local buffer's ref and usage counts. */
+			ResourceOwnerRememberBuffer(CurrentResourceOwner, recent_buffer);
+			LocalRefCount[-recent_buffer - 1]++;
+			if (BUF_STATE_GET_USAGECOUNT(buf_state) < BM_MAX_USAGE_COUNT)
+				pg_atomic_write_u32(&bufHdr->state,
+									buf_state + BUF_USAGECOUNT_ONE);
+
+			return true;
+		}
+	}
+	else
+	{
+		bufHdr = GetBufferDescriptor(recent_buffer - 1);
+		have_private_ref = GetPrivateRefCount(recent_buffer) > 0;
+
+		/*
+		 * Do we already have this buffer pinned with a private reference?  If
+		 * so, it must be valid and it is safe to check the tag without
+		 * locking.  If not, we have to lock the header first and then check.
+		 */
+		if (have_private_ref)
+			buf_state = pg_atomic_read_u32(&bufHdr->state);
+		else
+			buf_state = LockBufHdr(bufHdr);
+
+		if ((buf_state & BM_VALID) && BUFFERTAGS_EQUAL(tag, bufHdr->tag))
+		{
+			/*
+			 * It's now safe to pin the buffer.  We can't pin first and ask
+			 * questions later, because because it might confuse code paths
+			 * like InvalidateBuffer() if we pinned a random non-matching
+			 * buffer.
+			 */
+			if (have_private_ref)
+				PinBuffer(bufHdr, NULL);	/* bump pin count */
+			else
+				PinBuffer_Locked(bufHdr);	/* pin for first time */
+
+			return true;
+		}
+
+		/* If we locked the header above, now unlock. */
+		if (!have_private_ref)
+			UnlockBufHdr(bufHdr, buf_state);
+	}
+
+	return false;
+}
 
 /*
  * ReadBuffer -- a shorthand for ReadBufferExtended, for reading from main
@@ -561,7 +712,8 @@ ReadBuffer(Relation reln, BlockNumber blockNum)
  *
  * In RBM_NORMAL mode, the page is read from disk, and the page header is
  * validated.  An error is thrown if the page header is not valid.  (But
- * note that an all-zero page is considered "valid"; see PageIsVerified().)
+ * note that an all-zero page is considered "valid"; see
+ * PageIsVerifiedExtended().)
  *
  * RBM_ZERO_ON_ERROR is like the normal mode, but if the page header is not
  * valid, the page is zeroed instead of throwing an error. This is intended
@@ -592,9 +744,6 @@ ReadBufferExtended(Relation reln, ForkNumber forkNum, BlockNumber blockNum,
 	bool		hit;
 	Buffer		buf;
 
-	/* Open it at the smgr level if not already done */
-	RelationOpenSmgr(reln);
-
 	/*
 	 * Reject attempts to read non-local temporary relations; we would be
 	 * likely to get wrong data since we have no visibility into the owning
@@ -610,7 +759,7 @@ ReadBufferExtended(Relation reln, ForkNumber forkNum, BlockNumber blockNum,
 	 * miss.
 	 */
 	pgstat_count_buffer_read(reln);
-	buf = ReadBuffer_common(reln->rd_smgr, reln->rd_rel->relpersistence,
+	buf = ReadBuffer_common(RelationGetSmgr(reln), reln->rd_rel->relpersistence,
 							forkNum, blockNum, mode, strategy, &hit);
 	if (hit)
 		pgstat_count_buffer_hit(reln);
@@ -853,7 +1002,8 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 			}
 
 			/* check for garbage data */
-			if (!PageIsVerified((Page) bufBlock, blockNum))
+			if (!PageIsVerifiedExtended((Page) bufBlock, blockNum,
+										PIV_LOG_WARNING | PIV_REPORT_STAT))
 			{
 				if (mode == RBM_ZERO_ON_ERROR || zero_damaged_pages)
 				{
@@ -1274,9 +1424,10 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	LWLockRelease(newPartitionLock);
 
 	/*
-	 * Buffer contents are currently invalid.  Try to get the io_in_progress
-	 * lock.  If StartBufferIO returns false, then someone else managed to
-	 * read it before we did, so there's nothing left for BufferAlloc() to do.
+	 * Buffer contents are currently invalid.  Try to obtain the right to
+	 * start I/O.  If StartBufferIO returns false, then someone else managed
+	 * to read it before we did, so there's nothing left for BufferAlloc() to
+	 * do.
 	 */
 	if (StartBufferIO(buf, true))
 		*foundPtr = false;
@@ -1570,13 +1721,31 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 											   buf_state))
 			{
 				result = (buf_state & BM_VALID) != 0;
+
+				/*
+				 * Assume that we acquired a buffer pin for the purposes of
+				 * Valgrind buffer client checks (even in !result case) to
+				 * keep things simple.  Buffers that are unsafe to access are
+				 * not generally guaranteed to be marked undefined or
+				 * non-accessible in any case.
+				 */
+				VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
 				break;
 			}
 		}
 	}
 	else
 	{
-		/* If we previously pinned the buffer, it must surely be valid */
+		/*
+		 * If we previously pinned the buffer, it must surely be valid.
+		 *
+		 * Note: We deliberately avoid a Valgrind client request here.
+		 * Individual access methods can optionally superimpose buffer page
+		 * client requests on top of our client requests to enforce that
+		 * buffers are only accessed while locked (and pinned).  It's possible
+		 * that the buffer page is legitimately non-accessible here.  We
+		 * cannot meddle with that.
+		 */
 		result = true;
 	}
 
@@ -1619,6 +1788,13 @@ PinBuffer_Locked(BufferDesc *buf)
 	 * manipulate the PrivateRefCount after releasing the spinlock
 	 */
 	Assert(GetPrivateRefCountEntry(BufferDescriptorGetBuffer(buf), false) == NULL);
+
+	/*
+	 * Buffer can't have a preexisting pin, so mark its page as defined to
+	 * Valgrind (this is similar to the PinBuffer() case where the backend
+	 * doesn't already have a buffer pin)
+	 */
+	VALGRIND_MAKE_MEM_DEFINED(BufHdrGetBlock(buf), BLCKSZ);
 
 	/*
 	 * Since we hold the buffer spinlock, we can update the buffer state and
@@ -1665,9 +1841,17 @@ UnpinBuffer(BufferDesc *buf, bool fixOwner)
 		uint32		buf_state;
 		uint32		old_buf_state;
 
-		/* I'd better not still hold any locks on the buffer */
+		/*
+		 * Mark buffer non-accessible to Valgrind.
+		 *
+		 * Note that the buffer may have already been marked non-accessible
+		 * within access method code that enforces that buffers are only
+		 * accessed while a buffer lock is held.
+		 */
+		VALGRIND_MAKE_MEM_NOACCESS(BufHdrGetBlock(buf), BLCKSZ);
+
+		/* I'd better not still hold the buffer content lock */
 		Assert(!LWLockHeldByMe(BufferDescriptorGetContentLock(buf)));
-		Assert(!LWLockHeldByMe(BufferDescriptorGetIOLock(buf)));
 
 		/*
 		 * Decrement the shared reference count.
@@ -1718,6 +1902,13 @@ UnpinBuffer(BufferDesc *buf, bool fixOwner)
 		ForgetPrivateRefCountEntry(ref);
 	}
 }
+
+#define ST_SORT sort_checkpoint_bufferids
+#define ST_ELEMENT_TYPE CkptSortItem
+#define ST_COMPARE(a, b) ckpt_buforder_comparator(a, b)
+#define ST_SCOPE static
+#define ST_DEFINE
+#include <lib/sort_template.h>
 
 /*
  * BufferSync -- Write out all dirty buffers in the pool.
@@ -1819,8 +2010,7 @@ BufferSync(int flags)
 	 * end up writing to the tablespaces one-by-one; possibly overloading the
 	 * underlying system.
 	 */
-	qsort(CkptBufferIds, num_to_scan, sizeof(CkptSortItem),
-		  ckpt_buforder_comparator);
+	sort_checkpoint_bufferids(CkptBufferIds, num_to_scan);
 
 	num_spaces = 0;
 
@@ -2405,7 +2595,6 @@ InitBufferPoolAccess(void)
 
 	memset(&PrivateRefCountArray, 0, sizeof(PrivateRefCountArray));
 
-	MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(int32);
 	hash_ctl.entrysize = sizeof(PrivateRefCountEntry);
 
@@ -2538,14 +2727,7 @@ PrintBufferLeakWarning(Buffer buffer)
 void
 CheckPointBuffers(int flags)
 {
-	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_START(flags);
-	CheckpointStats.ckpt_write_t = GetCurrentTimestamp();
 	BufferSync(flags);
-	CheckpointStats.ckpt_sync_t = GetCurrentTimestamp();
-	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_SYNC_START();
-	ProcessSyncRequests();
-	CheckpointStats.ckpt_sync_end_t = GetCurrentTimestamp();
-	TRACE_POSTGRESQL_BUFFER_CHECKPOINT_DONE();
 }
 
 
@@ -2638,9 +2820,9 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 	uint32		buf_state;
 
 	/*
-	 * Acquire the buffer's io_in_progress lock.  If StartBufferIO returns
-	 * false, then someone else flushed the buffer before we could, so we need
-	 * not do anything.
+	 * Try to start an I/O operation.  If StartBufferIO returns false, then
+	 * someone else flushed the buffer before we could, so we need not do
+	 * anything.
 	 */
 	if (!StartBufferIO(buf, false))
 		return;
@@ -2696,7 +2878,7 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 	/*
 	 * Now it's safe to write buffer to disk. Note that no one else should
 	 * have been able to write it while we were busy with log flushing because
-	 * we have the io_in_progress lock.
+	 * only one process at a time can set the BM_IO_IN_PROGRESS bit.
 	 */
 	bufBlock = BufHdrGetBlock(buf);
 
@@ -2731,7 +2913,7 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln)
 
 	/*
 	 * Mark the buffer as clean (unless BM_JUST_DIRTIED has become set) and
-	 * end the io_in_progress state.
+	 * end the BM_IO_IN_PROGRESS state.
 	 */
 	TerminateBufferIO(buf, true, 0);
 
@@ -2761,10 +2943,7 @@ RelationGetNumberOfBlocksInFork(Relation relation, ForkNumber forkNum)
 		case RELKIND_SEQUENCE:
 		case RELKIND_INDEX:
 		case RELKIND_PARTITIONED_INDEX:
-			/* Open it at the smgr level if not already done */
-			RelationOpenSmgr(relation);
-
-			return smgrnblocks(relation->rd_smgr, forkNum);
+			return smgrnblocks(RelationGetSmgr(relation), forkNum);
 
 		case RELKIND_RELATION:
 		case RELKIND_TOASTVALUE:
@@ -2873,19 +3052,19 @@ BufferGetLSNAtomic(Buffer buffer)
  *		later.  It is also the responsibility of higher-level code to ensure
  *		that no other process could be trying to load more pages of the
  *		relation into buffers.
- *
- *		XXX currently it sequentially searches the buffer pool, should be
- *		changed to more clever ways of searching.  However, this routine
- *		is used only in code paths that aren't very performance-critical,
- *		and we shouldn't slow down the hot paths to make it faster ...
  * --------------------------------------------------------------------
  */
 void
-DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber *forkNum,
+DropRelFileNodeBuffers(SMgrRelation smgr_reln, ForkNumber *forkNum,
 					   int nforks, BlockNumber *firstDelBlock)
 {
 	int			i;
 	int			j;
+	RelFileNodeBackend rnode;
+	BlockNumber nForkBlock[MAX_FORKNUM];
+	uint64		nBlocksToInvalidate = 0;
+
+	rnode = smgr_reln->smgr_rnode;
 
 	/* If it's a local relation, it's localbuf.c's problem. */
 	if (RelFileNodeBackendIsTemp(rnode))
@@ -2896,6 +3075,56 @@ DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber *forkNum,
 				DropRelFileNodeLocalBuffers(rnode.node, forkNum[j],
 											firstDelBlock[j]);
 		}
+		return;
+	}
+
+	/*
+	 * To remove all the pages of the specified relation forks from the buffer
+	 * pool, we need to scan the entire buffer pool but we can optimize it by
+	 * finding the buffers from BufMapping table provided we know the exact
+	 * size of each fork of the relation. The exact size is required to ensure
+	 * that we don't leave any buffer for the relation being dropped as
+	 * otherwise the background writer or checkpointer can lead to a PANIC
+	 * error while flushing buffers corresponding to files that don't exist.
+	 *
+	 * To know the exact size, we rely on the size cached for each fork by us
+	 * during recovery which limits the optimization to recovery and on
+	 * standbys but we can easily extend it once we have shared cache for
+	 * relation size.
+	 *
+	 * In recovery, we cache the value returned by the first lseek(SEEK_END)
+	 * and the future writes keeps the cached value up-to-date. See
+	 * smgrextend. It is possible that the value of the first lseek is smaller
+	 * than the actual number of existing blocks in the file due to buggy
+	 * Linux kernels that might not have accounted for the recent write. But
+	 * that should be fine because there must not be any buffers after that
+	 * file size.
+	 */
+	for (i = 0; i < nforks; i++)
+	{
+		/* Get the number of blocks for a relation's fork */
+		nForkBlock[i] = smgrnblocks_cached(smgr_reln, forkNum[i]);
+
+		if (nForkBlock[i] == InvalidBlockNumber)
+		{
+			nBlocksToInvalidate = InvalidBlockNumber;
+			break;
+		}
+
+		/* calculate the number of blocks to be invalidated */
+		nBlocksToInvalidate += (nForkBlock[i] - firstDelBlock[i]);
+	}
+
+	/*
+	 * We apply the optimization iff the total number of blocks to invalidate
+	 * is below the BUF_DROP_FULL_SCAN_THRESHOLD.
+	 */
+	if (BlockNumberIsValid(nBlocksToInvalidate) &&
+		nBlocksToInvalidate < BUF_DROP_FULL_SCAN_THRESHOLD)
+	{
+		for (j = 0; j < nforks; j++)
+			FindAndDropRelFileNodeBuffers(rnode.node, forkNum[j],
+										  nForkBlock[j], firstDelBlock[j]);
 		return;
 	}
 
@@ -2931,7 +3160,7 @@ DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber *forkNum,
 				bufHdr->tag.forkNum == forkNum[j] &&
 				bufHdr->tag.blockNum >= firstDelBlock[j])
 			{
-				InvalidateBuffer(bufHdr); /* releases spinlock */
+				InvalidateBuffer(bufHdr);	/* releases spinlock */
 				break;
 			}
 		}
@@ -2950,28 +3179,33 @@ DropRelFileNodeBuffers(RelFileNodeBackend rnode, ForkNumber *forkNum,
  * --------------------------------------------------------------------
  */
 void
-DropRelFileNodesAllBuffers(RelFileNodeBackend *rnodes, int nnodes)
+DropRelFileNodesAllBuffers(SMgrRelation *smgr_reln, int nnodes)
 {
-	int			i,
-				n = 0;
+	int			i;
+	int			j;
+	int			n = 0;
+	SMgrRelation *rels;
+	BlockNumber (*block)[MAX_FORKNUM + 1];
+	uint64		nBlocksToInvalidate = 0;
 	RelFileNode *nodes;
+	bool		cached = true;
 	bool		use_bsearch;
 
 	if (nnodes == 0)
 		return;
 
-	nodes = palloc(sizeof(RelFileNode) * nnodes);	/* non-local relations */
+	rels = palloc(sizeof(SMgrRelation) * nnodes);	/* non-local relations */
 
 	/* If it's a local relation, it's localbuf.c's problem. */
 	for (i = 0; i < nnodes; i++)
 	{
-		if (RelFileNodeBackendIsTemp(rnodes[i]))
+		if (RelFileNodeBackendIsTemp(smgr_reln[i]->smgr_rnode))
 		{
-			if (rnodes[i].backend == MyBackendId)
-				DropRelFileNodeAllLocalBuffers(rnodes[i].node);
+			if (smgr_reln[i]->smgr_rnode.backend == MyBackendId)
+				DropRelFileNodeAllLocalBuffers(smgr_reln[i]->smgr_rnode.node);
 		}
 		else
-			nodes[n++] = rnodes[i].node;
+			rels[n++] = smgr_reln[i];
 	}
 
 	/*
@@ -2980,9 +3214,71 @@ DropRelFileNodesAllBuffers(RelFileNodeBackend *rnodes, int nnodes)
 	 */
 	if (n == 0)
 	{
-		pfree(nodes);
+		pfree(rels);
 		return;
 	}
+
+	/*
+	 * This is used to remember the number of blocks for all the relations
+	 * forks.
+	 */
+	block = (BlockNumber (*)[MAX_FORKNUM + 1])
+		palloc(sizeof(BlockNumber) * n * (MAX_FORKNUM + 1));
+
+	/*
+	 * We can avoid scanning the entire buffer pool if we know the exact size
+	 * of each of the given relation forks. See DropRelFileNodeBuffers.
+	 */
+	for (i = 0; i < n && cached; i++)
+	{
+		for (j = 0; j <= MAX_FORKNUM; j++)
+		{
+			/* Get the number of blocks for a relation's fork. */
+			block[i][j] = smgrnblocks_cached(rels[i], j);
+
+			/* We need to only consider the relation forks that exists. */
+			if (block[i][j] == InvalidBlockNumber)
+			{
+				if (!smgrexists(rels[i], j))
+					continue;
+				cached = false;
+				break;
+			}
+
+			/* calculate the total number of blocks to be invalidated */
+			nBlocksToInvalidate += block[i][j];
+		}
+	}
+
+	/*
+	 * We apply the optimization iff the total number of blocks to invalidate
+	 * is below the BUF_DROP_FULL_SCAN_THRESHOLD.
+	 */
+	if (cached && nBlocksToInvalidate < BUF_DROP_FULL_SCAN_THRESHOLD)
+	{
+		for (i = 0; i < n; i++)
+		{
+			for (j = 0; j <= MAX_FORKNUM; j++)
+			{
+				/* ignore relation forks that doesn't exist */
+				if (!BlockNumberIsValid(block[i][j]))
+					continue;
+
+				/* drop all the buffers for a particular relation fork */
+				FindAndDropRelFileNodeBuffers(rels[i]->smgr_rnode.node,
+											  j, block[i][j], 0);
+			}
+		}
+
+		pfree(block);
+		pfree(rels);
+		return;
+	}
+
+	pfree(block);
+	nodes = palloc(sizeof(RelFileNode) * n);	/* non-local relations */
+	for (i = 0; i < n; i++)
+		nodes[i] = rels[i]->smgr_rnode.node;
 
 	/*
 	 * For low number of relations to drop just use a simple walk through, to
@@ -2990,7 +3286,7 @@ DropRelFileNodesAllBuffers(RelFileNodeBackend *rnodes, int nnodes)
 	 * an exactly determined value, as it depends on many factors (CPU and RAM
 	 * speeds, amount of shared buffers etc.).
 	 */
-	use_bsearch = n > DROP_RELS_BSEARCH_THRESHOLD;
+	use_bsearch = n > RELS_BSEARCH_THRESHOLD;
 
 	/* sort the list of rnodes if necessary */
 	if (use_bsearch)
@@ -3039,6 +3335,66 @@ DropRelFileNodesAllBuffers(RelFileNodeBackend *rnodes, int nnodes)
 	}
 
 	pfree(nodes);
+	pfree(rels);
+}
+
+/* ---------------------------------------------------------------------
+ *		FindAndDropRelFileNodeBuffers
+ *
+ *		This function performs look up in BufMapping table and removes from the
+ *		buffer pool all the pages of the specified relation fork that has block
+ *		number >= firstDelBlock. (In particular, with firstDelBlock = 0, all
+ *		pages are removed.)
+ * --------------------------------------------------------------------
+ */
+static void
+FindAndDropRelFileNodeBuffers(RelFileNode rnode, ForkNumber forkNum,
+							  BlockNumber nForkBlock,
+							  BlockNumber firstDelBlock)
+{
+	BlockNumber curBlock;
+
+	for (curBlock = firstDelBlock; curBlock < nForkBlock; curBlock++)
+	{
+		uint32		bufHash;	/* hash value for tag */
+		BufferTag	bufTag;		/* identity of requested block */
+		LWLock	   *bufPartitionLock;	/* buffer partition lock for it */
+		int			buf_id;
+		BufferDesc *bufHdr;
+		uint32		buf_state;
+
+		/* create a tag so we can lookup the buffer */
+		INIT_BUFFERTAG(bufTag, rnode, forkNum, curBlock);
+
+		/* determine its hash code and partition lock ID */
+		bufHash = BufTableHashCode(&bufTag);
+		bufPartitionLock = BufMappingPartitionLock(bufHash);
+
+		/* Check that it is in the buffer pool. If not, do nothing. */
+		LWLockAcquire(bufPartitionLock, LW_SHARED);
+		buf_id = BufTableLookup(&bufTag, bufHash);
+		LWLockRelease(bufPartitionLock);
+
+		if (buf_id < 0)
+			continue;
+
+		bufHdr = GetBufferDescriptor(buf_id);
+
+		/*
+		 * We need to lock the buffer header and recheck if the buffer is
+		 * still associated with the same block because the buffer could be
+		 * evicted by some other backend loading blocks for a different
+		 * relation after we release lock on the BufMapping table.
+		 */
+		buf_state = LockBufHdr(bufHdr);
+
+		if (RelFileNodeEquals(bufHdr->tag.rnode, rnode) &&
+			bufHdr->tag.forkNum == forkNum &&
+			bufHdr->tag.blockNum >= firstDelBlock)
+			InvalidateBuffer(bufHdr);	/* releases spinlock */
+		else
+			UnlockBufHdr(bufHdr, buf_state);
+	}
 }
 
 /* ---------------------------------------------------------------------
@@ -3153,8 +3509,7 @@ PrintPinnedBufs(void)
  *		XXX currently it sequentially searches the buffer pool, should be
  *		changed to more clever ways of searching.  This routine is not
  *		used in any performance-critical code paths, so it's not worth
- *		adding additional overhead to normal paths to make it go faster;
- *		but see also DropRelFileNodeBuffers.
+ *		adding additional overhead to normal paths to make it go faster.
  * --------------------------------------------------------------------
  */
 void
@@ -3162,9 +3517,6 @@ FlushRelationBuffers(Relation rel)
 {
 	int			i;
 	BufferDesc *bufHdr;
-
-	/* Open rel at the smgr level if not already done */
-	RelationOpenSmgr(rel);
 
 	if (RelationUsesLocalBuffers(rel))
 	{
@@ -3190,7 +3542,7 @@ FlushRelationBuffers(Relation rel)
 
 				PageSetChecksumInplace(localpage, bufHdr->tag.blockNum);
 
-				smgrwrite(rel->rd_smgr,
+				smgrwrite(RelationGetSmgr(rel),
 						  bufHdr->tag.forkNum,
 						  bufHdr->tag.blockNum,
 						  localpage,
@@ -3231,13 +3583,111 @@ FlushRelationBuffers(Relation rel)
 		{
 			PinBuffer_Locked(bufHdr);
 			LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
-			FlushBuffer(bufHdr, rel->rd_smgr);
+			FlushBuffer(bufHdr, RelationGetSmgr(rel));
 			LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
 			UnpinBuffer(bufHdr, true);
 		}
 		else
 			UnlockBufHdr(bufHdr, buf_state);
 	}
+}
+
+/* ---------------------------------------------------------------------
+ *		FlushRelationsAllBuffers
+ *
+ *		This function flushes out of the buffer pool all the pages of all
+ *		forks of the specified smgr relations.  It's equivalent to calling
+ *		FlushRelationBuffers once per fork per relation.  The relations are
+ *		assumed not to use local buffers.
+ * --------------------------------------------------------------------
+ */
+void
+FlushRelationsAllBuffers(SMgrRelation *smgrs, int nrels)
+{
+	int			i;
+	SMgrSortArray *srels;
+	bool		use_bsearch;
+
+	if (nrels == 0)
+		return;
+
+	/* fill-in array for qsort */
+	srels = palloc(sizeof(SMgrSortArray) * nrels);
+
+	for (i = 0; i < nrels; i++)
+	{
+		Assert(!RelFileNodeBackendIsTemp(smgrs[i]->smgr_rnode));
+
+		srels[i].rnode = smgrs[i]->smgr_rnode.node;
+		srels[i].srel = smgrs[i];
+	}
+
+	/*
+	 * Save the bsearch overhead for low number of relations to sync. See
+	 * DropRelFileNodesAllBuffers for details.
+	 */
+	use_bsearch = nrels > RELS_BSEARCH_THRESHOLD;
+
+	/* sort the list of SMgrRelations if necessary */
+	if (use_bsearch)
+		pg_qsort(srels, nrels, sizeof(SMgrSortArray), rnode_comparator);
+
+	/* Make sure we can handle the pin inside the loop */
+	ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
+
+	for (i = 0; i < NBuffers; i++)
+	{
+		SMgrSortArray *srelent = NULL;
+		BufferDesc *bufHdr = GetBufferDescriptor(i);
+		uint32		buf_state;
+
+		/*
+		 * As in DropRelFileNodeBuffers, an unlocked precheck should be safe
+		 * and saves some cycles.
+		 */
+
+		if (!use_bsearch)
+		{
+			int			j;
+
+			for (j = 0; j < nrels; j++)
+			{
+				if (RelFileNodeEquals(bufHdr->tag.rnode, srels[j].rnode))
+				{
+					srelent = &srels[j];
+					break;
+				}
+			}
+
+		}
+		else
+		{
+			srelent = bsearch((const void *) &(bufHdr->tag.rnode),
+							  srels, nrels, sizeof(SMgrSortArray),
+							  rnode_comparator);
+		}
+
+		/* buffer doesn't belong to any of the given relfilenodes; skip it */
+		if (srelent == NULL)
+			continue;
+
+		ReservePrivateRefCountEntry();
+
+		buf_state = LockBufHdr(bufHdr);
+		if (RelFileNodeEquals(bufHdr->tag.rnode, srelent->rnode) &&
+			(buf_state & (BM_VALID | BM_DIRTY)) == (BM_VALID | BM_DIRTY))
+		{
+			PinBuffer_Locked(bufHdr);
+			LWLockAcquire(BufferDescriptorGetContentLock(bufHdr), LW_SHARED);
+			FlushBuffer(bufHdr, srelent->srel);
+			LWLockRelease(BufferDescriptorGetContentLock(bufHdr));
+			UnpinBuffer(bufHdr, true);
+		}
+		else
+			UnlockBufHdr(bufHdr, buf_state);
+	}
+
+	pfree(srels);
 }
 
 /* ---------------------------------------------------------------------
@@ -3382,7 +3832,7 @@ IncrBufferRefCount(Buffer buffer)
  * This is essentially the same as MarkBufferDirty, except:
  *
  * 1. The caller does not write WAL; so if checksums are enabled, we may need
- *	  to write an XLOG_FPI WAL record to protect against torn pages.
+ *	  to write an XLOG_FPI_FOR_HINT WAL record to protect against torn pages.
  * 2. The caller might have only share-lock instead of exclusive-lock on the
  *	  buffer's content lock.
  * 3. This function does not guarantee that the buffer is always marked dirty
@@ -3441,13 +3891,15 @@ MarkBufferDirtyHint(Buffer buffer, bool buffer_std)
 			(pg_atomic_read_u32(&bufHdr->state) & BM_PERMANENT))
 		{
 			/*
-			 * If we're in recovery we cannot dirty a page because of a hint.
-			 * We can set the hint, just not dirty the page as a result so the
-			 * hint is lost when we evict the page or shutdown.
+			 * If we must not write WAL, due to a relfilenode-specific
+			 * condition or being in recovery, don't dirty the page.  We can
+			 * set the hint, just not dirty the page as a result so the hint
+			 * is lost when we evict the page or shutdown.
 			 *
 			 * See src/backend/storage/page/README for longer discussion.
 			 */
-			if (RecoveryInProgress())
+			if (RecoveryInProgress() ||
+				RelFileNodeSkippingWAL(bufHdr->tag.rnode))
 				return;
 
 			/*
@@ -3473,7 +3925,7 @@ MarkBufferDirtyHint(Buffer buffer, bool buffer_std)
 			 * essential that CreateCheckpoint waits for virtual transactions
 			 * rather than full transactionids.
 			 */
-			MyPgXact->delayChkpt = delayChkpt = true;
+			MyProc->delayChkpt = delayChkpt = true;
 			lsn = XLogSaveBufferForHint(buffer, buffer_std);
 		}
 
@@ -3506,7 +3958,7 @@ MarkBufferDirtyHint(Buffer buffer, bool buffer_std)
 		UnlockBufHdr(bufHdr, buf_state);
 
 		if (delayChkpt)
-			MyPgXact->delayChkpt = false;
+			MyProc->delayChkpt = false;
 
 		if (dirtied)
 		{
@@ -3560,7 +4012,7 @@ LockBuffer(Buffer buffer, int mode)
 {
 	BufferDesc *buf;
 
-	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
 	if (BufferIsLocal(buffer))
 		return;					/* local buffers need no lock */
 
@@ -3586,7 +4038,7 @@ ConditionalLockBuffer(Buffer buffer)
 {
 	BufferDesc *buf;
 
-	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
 	if (BufferIsLocal(buffer))
 		return true;			/* act as though we got it */
 
@@ -3616,8 +4068,11 @@ void
 LockBufferForCleanup(Buffer buffer)
 {
 	BufferDesc *bufHdr;
+	char	   *new_status = NULL;
+	TimestampTz waitStart = 0;
+	bool		logged_recovery_conflict = false;
 
-	Assert(BufferIsValid(buffer));
+	Assert(BufferIsPinned(buffer));
 	Assert(PinCountWaitBuf == NULL);
 
 	if (BufferIsLocal(buffer))
@@ -3650,6 +4105,23 @@ LockBufferForCleanup(Buffer buffer)
 		{
 			/* Successfully acquired exclusive lock with pincount 1 */
 			UnlockBufHdr(bufHdr, buf_state);
+
+			/*
+			 * Emit the log message if recovery conflict on buffer pin was
+			 * resolved but the startup process waited longer than
+			 * deadlock_timeout for it.
+			 */
+			if (logged_recovery_conflict)
+				LogRecoveryConflict(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
+									waitStart, GetCurrentTimestamp(),
+									NULL, false);
+
+			/* Report change to non-waiting status */
+			if (new_status)
+			{
+				set_ps_display(new_status);
+				pfree(new_status);
+			}
 			return;
 		}
 		/* Failed, so mark myself as waiting for pincount 1 */
@@ -3668,6 +4140,48 @@ LockBufferForCleanup(Buffer buffer)
 		/* Wait to be signaled by UnpinBuffer() */
 		if (InHotStandby)
 		{
+			/* Report change to waiting status */
+			if (update_process_title && new_status == NULL)
+			{
+				const char *old_status;
+				int			len;
+
+				old_status = get_ps_display(&len);
+				new_status = (char *) palloc(len + 8 + 1);
+				memcpy(new_status, old_status, len);
+				strcpy(new_status + len, " waiting");
+				set_ps_display(new_status);
+				new_status[len] = '\0'; /* truncate off " waiting" */
+			}
+
+			/*
+			 * Emit the log message if the startup process is waiting longer
+			 * than deadlock_timeout for recovery conflict on buffer pin.
+			 *
+			 * Skip this if first time through because the startup process has
+			 * not started waiting yet in this case. So, the wait start
+			 * timestamp is set after this logic.
+			 */
+			if (waitStart != 0 && !logged_recovery_conflict)
+			{
+				TimestampTz now = GetCurrentTimestamp();
+
+				if (TimestampDifferenceExceeds(waitStart, now,
+											   DeadlockTimeout))
+				{
+					LogRecoveryConflict(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN,
+										waitStart, now, NULL, true);
+					logged_recovery_conflict = true;
+				}
+			}
+
+			/*
+			 * Set the wait start timestamp if logging is enabled and first
+			 * time through.
+			 */
+			if (log_recovery_conflict_waits && waitStart == 0)
+				waitStart = GetCurrentTimestamp();
+
 			/* Publish the bufid that Startup process waits on */
 			SetStartupBufferPinWaitBufId(buffer - 1);
 			/* Set alarm and then wait to be signaled by UnpinBuffer() */
@@ -3829,7 +4343,7 @@ IsBufferCleanupOK(Buffer buffer)
  *	Functions for buffer I/O handling
  *
  *	Note: We assume that nested buffer I/O never occurs.
- *	i.e at most one io_in_progress lock is held per proc.
+ *	i.e at most one BM_IO_IN_PROGRESS bit is set per proc.
  *
  *	Also note that these are used only for shared buffers, not local ones.
  */
@@ -3840,13 +4354,9 @@ IsBufferCleanupOK(Buffer buffer)
 static void
 WaitIO(BufferDesc *buf)
 {
-	/*
-	 * Changed to wait until there's no IO - Inoue 01/13/2000
-	 *
-	 * Note this is *necessary* because an error abort in the process doing
-	 * I/O could release the io_in_progress_lock prematurely. See
-	 * AbortBufferIO.
-	 */
+	ConditionVariable *cv = BufferDescriptorGetIOCV(buf);
+
+	ConditionVariablePrepareToSleep(cv);
 	for (;;)
 	{
 		uint32		buf_state;
@@ -3861,9 +4371,9 @@ WaitIO(BufferDesc *buf)
 
 		if (!(buf_state & BM_IO_IN_PROGRESS))
 			break;
-		LWLockAcquire(BufferDescriptorGetIOLock(buf), LW_SHARED);
-		LWLockRelease(BufferDescriptorGetIOLock(buf));
+		ConditionVariableSleep(cv, WAIT_EVENT_BUFFER_IO);
 	}
+	ConditionVariableCancelSleep();
 }
 
 /*
@@ -3875,7 +4385,7 @@ WaitIO(BufferDesc *buf)
  * In some scenarios there are race conditions in which multiple backends
  * could attempt the same I/O operation concurrently.  If someone else
  * has already started I/O on this buffer then we will block on the
- * io_in_progress lock until he's done.
+ * I/O condition variable until he's done.
  *
  * Input operations are only attempted on buffers that are not BM_VALID,
  * and output operations only on buffers that are BM_VALID and BM_DIRTY,
@@ -3893,25 +4403,11 @@ StartBufferIO(BufferDesc *buf, bool forInput)
 
 	for (;;)
 	{
-		/*
-		 * Grab the io_in_progress lock so that other processes can wait for
-		 * me to finish the I/O.
-		 */
-		LWLockAcquire(BufferDescriptorGetIOLock(buf), LW_EXCLUSIVE);
-
 		buf_state = LockBufHdr(buf);
 
 		if (!(buf_state & BM_IO_IN_PROGRESS))
 			break;
-
-		/*
-		 * The only way BM_IO_IN_PROGRESS could be set when the io_in_progress
-		 * lock isn't held is if the process doing the I/O is recovering from
-		 * an error (see AbortBufferIO).  If that's the case, we must wait for
-		 * him to get unwedged.
-		 */
 		UnlockBufHdr(buf, buf_state);
-		LWLockRelease(BufferDescriptorGetIOLock(buf));
 		WaitIO(buf);
 	}
 
@@ -3921,7 +4417,6 @@ StartBufferIO(BufferDesc *buf, bool forInput)
 	{
 		/* someone else already did the I/O */
 		UnlockBufHdr(buf, buf_state);
-		LWLockRelease(BufferDescriptorGetIOLock(buf));
 		return false;
 	}
 
@@ -3939,7 +4434,6 @@ StartBufferIO(BufferDesc *buf, bool forInput)
  *	(Assumptions)
  *	My process is executing IO for the buffer
  *	BM_IO_IN_PROGRESS bit is set for the buffer
- *	We hold the buffer's io_in_progress lock
  *	The buffer is Pinned
  *
  * If clear_dirty is true and BM_JUST_DIRTIED is not set, we clear the
@@ -3971,7 +4465,7 @@ TerminateBufferIO(BufferDesc *buf, bool clear_dirty, uint32 set_flag_bits)
 
 	InProgressBuf = NULL;
 
-	LWLockRelease(BufferDescriptorGetIOLock(buf));
+	ConditionVariableBroadcast(BufferDescriptorGetIOCV(buf));
 }
 
 /*
@@ -3991,14 +4485,6 @@ AbortBufferIO(void)
 	if (buf)
 	{
 		uint32		buf_state;
-
-		/*
-		 * Since LWLockReleaseAll has already been called, we're not holding
-		 * the buffer's io_in_progress_lock. We have to re-acquire it so that
-		 * we can use TerminateBufferIO. Anyone who's executing WaitIO on the
-		 * buffer will be in a busy spin until we succeed in doing this.
-		 */
-		LWLockAcquire(BufferDescriptorGetIOLock(buf), LW_EXCLUSIVE);
 
 		buf_state = LockBufHdr(buf);
 		Assert(buf_state & BM_IO_IN_PROGRESS);
@@ -4153,11 +4639,9 @@ WaitBufHdrUnlocked(BufferDesc *buf)
 /*
  * BufferTag comparator.
  */
-static int
-buffertag_comparator(const void *a, const void *b)
+static inline int
+buffertag_comparator(const BufferTag *ba, const BufferTag *bb)
 {
-	const BufferTag *ba = (const BufferTag *) a;
-	const BufferTag *bb = (const BufferTag *) b;
 	int			ret;
 
 	ret = rnode_comparator(&ba->rnode, &bb->rnode);
@@ -4184,12 +4668,9 @@ buffertag_comparator(const void *a, const void *b)
  * It is important that tablespaces are compared first, the logic balancing
  * writes between tablespaces relies on it.
  */
-static int
-ckpt_buforder_comparator(const void *pa, const void *pb)
+static inline int
+ckpt_buforder_comparator(const CkptSortItem *a, const CkptSortItem *b)
 {
-	const CkptSortItem *a = (const CkptSortItem *) pa;
-	const CkptSortItem *b = (const CkptSortItem *) pb;
-
 	/* compare tablespace */
 	if (a->tsId < b->tsId)
 		return -1;
@@ -4280,6 +4761,13 @@ ScheduleBufferTagForWriteback(WritebackContext *context, BufferTag *tag)
 		IssuePendingWritebacks(context);
 }
 
+#define ST_SORT sort_pending_writebacks
+#define ST_ELEMENT_TYPE PendingWriteback
+#define ST_COMPARE(a, b) buffertag_comparator(&a->tag, &b->tag)
+#define ST_SCOPE static
+#define ST_DEFINE
+#include <lib/sort_template.h>
+
 /*
  * Issue all pending writeback requests, previously scheduled with
  * ScheduleBufferTagForWriteback, to the OS.
@@ -4299,8 +4787,7 @@ IssuePendingWritebacks(WritebackContext *context)
 	 * Executing the writes in-order can make them a lot faster, and allows to
 	 * merge writeback requests to consecutive blocks into larger writebacks.
 	 */
-	qsort(&context->pending_writebacks, context->nr_pending,
-		  sizeof(PendingWriteback), buffertag_comparator);
+	sort_pending_writebacks(context->pending_writebacks, context->nr_pending);
 
 	/*
 	 * Coalesce neighbouring writes, but nothing else. For that we iterate

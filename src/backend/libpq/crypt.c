@@ -4,7 +4,7 @@
  *	  Functions for dealing with encrypted passwords stored in
  *	  pg_authid.rolpassword.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/libpq/crypt.c
@@ -98,7 +98,7 @@ get_password_type(const char *shadow_pass)
 		strspn(shadow_pass + 3, MD5_PASSWD_CHARSET) == MD5_PASSWD_LEN - 3)
 		return PASSWORD_TYPE_MD5;
 	if (parse_scram_secret(shadow_pass, &iterations, &encoded_salt,
-							 stored_key, server_key))
+						   stored_key, server_key))
 		return PASSWORD_TYPE_SCRAM_SHA_256;
 	return PASSWORD_TYPE_PLAINTEXT;
 }

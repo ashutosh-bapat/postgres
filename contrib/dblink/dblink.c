@@ -9,7 +9,7 @@
  * Shridhar Daithankar <shridhar_daithankar@persistent.co.in>
  *
  * contrib/dblink/dblink.c
- * Copyright (c) 2001-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2021, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -38,7 +38,6 @@
 #include "access/relation.h"
 #include "access/reloptions.h"
 #include "access/table.h"
-#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
@@ -298,8 +297,13 @@ dblink_connect(PG_FUNCTION_ARGS)
 		conname_or_str = text_to_cstring(PG_GETARG_TEXT_PP(0));
 
 	if (connname)
+	{
 		rconn = (remoteConn *) MemoryContextAlloc(TopMemoryContext,
 												  sizeof(remoteConn));
+		rconn->conn = NULL;
+		rconn->openCursorCount = 0;
+		rconn->newXactForCursor = false;
+	}
 
 	/* first check for valid foreign data server */
 	connstr = get_connect_string(conname_or_str);
@@ -2603,7 +2607,8 @@ createConnHash(void)
 	ctl.keysize = NAMEDATALEN;
 	ctl.entrysize = sizeof(remoteConnHashEnt);
 
-	return hash_create("Remote Con hash", NUMCONN, &ctl, HASH_ELEM);
+	return hash_create("Remote Con hash", NUMCONN, &ctl,
+					   HASH_ELEM | HASH_STRINGS);
 }
 
 static void

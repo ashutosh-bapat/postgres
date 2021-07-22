@@ -176,6 +176,13 @@ PQresultMemorySize        173
 PQhostaddr                174
 PQgssEncInUse             175
 PQgetgssctx               176
-PQsetSSLKeyPassHook		  177
-PQgetSSLKeyPassHook		  178
-PQdefaultSSLKeyPassHook	  179
+PQsetSSLKeyPassHook_OpenSSL         177
+PQgetSSLKeyPassHook_OpenSSL         178
+PQdefaultSSLKeyPassHook_OpenSSL     179
+PQenterPipelineMode       180
+PQexitPipelineMode        181
+PQpipelineSync            182
+PQpipelineStatus          183
+PQsetTraceFlags           184
+PQmblenBounded            185
+PQsendFlushRequest        186

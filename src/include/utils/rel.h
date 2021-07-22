@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -24,6 +24,7 @@
 #include "rewrite/prs2lock.h"
 #include "storage/block.h"
 #include "storage/relfilenode.h"
+#include "storage/smgr.h"
 #include "utils/relcache.h"
 #include "utils/reltrigger.h"
 
@@ -53,8 +54,7 @@ typedef LockInfoData *LockInfo;
 typedef struct RelationData
 {
 	RelFileNode rd_node;		/* relation physical identifier */
-	/* use "struct" here to avoid needing to include smgr.h: */
-	struct SMgrRelationData *rd_smgr;	/* cached file handle, or NULL */
+	SMgrRelation rd_smgr;		/* cached file handle, or NULL */
 	int			rd_refcnt;		/* reference count */
 	BackendId	rd_backend;		/* owning backend id, if temporary relation */
 	bool		rd_islocaltemp; /* rel is a temp rel of this session */
@@ -66,25 +66,45 @@ typedef struct RelationData
 
 	/*----------
 	 * rd_createSubid is the ID of the highest subtransaction the rel has
-	 * survived into; or zero if the rel was not created in the current top
-	 * transaction.  This can be now be relied on, whereas previously it could
-	 * be "forgotten" in earlier releases. Likewise, rd_newRelfilenodeSubid is
-	 * the ID of the highest subtransaction the relfilenode change has
-	 * survived into, or zero if not changed in the current transaction (or we
-	 * have forgotten changing it). rd_newRelfilenodeSubid can be forgotten
-	 * when a relation has multiple new relfilenodes within a single
-	 * transaction, with one of them occurring in a subsequently aborted
-	 * subtransaction, e.g.
+	 * survived into or zero if the rel or its rd_node was created before the
+	 * current top transaction.  (IndexStmt.oldNode leads to the case of a new
+	 * rel with an old rd_node.)  rd_firstRelfilenodeSubid is the ID of the
+	 * highest subtransaction an rd_node change has survived into or zero if
+	 * rd_node matches the value it had at the start of the current top
+	 * transaction.  (Rolling back the subtransaction that
+	 * rd_firstRelfilenodeSubid denotes would restore rd_node to the value it
+	 * had at the start of the current top transaction.  Rolling back any
+	 * lower subtransaction would not.)  Their accuracy is critical to
+	 * RelationNeedsWAL().
+	 *
+	 * rd_newRelfilenodeSubid is the ID of the highest subtransaction the
+	 * most-recent relfilenode change has survived into or zero if not changed
+	 * in the current transaction (or we have forgotten changing it).  This
+	 * field is accurate when non-zero, but it can be zero when a relation has
+	 * multiple new relfilenodes within a single transaction, with one of them
+	 * occurring in a subsequently aborted subtransaction, e.g.
 	 *		BEGIN;
 	 *		TRUNCATE t;
 	 *		SAVEPOINT save;
 	 *		TRUNCATE t;
 	 *		ROLLBACK TO save;
 	 *		-- rd_newRelfilenodeSubid is now forgotten
+	 *
+	 * If every rd_*Subid field is zero, they are read-only outside
+	 * relcache.c.  Files that trigger rd_node changes by updating
+	 * pg_class.reltablespace and/or pg_class.relfilenode call
+	 * RelationAssumeNewRelfilenode() to update rd_*Subid.
+	 *
+	 * rd_droppedSubid is the ID of the highest subtransaction that a drop of
+	 * the rel has survived into.  In entries visible outside relcache.c, this
+	 * is always zero.
 	 */
 	SubTransactionId rd_createSubid;	/* rel was created in current xact */
-	SubTransactionId rd_newRelfilenodeSubid;	/* new relfilenode assigned in
-												 * current xact */
+	SubTransactionId rd_newRelfilenodeSubid;	/* highest subxact changing
+												 * rd_node to current value */
+	SubTransactionId rd_firstRelfilenodeSubid;	/* highest subxact changing
+												 * rd_node to any value */
+	SubTransactionId rd_droppedSubid;	/* dropped with another Subid set */
 
 	Form_pg_class rd_rel;		/* RELATION tuple */
 	TupleDesc	rd_att;			/* tuple descriptor */
@@ -107,6 +127,19 @@ typedef struct RelationData
 	/* data managed by RelationGetPartitionDesc: */
 	PartitionDesc rd_partdesc;	/* partition descriptor, or NULL */
 	MemoryContext rd_pdcxt;		/* private context for rd_partdesc, if any */
+
+	/* Same as above, for partdescs that omit detached partitions */
+	PartitionDesc rd_partdesc_nodetached;	/* partdesc w/o detached parts */
+	MemoryContext rd_pddcxt;	/* for rd_partdesc_nodetached, if any */
+
+	/*
+	 * pg_inherits.xmin of the partition that was excluded in
+	 * rd_partdesc_nodetached.  This informs a future user of that partdesc:
+	 * if this value is not in progress for the active snapshot, then the
+	 * partdesc can be used, otherwise they have to build a new one.  (This
+	 * matches what find_inheritance_children_extended would do).
+	 */
+	TransactionId rd_partdesc_nodetached_xmin;
 
 	/* data managed by RelationGetPartitionQual: */
 	List	   *rd_partcheck;	/* partition CHECK quals */
@@ -177,6 +210,7 @@ typedef struct RelationData
 	Oid		   *rd_exclprocs;	/* OIDs of exclusion ops' procs, if any */
 	uint16	   *rd_exclstrats;	/* exclusion ops' strategy numbers, if any */
 	Oid		   *rd_indcollation;	/* OIDs of index collations */
+	bytea	  **rd_opcoptions;	/* parsed opclass-specific options */
 
 	/*
 	 * rd_amcache is available for index and table AMs to cache private data
@@ -273,6 +307,14 @@ typedef struct AutoVacOpts
 	float8		analyze_scale_factor;
 } AutoVacOpts;
 
+/* StdRdOptions->vacuum_index_cleanup values */
+typedef enum StdRdOptIndexCleanup
+{
+	STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO = 0,
+	STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF,
+	STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON
+} StdRdOptIndexCleanup;
+
 typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
@@ -282,7 +324,7 @@ typedef struct StdRdOptions
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
 	int			parallel_workers;	/* max number of parallel workers */
-	bool		vacuum_index_cleanup;	/* enables index vacuuming and cleanup */
+	StdRdOptIndexCleanup vacuum_index_cleanup;	/* controls index vacuuming */
 	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
 } StdRdOptions;
 
@@ -486,14 +528,25 @@ typedef struct ViewOptions
 	 ((relation)->rd_rel->relfilenode == InvalidOid))
 
 /*
- * RelationOpenSmgr
- *		Open the relation at the smgr level, if not already done.
+ * RelationGetSmgr
+ *		Returns smgr file handle for a relation, opening it if needed.
+ *
+ * Very little code is authorized to touch rel->rd_smgr directly.  Instead
+ * use this function to fetch its value.
+ *
+ * Note: since a relcache flush can cause the file handle to be closed again,
+ * it's unwise to hold onto the pointer returned by this function for any
+ * long period.  Recommended practice is to just re-execute RelationGetSmgr
+ * each time you need to access the SMgrRelation.  It's quite cheap in
+ * comparison to whatever an smgr function is going to do.
  */
-#define RelationOpenSmgr(relation) \
-	do { \
-		if ((relation)->rd_smgr == NULL) \
-			smgrsetowner(&((relation)->rd_smgr), smgropen((relation)->rd_node, (relation)->rd_backend)); \
-	} while (0)
+static inline SMgrRelation
+RelationGetSmgr(Relation rel)
+{
+	if (unlikely(rel->rd_smgr == NULL))
+		smgrsetowner(&(rel->rd_smgr), smgropen(rel->rd_node, rel->rd_backend));
+	return rel->rd_smgr;
+}
 
 /*
  * RelationCloseSmgr
@@ -515,7 +568,8 @@ typedef struct ViewOptions
  *		Fetch relation's current insertion target block.
  *
  * Returns InvalidBlockNumber if there is no current target block.  Note
- * that the target block status is discarded on any smgr-level invalidation.
+ * that the target block status is discarded on any smgr-level invalidation,
+ * so there's no need to re-open the smgr handle if it's not currently open.
  */
 #define RelationGetTargetBlock(relation) \
 	( (relation)->rd_smgr != NULL ? (relation)->rd_smgr->smgr_targblock : InvalidBlockNumber )
@@ -526,16 +580,28 @@ typedef struct ViewOptions
  */
 #define RelationSetTargetBlock(relation, targblock) \
 	do { \
-		RelationOpenSmgr(relation); \
-		(relation)->rd_smgr->smgr_targblock = (targblock); \
+		RelationGetSmgr(relation)->smgr_targblock = (targblock); \
 	} while (0)
+
+/*
+ * RelationIsPermanent
+ *		True if relation is permanent.
+ */
+#define RelationIsPermanent(relation) \
+	((relation)->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
 
 /*
  * RelationNeedsWAL
  *		True if relation needs WAL.
+ *
+ * Returns false if wal_level = minimal and this relation is created or
+ * truncated in the current transaction.  See "Skipping WAL for New
+ * RelFileNode" in src/backend/access/transam/README.
  */
-#define RelationNeedsWAL(relation) \
-	((relation)->rd_rel->relpersistence == RELPERSISTENCE_PERMANENT)
+#define RelationNeedsWAL(relation)										\
+	(RelationIsPermanent(relation) && (XLogIsNeeded() ||				\
+	  (relation->rd_createSubid == InvalidSubTransactionId &&			\
+	   relation->rd_firstRelfilenodeSubid == InvalidSubTransactionId)))
 
 /*
  * RelationUsesLocalBuffers
@@ -599,7 +665,8 @@ typedef struct ViewOptions
  *		WAL stream.
  *
  * We don't log information for unlogged tables (since they don't WAL log
- * anyway) and for system tables (their content is hard to make sense of, and
+ * anyway), for foreign tables (since they don't WAL log, either),
+ * and for system tables (their content is hard to make sense of, and
  * it would complicate decoding slightly for little gain). Note that we *do*
  * log information for user defined catalog tables since they presumably are
  * interesting to the user...
@@ -607,6 +674,7 @@ typedef struct ViewOptions
 #define RelationIsLogicallyLogged(relation) \
 	(XLogLogicalInfoActive() && \
 	 RelationNeedsWAL(relation) && \
+	 (relation)->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&	\
 	 !IsCatalogRelation(relation))
 
 /* routines in utils/cache/relcache.c */

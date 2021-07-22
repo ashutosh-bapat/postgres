@@ -49,4 +49,6 @@ CATALOG(pg_propgraph_edge,8299,PropgraphEdgeRelationId)
  */
 typedef FormData_pg_propgraph_edge *Form_pg_propgraph_edge;
 
+DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_edge_oid_index, 8300, PropgraphEdgeObjectIndexId, on pg_propgraph_edge using btree(oid oid_ops));
+
 #endif							/* PG_PROPGRAPH_EDGE_H */

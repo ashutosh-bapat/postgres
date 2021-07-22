@@ -2,7 +2,7 @@
  *
  * walmethods.h
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/walmethods.h
@@ -51,6 +51,15 @@ struct WalWriteMethod
 
 	/* Return the size of a file, or -1 on failure. */
 	ssize_t		(*get_file_size) (const char *pathname);
+
+	/*
+	 * Return the name of the current file to work on, without the base
+	 * directory.  This is useful for logging.
+	 */
+	char	   *(*get_file_name) (const char *pathname, const char *temp_suffix);
+
+	/* Return the level of compression */
+	int			(*compression) (void);
 
 	/*
 	 * Write count number of bytes to the file, and return the number of bytes

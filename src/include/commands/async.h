@@ -3,7 +3,7 @@
  * async.h
  *	  Asynchronous notification: NOTIFY, LISTEN, UNLISTEN
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/async.h
@@ -18,7 +18,7 @@
 /*
  * The number of SLRU page buffers we use for the notification queue.
  */
-#define NUM_ASYNC_BUFFERS	8
+#define NUM_NOTIFY_BUFFERS	8
 
 extern bool Trace_notify;
 extern volatile sig_atomic_t notifyInterruptPending;

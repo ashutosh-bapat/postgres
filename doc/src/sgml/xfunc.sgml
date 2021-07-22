@@ -63,7 +63,8 @@
 
   <para>
    Throughout this chapter, it can be useful to look at the reference
-   page of the <xref linkend="sql-createfunction"/> command to
+   page of the <link linkend="sql-createfunction"><command>CREATE
+   FUNCTION</command></link> command to
    understand the examples better.  Some examples from this chapter
    can be found in <filename>funcs.sql</filename> and
    <filename>funcs.c</filename> in the <filename>src/tutorial</filename>
@@ -81,25 +82,62 @@
   </indexterm>
 
    <para>
-    A procedure is a database object similar to a function.  The difference is
-    that a procedure does not return a value, so there is no return type
-    declaration.  While a function is called as part of a query or DML
-    command, a procedure is called explicitly using
-    the <xref linkend="sql-call"/> statement.
+    A procedure is a database object similar to a function.
+    The key differences are:
+
+    <itemizedlist>
+     <listitem>
+      <para>
+       Procedures are defined with
+       the <link linkend="sql-createprocedure"><command>CREATE
+       PROCEDURE</command></link> command, not <command>CREATE
+       FUNCTION</command>.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Procedures do not return a function value; hence <command>CREATE
+       PROCEDURE</command> lacks a <literal>RETURNS</literal> clause.
+       However, procedures can instead return data to their callers via
+       output parameters.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       While a function is called as part of a query or DML command, a
+       procedure is called in isolation using
+       the <link linkend="sql-call"><command>CALL</command></link> command.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       A procedure can commit or roll back transactions during its
+       execution (then automatically beginning a new transaction), so long
+       as the invoking <command>CALL</command> command is not part of an
+       explicit transaction block.  A function cannot do that.
+      </para>
+     </listitem>
+     <listitem>
+      <para>
+       Certain function attributes, such as strictness, don't apply to
+       procedures.  Those attributes control how the function is
+       used in a query, which isn't relevant to procedures.
+      </para>
+     </listitem>
+    </itemizedlist>
    </para>
 
    <para>
-    The explanations on how to define user-defined functions in the rest of
-    this chapter apply to procedures as well, except that
-    the <xref linkend="sql-createprocedure"/> command is used instead, there is
-    no return type, and some other features such as strictness don't apply.
+    The explanations in the following sections about how to define
+    user-defined functions apply to procedures as well, except for the
+    points made above.
    </para>
 
    <para>
     Collectively, functions and procedures are also known
     as <firstterm>routines</firstterm><indexterm><primary>routine</primary></indexterm>.
-    There are commands such as <xref linkend="sql-alterroutine"/>
-    and <xref linkend="sql-droproutine"/> that can operate on functions and
+    There are commands such as <link linkend="sql-alterroutine"><command>ALTER ROUTINE</command></link>
+    and <link linkend="sql-droproutine"><command>DROP ROUTINE</command></link> that can operate on functions and
     procedures without having to know which kind it is.  Note, however, that
     there is no <literal>CREATE ROUTINE</literal> command.
    </para>
@@ -149,14 +187,14 @@
      Besides <command>SELECT</command> queries, the commands can include data
      modification queries (<command>INSERT</command>,
      <command>UPDATE</command>, and <command>DELETE</command>), as well as
-     other SQL commands. (You cannot use transaction control commands, e.g.
+     other SQL commands. (You cannot use transaction control commands, e.g.,
      <command>COMMIT</command>, <command>SAVEPOINT</command>, and some utility
-     commands, e.g.  <literal>VACUUM</literal>, in <acronym>SQL</acronym> functions.)
+     commands, e.g.,  <literal>VACUUM</literal>, in <acronym>SQL</acronym> functions.)
      However, the final command
      must be a <command>SELECT</command> or have a <literal>RETURNING</literal>
      clause that returns whatever is
      specified as the function's return type.  Alternatively, if you
-     want to define a SQL function that performs actions but has no
+     want to define an SQL function that performs actions but has no
      useful value to return, you can define it as returning <type>void</type>.
      For example, this function removes rows with negative salaries from
      the <literal>emp</literal> table:
@@ -176,10 +214,28 @@ SELECT clean_emp();
 </screen>
     </para>
 
+    <para>
+     You can also write this as a procedure, thus avoiding the issue of the
+     return type.  For example:
+<screen>
+CREATE PROCEDURE clean_emp() AS '
+    DELETE FROM emp
+        WHERE salary &lt; 0;
+' LANGUAGE SQL;
+
+CALL clean_emp();
+</screen>
+     In simple cases like this, the difference between a function returning
+     <type>void</type> and a procedure is mostly stylistic.  However,
+     procedures offer additional functionality such as transaction control
+     that is not available in functions.  Also, procedures are SQL standard
+     whereas returning <type>void</type> is a PostgreSQL extension.
+    </para>
+
     <note>
      <para>
-      The entire body of a SQL function is parsed before any of it is
-      executed.  While a SQL function can contain commands that alter
+      The entire body of an SQL function is parsed before any of it is
+      executed.  While an SQL function can contain commands that alter
       the system catalogs (e.g., <command>CREATE TABLE</command>), the effects
       of such commands will not be visible during parse analysis of
       later commands in the function.  Thus, for example,
@@ -187,7 +243,7 @@ SELECT clean_emp();
       will not work as desired if packaged up into a single SQL function,
       since <structname>foo</structname> won't exist yet when the <command>INSERT</command>
       command is parsed.  It's recommended to use <application>PL/pgSQL</application>
-      instead of a SQL function in this type of situation.
+      instead of an SQL function in this type of situation.
      </para>
    </note>
 
@@ -211,7 +267,7 @@ SELECT clean_emp();
    </indexterm>
 
     <para>
-     Arguments of a SQL function can be referenced in the function
+     Arguments of an SQL function can be referenced in the function
      body using either names or numbers.  Examples of both methods appear
      below.
     </para>
@@ -709,7 +765,48 @@ DROP FUNCTION sum_n_product (int, int);
      parameter serves as both an input parameter (part of the calling
      argument list) and an output parameter (part of the result record type).
      <literal>VARIADIC</literal> parameters are input parameters, but are treated
-     specially as described next.
+     specially as described below.
+    </para>
+   </sect2>
+
+   <sect2 id="xfunc-output-parameters-proc">
+    <title><acronym>SQL</acronym> Procedures with Output Parameters</title>
+
+    <indexterm>
+     <primary>procedures</primary>
+     <secondary>output parameter</secondary>
+    </indexterm>
+
+    <para>
+     Output parameters are also supported in procedures, but they work a bit
+     differently from functions.  In <command>CALL</command> commands,
+     output parameters must be included in the argument list.
+     For example, the bank account debiting routine from earlier could be
+     written like this:
+<programlisting>
+CREATE PROCEDURE tp1 (accountno integer, debit numeric, OUT new_balance numeric) AS $$
+    UPDATE bank
+        SET balance = balance - debit
+        WHERE accountno = tp1.accountno
+    RETURNING balance;
+$$ LANGUAGE SQL;
+</programlisting>
+     To call this procedure, an argument matching the <literal>OUT</literal>
+     parameter must be included.  It's customary to write
+     <literal>NULL</literal>:
+<programlisting>
+CALL tp1(17, 100.0, NULL);
+</programlisting>
+     If you write something else, it must be an expression that is implicitly
+     coercible to the declared type of the parameter, just as for input
+     parameters.  Note however that such an expression will not be evaluated.
+    </para>
+
+    <para>
+     When calling a procedure from <application>PL/pgSQL</application>,
+     instead of writing <literal>NULL</literal> you must write a variable
+     that will receive the procedure's output.  See <xref
+     linkend="plpgsql-statements-calling-procedure"/> for details.
     </para>
    </sect2>
 
@@ -1376,7 +1473,7 @@ SELECT concat_values('|', 1, 4, 2);
     </indexterm>
 
     <para>
-     When a SQL function has one or more parameters of collatable data types,
+     When an SQL function has one or more parameters of collatable data types,
      a collation is identified for each function call depending on the
      collations assigned to the actual arguments, as described in <xref
      linkend="collation"/>.  If a collation is successfully identified
@@ -1411,7 +1508,7 @@ $$ LANGUAGE SQL;
 
     <para>
      If no common collation can be identified among the actual arguments,
-     then a SQL function treats its parameters as having their data types'
+     then an SQL function treats its parameters as having their data types'
      default collation (which is usually the database's default collation,
      but could be different for parameters of domain types).
     </para>
@@ -1528,7 +1625,7 @@ CREATE FUNCTION test(int, int) RETURNS int
     Every function has a <firstterm>volatility</firstterm> classification, with
     the possibilities being <literal>VOLATILE</literal>, <literal>STABLE</literal>, or
     <literal>IMMUTABLE</literal>.  <literal>VOLATILE</literal> is the default if the
-    <xref linkend="sql-createfunction"/>
+    <link linkend="sql-createfunction"><command>CREATE FUNCTION</command></link>
     command does not specify a category.  The volatility category is a
     promise to the optimizer about the behavior of the function:
 
@@ -2084,6 +2181,9 @@ memcpy(destination->data, buffer, 40);
      <table tocentry="1" id="xfunc-c-type-table">
       <title>Equivalent C Types for Built-in SQL Types</title>
       <tgroup cols="3">
+       <colspec colname="col1" colwidth="1*"/>
+       <colspec colname="col2" colwidth="1*"/>
+       <colspec colname="col3" colwidth="2*"/>
        <thead>
         <row>
          <entry>
@@ -2220,7 +2320,7 @@ memcpy(destination->data, buffer, 40);
         </row>
         <row>
          <entry><type>timestamp</type></entry>
-         <entry><type>Timestamp*</type></entry>
+         <entry><type>Timestamp</type></entry>
          <entry><filename>datatype/timestamp.h</filename></entry>
         </row>
         <row>
@@ -2852,7 +2952,7 @@ HeapTupleGetDatum(HeapTuple tuple)
      save enough state across calls to remember what it was doing and
      return the correct next item on each call.
      In the other method, called <firstterm>Materialize</firstterm> mode,
-     a SRF fills and returns a tuplestore object containing its
+     an SRF fills and returns a tuplestore object containing its
      entire result; then only one call occurs for the whole result, and
      no inter-call state is needed.
     </para>
@@ -3275,7 +3375,7 @@ CREATE FUNCTION make_array(anyelement) RETURNS anyarray
      There is a variant of polymorphism that is only available to C-language
      functions: they can be declared to take parameters of type
      <literal>"any"</literal>.  (Note that this type name must be double-quoted,
-     since it's also a SQL reserved word.)  This works like
+     since it's also an SQL reserved word.)  This works like
      <type>anyelement</type> except that it does not constrain different
      <literal>"any"</literal> arguments to be the same type, nor do they help
      determine the function's result type.  A C-language function can also
@@ -3383,7 +3483,7 @@ if (!ptr)
         exceptions.  Any exceptions must be caught and appropriate errors
         passed back to the C interface.  If possible, compile C++ with
         <option>-fno-exceptions</option> to eliminate exceptions entirely; in such
-        cases, you must check for failures in your C++ code, e.g.  check for
+        cases, you must check for failures in your C++ code, e.g.,  check for
         NULL returned by <function>new()</function>.
        </para>
       </listitem>
@@ -3426,7 +3526,7 @@ if (!ptr)
 
    <para>
     Some basic facts can be supplied by declarative annotations provided in
-    the <xref linkend="sql-createfunction"/> command.  Most important of
+    the <link linkend="sql-createfunction"><command>CREATE FUNCTION</command></link> command.  Most important of
     these is the function's <link linkend="xfunc-volatility">volatility
     category</link> (<literal>IMMUTABLE</literal>, <literal>STABLE</literal>,
     or <literal>VOLATILE</literal>); one should always be careful to
@@ -3444,7 +3544,7 @@ if (!ptr)
 
    <para>
     It is also possible to attach a <firstterm>planner support
-    function</firstterm> to a SQL-callable function (called
+    function</firstterm> to an SQL-callable function (called
     its <firstterm>target function</firstterm>), and thereby provide
     knowledge about the target function that is too complex to be
     represented declaratively.  Planner support functions have to be

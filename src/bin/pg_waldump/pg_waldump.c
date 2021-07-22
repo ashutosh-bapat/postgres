@@ -2,7 +2,7 @@
  *
  * pg_waldump.c - decode and display WAL
  *
- * Copyright (c) 2013-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_waldump/pg_waldump.c
@@ -40,6 +40,7 @@ typedef struct XLogDumpPrivate
 typedef struct XLogDumpConfig
 {
 	/* display options */
+	bool		quiet;
 	bool		bkp_details;
 	int			stop_after_records;
 	int			already_displayed_records;
@@ -48,7 +49,8 @@ typedef struct XLogDumpConfig
 	bool		stats_per_record;
 
 	/* filter options */
-	int			filter_by_rmgr;
+	bool		filter_by_rmgr[RM_MAX_ID + 1];
+	bool		filter_by_rmgr_enabled;
 	TransactionId filter_by_xid;
 	bool		filter_by_xid_enabled;
 } XLogDumpConfig;
@@ -278,17 +280,16 @@ identify_target_directory(char *directory, char *fname)
 	return NULL;				/* not reached */
 }
 
-/* pg_waldump's openSegment callback for WALRead */
-static int
-WALDumpOpenSegment(XLogSegNo nextSegNo, WALSegmentContext *segcxt,
+/* pg_waldump's XLogReaderRoutine->segment_open callback */
+static void
+WALDumpOpenSegment(XLogReaderState *state, XLogSegNo nextSegNo,
 				   TimeLineID *tli_p)
 {
 	TimeLineID	tli = *tli_p;
 	char		fname[MAXPGPATH];
-	int			fd;
 	int			tries;
 
-	XLogFileName(fname, tli, nextSegNo, segcxt->ws_segsize);
+	XLogFileName(fname, tli, nextSegNo, state->segcxt.ws_segsize);
 
 	/*
 	 * In follow mode there is a short period of time after the server has
@@ -298,9 +299,9 @@ WALDumpOpenSegment(XLogSegNo nextSegNo, WALSegmentContext *segcxt,
 	 */
 	for (tries = 0; tries < 10; tries++)
 	{
-		fd = open_file_in_directory(segcxt->ws_dir, fname);
-		if (fd >= 0)
-			return fd;
+		state->seg.ws_file = open_file_in_directory(state->segcxt.ws_dir, fname);
+		if (state->seg.ws_file >= 0)
+			return;
 		if (errno == ENOENT)
 		{
 			int			save_errno = errno;
@@ -316,12 +317,21 @@ WALDumpOpenSegment(XLogSegNo nextSegNo, WALSegmentContext *segcxt,
 	}
 
 	fatal_error("could not find file \"%s\": %m", fname);
-	return -1;					/* keep compiler quiet */
 }
 
 /*
- * XLogReader read_page callback
+ * pg_waldump's XLogReaderRoutine->segment_close callback.  Same as
+ * wal_segment_close
  */
+static void
+WALDumpCloseSegment(XLogReaderState *state)
+{
+	close(state->seg.ws_file);
+	/* need to check errno? */
+	state->seg.ws_file = -1;
+}
+
+/* pg_waldump's XLogReaderRoutine->page_read callback */
 static int
 WALDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 				XLogRecPtr targetPtr, char *readBuff)
@@ -343,8 +353,8 @@ WALDumpReadPage(XLogReaderState *state, XLogRecPtr targetPagePtr, int reqLen,
 		}
 	}
 
-	if (!WALRead(readBuff, targetPagePtr, count, private->timeline,
-				 &state->seg, &state->segcxt, WALDumpOpenSegment, &errinfo))
+	if (!WALRead(state, readBuff, targetPagePtr, count, private->timeline,
+				 &errinfo))
 	{
 		WALOpenSegment *seg = &errinfo.wre_seg;
 		char		fname[MAXPGPATH];
@@ -429,6 +439,15 @@ XLogDumpCountRecord(XLogDumpConfig *config, XLogDumpStats *stats,
 
 	recid = XLogRecGetInfo(record) >> 4;
 
+	/*
+	 * XACT records need to be handled differently. Those records use the
+	 * first bit of those four bits for an optional flag variable and the
+	 * following three bits for the opcode. We filter opcode out of xl_info
+	 * and use it as the identifier of the record.
+	 */
+	if (rmid == RM_XACT_ID)
+		recid &= 0x07;
+
 	stats->record_stats[rmid][recid].count++;
 	stats->record_stats[rmid][recid].rec_len += rec_len;
 	stats->record_stats[rmid][recid].fpi_len += fpi_len;
@@ -458,8 +477,8 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 		   desc->rm_name,
 		   rec_len, XLogRecGetTotalLen(record),
 		   XLogRecGetXid(record),
-		   (uint32) (record->ReadRecPtr >> 32), (uint32) record->ReadRecPtr,
-		   (uint32) (xl_prev >> 32), (uint32) xl_prev);
+		   LSN_FORMAT_ARGS(record->ReadRecPtr),
+		   LSN_FORMAT_ARGS(xl_prev));
 
 	id = desc->rm_identify(info);
 	if (id == NULL)
@@ -519,18 +538,29 @@ XLogDumpDisplayRecord(XLogDumpConfig *config, XLogReaderState *record)
 				   blk);
 			if (XLogRecHasBlockImage(record, block_id))
 			{
-				if (record->blocks[block_id].bimg_info &
-					BKPIMAGE_IS_COMPRESSED)
+				uint8		bimg_info = record->blocks[block_id].bimg_info;
+
+				if (BKPIMAGE_COMPRESSED(bimg_info))
 				{
+					const char *method;
+
+					if ((bimg_info & BKPIMAGE_COMPRESS_PGLZ) != 0)
+						method = "pglz";
+					else if ((bimg_info & BKPIMAGE_COMPRESS_LZ4) != 0)
+						method = "lz4";
+					else
+						method = "unknown";
+
 					printf(" (FPW%s); hole: offset: %u, length: %u, "
-						   "compression saved: %u",
+						   "compression saved: %u, method: %s",
 						   XLogRecBlockImageApply(record, block_id) ?
 						   "" : " for WAL verification",
 						   record->blocks[block_id].hole_offset,
 						   record->blocks[block_id].hole_length,
 						   BLCKSZ -
 						   record->blocks[block_id].hole_length -
-						   record->blocks[block_id].bimg_len);
+						   record->blocks[block_id].bimg_len,
+						   method);
 				}
 				else
 				{
@@ -602,14 +632,9 @@ XLogDumpDisplayStats(XLogDumpConfig *config, XLogDumpStats *stats)
 	double		rec_len_pct,
 				fpi_len_pct;
 
-	/* ---
-	 * Make a first pass to calculate column totals:
-	 * count(*),
-	 * sum(xl_len+SizeOfXLogRecord),
-	 * sum(xl_tot_len-xl_len-SizeOfXLogRecord), and
-	 * sum(xl_tot_len).
-	 * These are used to calculate percentages for each record type.
-	 * ---
+	/*
+	 * Each row shows its percentages of the total, so make a first pass to
+	 * calculate column totals.
 	 */
 
 	for (ri = 0; ri < RM_NEXT_ID; ri++)
@@ -720,6 +745,7 @@ usage(void)
 	printf(_("  -p, --path=PATH        directory in which to find log segment files or a\n"
 			 "                         directory with a ./pg_wal that contains such files\n"
 			 "                         (default: current directory, ./pg_wal, $PGDATA/pg_wal)\n"));
+	printf(_("  -q, --quiet            do not print any output, except for errors\n"));
 	printf(_("  -r, --rmgr=RMGR        only show records generated by resource manager RMGR;\n"
 			 "                         use --rmgr=list to list valid resource manager names\n"));
 	printf(_("  -s, --start=RECPTR     start reading at WAL location RECPTR\n"));
@@ -755,6 +781,7 @@ main(int argc, char **argv)
 		{"help", no_argument, NULL, '?'},
 		{"limit", required_argument, NULL, 'n'},
 		{"path", required_argument, NULL, 'p'},
+		{"quiet", no_argument, NULL, 'q'},
 		{"rmgr", required_argument, NULL, 'r'},
 		{"start", required_argument, NULL, 's'},
 		{"timeline", required_argument, NULL, 't'},
@@ -794,11 +821,13 @@ main(int argc, char **argv)
 	private.endptr = InvalidXLogRecPtr;
 	private.endptr_reached = false;
 
+	config.quiet = false;
 	config.bkp_details = false;
 	config.stop_after_records = -1;
 	config.already_displayed_records = 0;
 	config.follow = false;
-	config.filter_by_rmgr = -1;
+	/* filter_by_rmgr array was zeroed by memset above */
+	config.filter_by_rmgr_enabled = false;
 	config.filter_by_xid = InvalidTransactionId;
 	config.filter_by_xid_enabled = false;
 	config.stats = false;
@@ -810,7 +839,7 @@ main(int argc, char **argv)
 		goto bad_argument;
 	}
 
-	while ((option = getopt_long(argc, argv, "be:fn:p:r:s:t:x:z",
+	while ((option = getopt_long(argc, argv, "be:fn:p:qr:s:t:x:z",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -840,6 +869,9 @@ main(int argc, char **argv)
 			case 'p':
 				waldir = pg_strdup(optarg);
 				break;
+			case 'q':
+				config.quiet = true;
+				break;
 			case 'r':
 				{
 					int			i;
@@ -854,12 +886,12 @@ main(int argc, char **argv)
 					{
 						if (pg_strcasecmp(optarg, RmgrDescTable[i].rm_name) == 0)
 						{
-							config.filter_by_rmgr = i;
+							config.filter_by_rmgr[i] = true;
+							config.filter_by_rmgr_enabled = true;
 							break;
 						}
 					}
-
-					if (config.filter_by_rmgr == -1)
+					if (i > RM_MAX_ID)
 					{
 						pg_log_error("resource manager \"%s\" does not exist",
 									 optarg);
@@ -962,8 +994,7 @@ main(int argc, char **argv)
 		else if (!XLByteInSeg(private.startptr, segno, WalSegSz))
 		{
 			pg_log_error("start WAL location %X/%X is not inside file \"%s\"",
-						 (uint32) (private.startptr >> 32),
-						 (uint32) private.startptr,
+						 LSN_FORMAT_ARGS(private.startptr),
 						 fname);
 			goto bad_argument;
 		}
@@ -1005,8 +1036,7 @@ main(int argc, char **argv)
 			private.endptr != (segno + 1) * WalSegSz)
 		{
 			pg_log_error("end WAL location %X/%X is not inside file \"%s\"",
-						 (uint32) (private.endptr >> 32),
-						 (uint32) private.endptr,
+						 LSN_FORMAT_ARGS(private.endptr),
 						 argv[argc - 1]);
 			goto bad_argument;
 		}
@@ -1024,8 +1054,12 @@ main(int argc, char **argv)
 	/* done with argument parsing, do the actual work */
 
 	/* we have everything we need, start reading */
-	xlogreader_state = XLogReaderAllocate(WalSegSz, waldir, WALDumpReadPage,
-										  &private);
+	xlogreader_state =
+		XLogReaderAllocate(WalSegSz, waldir,
+						   XL_ROUTINE(.page_read = WALDumpReadPage,
+									  .segment_open = WALDumpOpenSegment,
+									  .segment_close = WALDumpCloseSegment),
+						   &private);
 	if (!xlogreader_state)
 		fatal_error("out of memory");
 
@@ -1034,8 +1068,7 @@ main(int argc, char **argv)
 
 	if (first_record == InvalidXLogRecPtr)
 		fatal_error("could not find a valid record after %X/%X",
-					(uint32) (private.startptr >> 32),
-					(uint32) private.startptr);
+					LSN_FORMAT_ARGS(private.startptr));
 
 	/*
 	 * Display a message that we're skipping data if `from` wasn't a pointer
@@ -1047,8 +1080,8 @@ main(int argc, char **argv)
 		printf(ngettext("first record is after %X/%X, at %X/%X, skipping over %u byte\n",
 						"first record is after %X/%X, at %X/%X, skipping over %u bytes\n",
 						(first_record - private.startptr)),
-			   (uint32) (private.startptr >> 32), (uint32) private.startptr,
-			   (uint32) (first_record >> 32), (uint32) first_record,
+			   LSN_FORMAT_ARGS(private.startptr),
+			   LSN_FORMAT_ARGS(first_record),
 			   (uint32) (first_record - private.startptr));
 
 	for (;;)
@@ -1067,19 +1100,22 @@ main(int argc, char **argv)
 		}
 
 		/* apply all specified filters */
-		if (config.filter_by_rmgr != -1 &&
-			config.filter_by_rmgr != record->xl_rmid)
+		if (config.filter_by_rmgr_enabled &&
+			!config.filter_by_rmgr[record->xl_rmid])
 			continue;
 
 		if (config.filter_by_xid_enabled &&
 			config.filter_by_xid != record->xl_xid)
 			continue;
 
-		/* process the record */
-		if (config.stats == true)
-			XLogDumpCountRecord(&config, &stats, xlogreader_state);
-		else
-			XLogDumpDisplayRecord(&config, xlogreader_state);
+		/* perform any per-record work */
+		if (!config.quiet)
+		{
+			if (config.stats == true)
+				XLogDumpCountRecord(&config, &stats, xlogreader_state);
+			else
+				XLogDumpDisplayRecord(&config, xlogreader_state);
+		}
 
 		/* check whether we printed enough */
 		config.already_displayed_records++;
@@ -1088,13 +1124,12 @@ main(int argc, char **argv)
 			break;
 	}
 
-	if (config.stats == true)
+	if (config.stats == true && !config.quiet)
 		XLogDumpDisplayStats(&config, &stats);
 
 	if (errormsg)
 		fatal_error("error in WAL record at %X/%X: %s",
-					(uint32) (xlogreader_state->ReadRecPtr >> 32),
-					(uint32) xlogreader_state->ReadRecPtr,
+					LSN_FORMAT_ARGS(xlogreader_state->ReadRecPtr),
 					errormsg);
 
 	XLogReaderFree(xlogreader_state);

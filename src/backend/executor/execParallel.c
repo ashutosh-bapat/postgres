@@ -3,7 +3,7 @@
  * execParallel.c
  *	  Support routines for parallel execution.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * This file contains routines that are intended to support setting up,
@@ -12,7 +12,7 @@
  * workers and ensuring that their state generally matches that of the
  * leader; see src/backend/access/transam/README.parallel for details.
  * However, we must save and restore relevant executor state, such as
- * any ParamListInfo associated with the query, buffer usage info, and
+ * any ParamListInfo associated with the query, buffer/WAL usage info, and
  * the actual plan to be passed down to the worker.
  *
  * IDENTIFICATION
@@ -25,14 +25,17 @@
 
 #include "executor/execParallel.h"
 #include "executor/executor.h"
+#include "executor/nodeAgg.h"
 #include "executor/nodeAppend.h"
 #include "executor/nodeBitmapHeapscan.h"
 #include "executor/nodeCustom.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
+#include "executor/nodeIncrementalSort.h"
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
+#include "executor/nodeMemoize.h"
 #include "executor/nodeSeqscan.h"
 #include "executor/nodeSort.h"
 #include "executor/nodeSubplan.h"
@@ -62,6 +65,7 @@
 #define PARALLEL_KEY_DSA				UINT64CONST(0xE000000000000007)
 #define PARALLEL_KEY_QUERY_TEXT		UINT64CONST(0xE000000000000008)
 #define PARALLEL_KEY_JIT_INSTRUMENTATION UINT64CONST(0xE000000000000009)
+#define PARALLEL_KEY_WAL_USAGE			UINT64CONST(0xE00000000000000A)
 
 #define PARALLEL_TUPLE_QUEUE_SIZE		65536
 
@@ -171,7 +175,7 @@ ExecSerializePlan(Plan *plan, EState *estate)
 	 */
 	pstmt = makeNode(PlannedStmt);
 	pstmt->commandType = CMD_SELECT;
-	pstmt->queryId = UINT64CONST(0);
+	pstmt->queryId = pgstat_get_my_query_id();
 	pstmt->hasReturning = false;
 	pstmt->hasModifyingCTE = false;
 	pstmt->canSetTag = true;
@@ -181,7 +185,6 @@ ExecSerializePlan(Plan *plan, EState *estate)
 	pstmt->planTree = plan;
 	pstmt->rtable = estate->es_range_table;
 	pstmt->resultRelations = NIL;
-	pstmt->rootResultRelations = NIL;
 	pstmt->appendRelations = NIL;
 
 	/*
@@ -282,7 +285,18 @@ ExecParallelEstimate(PlanState *planstate, ExecParallelEstimateContext *e)
 			/* even when not parallel-aware, for EXPLAIN ANALYZE */
 			ExecSortEstimate((SortState *) planstate, e->pcxt);
 			break;
-
+		case T_IncrementalSortState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIncrementalSortEstimate((IncrementalSortState *) planstate, e->pcxt);
+			break;
+		case T_AggState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecAggEstimate((AggState *) planstate, e->pcxt);
+			break;
+		case T_MemoizeState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecMemoizeEstimate((MemoizeState *) planstate, e->pcxt);
+			break;
 		default:
 			break;
 	}
@@ -495,7 +509,18 @@ ExecParallelInitializeDSM(PlanState *planstate,
 			/* even when not parallel-aware, for EXPLAIN ANALYZE */
 			ExecSortInitializeDSM((SortState *) planstate, d->pcxt);
 			break;
-
+		case T_IncrementalSortState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIncrementalSortInitializeDSM((IncrementalSortState *) planstate, d->pcxt);
+			break;
+		case T_AggState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecAggInitializeDSM((AggState *) planstate, d->pcxt);
+			break;
+		case T_MemoizeState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecMemoizeInitializeDSM((MemoizeState *) planstate, d->pcxt);
+			break;
 		default:
 			break;
 	}
@@ -573,6 +598,7 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 	char	   *pstmt_space;
 	char	   *paramlistinfo_space;
 	BufferUsage *bufusage_space;
+	WalUsage   *walusage_space;
 	SharedExecutorInstrumentation *instrumentation = NULL;
 	SharedJitInstrumentation *jit_instrumentation = NULL;
 	int			pstmt_len;
@@ -644,6 +670,13 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 	 */
 	shm_toc_estimate_chunk(&pcxt->estimator,
 						   mul_size(sizeof(BufferUsage), pcxt->nworkers));
+	shm_toc_estimate_keys(&pcxt->estimator, 1);
+
+	/*
+	 * Same thing for WalUsage.
+	 */
+	shm_toc_estimate_chunk(&pcxt->estimator,
+						   mul_size(sizeof(WalUsage), pcxt->nworkers));
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
 
 	/* Estimate space for tuple queues. */
@@ -727,6 +760,12 @@ ExecInitParallelPlan(PlanState *planstate, EState *estate,
 									  mul_size(sizeof(BufferUsage), pcxt->nworkers));
 	shm_toc_insert(pcxt->toc, PARALLEL_KEY_BUFFER_USAGE, bufusage_space);
 	pei->buffer_usage = bufusage_space;
+
+	/* Same for WalUsage. */
+	walusage_space = shm_toc_allocate(pcxt->toc,
+									  mul_size(sizeof(WalUsage), pcxt->nworkers));
+	shm_toc_insert(pcxt->toc, PARALLEL_KEY_WAL_USAGE, walusage_space);
+	pei->wal_usage = walusage_space;
 
 	/* Set up the tuple queues that the workers will write into. */
 	pei->tqueue = ExecParallelSetupTupleQueues(pcxt, false);
@@ -957,6 +996,8 @@ ExecParallelReInitializeDSM(PlanState *planstate,
 			break;
 		case T_HashState:
 		case T_SortState:
+		case T_IncrementalSortState:
+		case T_MemoizeState:
 			/* these nodes have DSM state, but no reinitialization is required */
 			break;
 
@@ -1017,8 +1058,17 @@ ExecParallelRetrieveInstrumentation(PlanState *planstate,
 		case T_SortState:
 			ExecSortRetrieveInstrumentation((SortState *) planstate);
 			break;
+		case T_IncrementalSortState:
+			ExecIncrementalSortRetrieveInstrumentation((IncrementalSortState *) planstate);
+			break;
 		case T_HashState:
 			ExecHashRetrieveInstrumentation((HashState *) planstate);
+			break;
+		case T_AggState:
+			ExecAggRetrieveInstrumentation((AggState *) planstate);
+			break;
+		case T_MemoizeState:
+			ExecMemoizeRetrieveInstrumentation((MemoizeState *) planstate);
 			break;
 		default:
 			break;
@@ -1069,7 +1119,7 @@ ExecParallelRetrieveJitInstrumentation(PlanState *planstate,
 
 /*
  * Finish parallel execution.  We wait for parallel workers to finish, and
- * accumulate their buffer usage.
+ * accumulate their buffer/WAL usage.
  */
 void
 ExecParallelFinish(ParallelExecutorInfo *pei)
@@ -1109,11 +1159,11 @@ ExecParallelFinish(ParallelExecutorInfo *pei)
 	WaitForParallelWorkersToFinish(pei->pcxt);
 
 	/*
-	 * Next, accumulate buffer usage.  (This must wait for the workers to
+	 * Next, accumulate buffer/WAL usage.  (This must wait for the workers to
 	 * finish, or we might get incomplete data.)
 	 */
 	for (i = 0; i < nworkers; i++)
-		InstrAccumParallelQuery(&pei->buffer_usage[i]);
+		InstrAccumParallelQuery(&pei->buffer_usage[i], &pei->wal_usage[i]);
 
 	pei->finished = true;
 }
@@ -1303,7 +1353,19 @@ ExecParallelInitializeWorker(PlanState *planstate, ParallelWorkerContext *pwcxt)
 			/* even when not parallel-aware, for EXPLAIN ANALYZE */
 			ExecSortInitializeWorker((SortState *) planstate, pwcxt);
 			break;
-
+		case T_IncrementalSortState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecIncrementalSortInitializeWorker((IncrementalSortState *) planstate,
+												pwcxt);
+			break;
+		case T_AggState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecAggInitializeWorker((AggState *) planstate, pwcxt);
+			break;
+		case T_MemoizeState:
+			/* even when not parallel-aware, for EXPLAIN ANALYZE */
+			ExecMemoizeInitializeWorker((MemoizeState *) planstate, pwcxt);
+			break;
 		default:
 			break;
 	}
@@ -1333,6 +1395,7 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 {
 	FixedParallelExecutorState *fpes;
 	BufferUsage *buffer_usage;
+	WalUsage   *wal_usage;
 	DestReceiver *receiver;
 	QueryDesc  *queryDesc;
 	SharedExecutorInstrumentation *instrumentation;
@@ -1357,7 +1420,7 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	/* Setting debug_query_string for individual workers */
 	debug_query_string = queryDesc->sourceText;
 
-	/* Report workers' query for monitoring purposes */
+	/* Report workers' query and queryId for monitoring purposes */
 	pgstat_report_activity(STATE_RUNNING, debug_query_string);
 
 	/* Attach to the dynamic shared memory area. */
@@ -1386,11 +1449,11 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	ExecSetTupleBound(fpes->tuples_needed, queryDesc->planstate);
 
 	/*
-	 * Prepare to track buffer usage during query execution.
+	 * Prepare to track buffer/WAL usage during query execution.
 	 *
 	 * We do this after starting up the executor to match what happens in the
-	 * leader, which also doesn't count buffer accesses that occur during
-	 * executor startup.
+	 * leader, which also doesn't count buffer accesses and WAL activity that
+	 * occur during executor startup.
 	 */
 	InstrStartParallelQuery();
 
@@ -1406,9 +1469,11 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	/* Shut down the executor */
 	ExecutorFinish(queryDesc);
 
-	/* Report buffer usage during parallel execution. */
+	/* Report buffer/WAL usage during parallel execution. */
 	buffer_usage = shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE, false);
-	InstrEndParallelQuery(&buffer_usage[ParallelWorkerNumber]);
+	wal_usage = shm_toc_lookup(toc, PARALLEL_KEY_WAL_USAGE, false);
+	InstrEndParallelQuery(&buffer_usage[ParallelWorkerNumber],
+						  &wal_usage[ParallelWorkerNumber]);
 
 	/* Report instrumentation data if any instrumentation options are set. */
 	if (instrumentation != NULL)

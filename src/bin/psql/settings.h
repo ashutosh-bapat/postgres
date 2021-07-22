@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2021, PostgreSQL Global Development Group
  *
  * src/bin/psql/settings.h
  */
@@ -88,10 +88,11 @@ typedef struct _psqlSettings
 
 	PGresult   *last_error_result;	/* most recent error result, if any */
 
-	printQueryOpt popt;
+	printQueryOpt popt;			/* The active print format settings */
 
 	char	   *gfname;			/* one-shot file output argument for \g */
-	bool		g_expanded;		/* one-shot expanded output requested via \gx */
+	printQueryOpt *gsavepopt;	/* if not null, saved print format settings */
+
 	char	   *gset_prefix;	/* one-shot prefix argument for \gset */
 	bool		gdesc_flag;		/* one-shot request to describe query results */
 	bool		gexec_flag;		/* one-shot request to execute query results */
@@ -117,6 +118,13 @@ typedef struct _psqlSettings
 	VariableSpace vars;			/* "shell variable" repository */
 
 	/*
+	 * If we get a connection failure, the now-unusable PGconn is stashed here
+	 * until we can successfully reconnect.  Never attempt to do anything with
+	 * this PGconn except extract parameters for a \connect attempt.
+	 */
+	PGconn	   *dead_conn;		/* previous connection to backend */
+
+	/*
 	 * The remaining fields are set by assign hooks associated with entries in
 	 * "vars".  They should not be set directly except by those hook
 	 * functions.
@@ -126,6 +134,7 @@ typedef struct _psqlSettings
 	bool		quiet;
 	bool		singleline;
 	bool		singlestep;
+	bool		hide_compression;
 	bool		hide_tableam;
 	int			fetch_count;
 	int			histsize;

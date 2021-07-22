@@ -5,7 +5,7 @@
  * Basically this is stuff that is useful in both pg_dump and pg_dumpall.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_dump/dumputils.c
@@ -168,48 +168,28 @@ buildACLCommands(const char *name, const char *subname, const char *nspname,
 		for (i = 0; i < nraclitems; i++)
 		{
 			if (!parseAclItem(raclitems[i], type, name, subname, remoteVersion,
-							  grantee, grantor, privs, privswgo))
+							  grantee, grantor, privs, NULL))
 			{
 				ok = false;
 				break;
 			}
 
-			if (privs->len > 0 || privswgo->len > 0)
+			if (privs->len > 0)
 			{
-				if (privs->len > 0)
-				{
-					appendPQExpBuffer(firstsql, "%sREVOKE %s ON %s ",
-									  prefix, privs->data, type);
-					if (nspname && *nspname)
-						appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
-					appendPQExpBuffer(firstsql, "%s FROM ", name);
-					if (grantee->len == 0)
-						appendPQExpBufferStr(firstsql, "PUBLIC;\n");
-					else if (strncmp(grantee->data, "group ",
-									 strlen("group ")) == 0)
-						appendPQExpBuffer(firstsql, "GROUP %s;\n",
-										  fmtId(grantee->data + strlen("group ")));
-					else
-						appendPQExpBuffer(firstsql, "%s;\n",
-										  fmtId(grantee->data));
-				}
-				if (privswgo->len > 0)
-				{
-					appendPQExpBuffer(firstsql,
-									  "%sREVOKE GRANT OPTION FOR %s ON %s ",
-									  prefix, privswgo->data, type);
-					if (nspname && *nspname)
-						appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
-					appendPQExpBuffer(firstsql, "%s FROM ", name);
-					if (grantee->len == 0)
-						appendPQExpBufferStr(firstsql, "PUBLIC");
-					else if (strncmp(grantee->data, "group ",
-									 strlen("group ")) == 0)
-						appendPQExpBuffer(firstsql, "GROUP %s",
-										  fmtId(grantee->data + strlen("group ")));
-					else
-						appendPQExpBufferStr(firstsql, fmtId(grantee->data));
-				}
+				appendPQExpBuffer(firstsql, "%sREVOKE %s ON %s ",
+								  prefix, privs->data, type);
+				if (nspname && *nspname)
+					appendPQExpBuffer(firstsql, "%s.", fmtId(nspname));
+				appendPQExpBuffer(firstsql, "%s FROM ", name);
+				if (grantee->len == 0)
+					appendPQExpBufferStr(firstsql, "PUBLIC;\n");
+				else if (strncmp(grantee->data, "group ",
+								 strlen("group ")) == 0)
+					appendPQExpBuffer(firstsql, "GROUP %s;\n",
+									  fmtId(grantee->data + strlen("group ")));
+				else
+					appendPQExpBuffer(firstsql, "%s;\n",
+									  fmtId(grantee->data));
 			}
 		}
 	}
@@ -462,8 +442,11 @@ buildDefaultACLCommands(const char *type, const char *nspname,
  * The returned grantee string will be the dequoted username or groupname
  * (preceded with "group " in the latter case).  Note that a grant to PUBLIC
  * is represented by an empty grantee string.  The returned grantor is the
- * dequoted grantor name.  Privilege characters are decoded and split between
- * privileges with grant option (privswgo) and without (privs).
+ * dequoted grantor name.  Privilege characters are translated to GRANT/REVOKE
+ * comma-separated privileges lists.  If "privswgo" is non-NULL, the result is
+ * separate lists for privileges with grant option ("privswgo") and without
+ * ("privs").  Otherwise, "privs" bears every relevant privilege, ignoring the
+ * grant option distinction.
  *
  * Note: for cross-version compatibility, it's important to use ALL to
  * represent the privilege sets whenever appropriate.
@@ -514,7 +497,7 @@ parseAclItem(const char *item, const char *type,
 do { \
 	if ((pos = strchr(eqpos + 1, code))) \
 	{ \
-		if (*(pos + 1) == '*') \
+		if (*(pos + 1) == '*' && privswgo != NULL) \
 		{ \
 			AddAcl(privswgo, keywd, subname); \
 			all_without_go = false; \
@@ -685,7 +668,7 @@ AddAcl(PQExpBuffer aclbuf, const char *keyword, const char *subname)
  * keep this file free of assumptions about how to deal with SQL errors.)
  */
 void
-buildShSecLabelQuery(PGconn *conn, const char *catalog_name, Oid objectId,
+buildShSecLabelQuery(const char *catalog_name, Oid objectId,
 					 PQExpBuffer sql)
 {
 	appendPQExpBuffer(sql,
@@ -742,6 +725,7 @@ void
 buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 				PQExpBuffer init_acl_subquery, PQExpBuffer init_racl_subquery,
 				const char *acl_column, const char *acl_owner,
+				const char *initprivs_expr,
 				const char *obj_kind, bool binary_upgrade)
 {
 	/*
@@ -782,23 +766,25 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 					  "WITH ORDINALITY AS perm(acl,row_n) "
 					  "WHERE NOT EXISTS ( "
 					  "SELECT 1 FROM "
-					  "pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s))) "
+					  "pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) "
 					  "AS init(init_acl) WHERE acl = init_acl)) as foo)",
 					  acl_column,
 					  obj_kind,
 					  acl_owner,
+					  initprivs_expr,
 					  obj_kind,
 					  acl_owner);
 
 	printfPQExpBuffer(racl_subquery,
 					  "(SELECT pg_catalog.array_agg(acl ORDER BY row_n) FROM "
 					  "(SELECT acl, row_n FROM "
-					  "pg_catalog.unnest(coalesce(pip.initprivs,pg_catalog.acldefault(%s,%s))) "
+					  "pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) "
 					  "WITH ORDINALITY AS initp(acl,row_n) "
 					  "WHERE NOT EXISTS ( "
 					  "SELECT 1 FROM "
 					  "pg_catalog.unnest(coalesce(%s,pg_catalog.acldefault(%s,%s))) "
 					  "AS permp(orig_acl) WHERE acl = orig_acl)) as foo)",
+					  initprivs_expr,
 					  obj_kind,
 					  acl_owner,
 					  acl_column,
@@ -824,12 +810,13 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 		printfPQExpBuffer(init_acl_subquery,
 						  "CASE WHEN privtype = 'e' THEN "
 						  "(SELECT pg_catalog.array_agg(acl ORDER BY row_n) FROM "
-						  "(SELECT acl, row_n FROM pg_catalog.unnest(pip.initprivs) "
+						  "(SELECT acl, row_n FROM pg_catalog.unnest(%s) "
 						  "WITH ORDINALITY AS initp(acl,row_n) "
 						  "WHERE NOT EXISTS ( "
 						  "SELECT 1 FROM "
 						  "pg_catalog.unnest(pg_catalog.acldefault(%s,%s)) "
 						  "AS privm(orig_acl) WHERE acl = orig_acl)) as foo) END",
+						  initprivs_expr,
 						  obj_kind,
 						  acl_owner);
 
@@ -840,10 +827,11 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 						  "pg_catalog.unnest(pg_catalog.acldefault(%s,%s)) "
 						  "WITH ORDINALITY AS privp(acl,row_n) "
 						  "WHERE NOT EXISTS ( "
-						  "SELECT 1 FROM pg_catalog.unnest(pip.initprivs) "
+						  "SELECT 1 FROM pg_catalog.unnest(%s) "
 						  "AS initp(init_acl) WHERE acl = init_acl)) as foo) END",
 						  obj_kind,
-						  acl_owner);
+						  acl_owner,
+						  initprivs_expr);
 	}
 	else
 	{
@@ -865,11 +853,12 @@ buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 bool
 variable_is_guc_list_quote(const char *name)
 {
-	if (pg_strcasecmp(name, "temp_tablespaces") == 0 ||
+	if (pg_strcasecmp(name, "local_preload_libraries") == 0 ||
+		pg_strcasecmp(name, "search_path") == 0 ||
 		pg_strcasecmp(name, "session_preload_libraries") == 0 ||
 		pg_strcasecmp(name, "shared_preload_libraries") == 0 ||
-		pg_strcasecmp(name, "local_preload_libraries") == 0 ||
-		pg_strcasecmp(name, "search_path") == 0)
+		pg_strcasecmp(name, "temp_tablespaces") == 0 ||
+		pg_strcasecmp(name, "unix_socket_directories") == 0)
 		return true;
 	else
 		return false;

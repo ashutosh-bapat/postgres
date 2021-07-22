@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2001-2020, PostgreSQL Global Development Group
+# Copyright (c) 2001-2021, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_most.pl
 #
@@ -16,6 +16,8 @@
 #		 # and Unicode name (not used in this script)
 
 use strict;
+use warnings;
+
 use convutils;
 
 my $this_script = 'src/backend/utils/mb/Unicode/UCS_to_most.pl';
@@ -52,7 +54,8 @@ my %filename = (
 # make maps for all encodings if not specified
 my @charsets = (scalar(@ARGV) > 0) ? @ARGV : sort keys(%filename);
 
-foreach my $charset (@charsets)
+# the sort is just so that the output is easier to eyeball
+foreach my $charset (sort @charsets)
 {
 	my $mapping = &read_source($filename{$charset});
 

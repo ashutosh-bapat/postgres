@@ -3,7 +3,7 @@
  * pg_publication.c
  *		publication C API manipulation
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -42,8 +42,6 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
-static List *get_rel_publications(Oid relid);
-
 /*
  * Check if relation can be in given publication and throws appropriate
  * error if not.
@@ -56,23 +54,23 @@ check_publication_add_relation(Relation targetrel)
 		RelationGetForm(targetrel)->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("\"%s\" is not a table",
+				 errmsg("cannot add relation \"%s\" to publication",
 						RelationGetRelationName(targetrel)),
-				 errdetail("Only tables can be added to publications.")));
+				 errdetail_relkind_not_supported(RelationGetForm(targetrel)->relkind)));
 
 	/* Can't be system table */
 	if (IsCatalogRelation(targetrel))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("\"%s\" is a system table",
+				 errmsg("cannot add relation \"%s\" to publication",
 						RelationGetRelationName(targetrel)),
-				 errdetail("System tables cannot be added to publications.")));
+				 errdetail("This operation is not supported for system tables.")));
 
 	/* UNLOGGED and TEMP relations cannot be part of publication. */
-	if (!RelationNeedsWAL(targetrel))
+	if (!RelationIsPermanent(targetrel))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("table \"%s\" cannot be replicated",
+				 errmsg("cannot add relation \"%s\" to publication",
 						RelationGetRelationName(targetrel)),
 				 errdetail("Temporary and unlogged relations cannot be replicated.")));
 }
@@ -87,7 +85,7 @@ check_publication_add_relation(Relation targetrel)
  * XXX  This also excludes all tables with relid < FirstNormalObjectId,
  * ie all tables created during initdb.  This mainly affects the preinstalled
  * information_schema.  IsCatalogRelationOid() only excludes tables with
- * relid < FirstBootstrapObjectId, making that test rather redundant,
+ * relid < FirstUnpinnedObjectId, making that test rather redundant,
  * but really we should get rid of the FirstNormalObjectId test not
  * IsCatalogRelationOid.  We can't do so today because we don't want
  * information_schema tables to be considered publishable; but this test
@@ -216,37 +214,9 @@ publication_add_relation(Oid pubid, Relation targetrel,
 	return myself;
 }
 
-
-/*
- * Gets list of publication oids for a relation, plus those of ancestors,
- * if any, if the relation is a partition.
- */
+/* Gets list of publication oids for a relation */
 List *
 GetRelationPublications(Oid relid)
-{
-	List	   *result = NIL;
-
-	result = get_rel_publications(relid);
-	if (get_rel_relispartition(relid))
-	{
-		List	   *ancestors = get_partition_ancestors(relid);
-		ListCell   *lc;
-
-		foreach(lc, ancestors)
-		{
-			Oid			ancestor = lfirst_oid(lc);
-			List	   *ancestor_pubs = get_rel_publications(ancestor);
-
-			result = list_concat(result, ancestor_pubs);
-		}
-	}
-
-	return result;
-}
-
-/* Workhorse of GetRelationPublications() */
-static List *
-get_rel_publications(Oid relid)
 {
 	List	   *result = NIL;
 	CatCList   *pubrellist;
@@ -373,9 +343,13 @@ GetAllTablesPublications(void)
 
 /*
  * Gets list of all relation published by FOR ALL TABLES publication(s).
+ *
+ * If the publication publishes partition changes via their respective root
+ * partitioned tables, we must exclude partitions in favor of including the
+ * root partitioned tables.
  */
 List *
-GetAllTablesPublicationRelations(void)
+GetAllTablesPublicationRelations(bool pubviaroot)
 {
 	Relation	classRel;
 	ScanKeyData key[1];
@@ -397,13 +371,36 @@ GetAllTablesPublicationRelations(void)
 		Form_pg_class relForm = (Form_pg_class) GETSTRUCT(tuple);
 		Oid			relid = relForm->oid;
 
-		if (is_publishable_class(relid, relForm))
+		if (is_publishable_class(relid, relForm) &&
+			!(relForm->relispartition && pubviaroot))
 			result = lappend_oid(result, relid);
 	}
 
 	table_endscan(scan);
-	table_close(classRel, AccessShareLock);
 
+	if (pubviaroot)
+	{
+		ScanKeyInit(&key[0],
+					Anum_pg_class_relkind,
+					BTEqualStrategyNumber, F_CHAREQ,
+					CharGetDatum(RELKIND_PARTITIONED_TABLE));
+
+		scan = table_beginscan_catalog(classRel, 1, key);
+
+		while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
+		{
+			Form_pg_class relForm = (Form_pg_class) GETSTRUCT(tuple);
+			Oid			relid = relForm->oid;
+
+			if (is_publishable_class(relid, relForm) &&
+				!relForm->relispartition)
+				result = lappend_oid(result, relid);
+		}
+
+		table_endscan(scan);
+	}
+
+	table_close(classRel, AccessShareLock);
 	return result;
 }
 
@@ -433,6 +430,7 @@ GetPublication(Oid pubid)
 	pub->pubactions.pubupdate = pubform->pubupdate;
 	pub->pubactions.pubdelete = pubform->pubdelete;
 	pub->pubactions.pubtruncate = pubform->pubtruncate;
+	pub->pubviaroot = pubform->pubviaroot;
 
 	ReleaseSysCache(tup);
 
@@ -533,9 +531,11 @@ pg_get_publication_tables(PG_FUNCTION_ARGS)
 		 * need those.
 		 */
 		if (publication->alltables)
-			tables = GetAllTablesPublicationRelations();
+			tables = GetAllTablesPublicationRelations(publication->pubviaroot);
 		else
 			tables = GetPublicationRelations(publication->oid,
+											 publication->pubviaroot ?
+											 PUBLICATION_PART_ROOT :
 											 PUBLICATION_PART_LEAF);
 		funcctx->user_fctx = (void *) tables;
 

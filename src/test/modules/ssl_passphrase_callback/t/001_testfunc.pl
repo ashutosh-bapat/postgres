@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 use strict;
 use warnings;
 
@@ -7,20 +10,15 @@ use TestLib;
 use Test::More;
 use PostgresNode;
 
-unless (($ENV{with_openssl} || 'no') eq 'yes')
+unless ($ENV{with_ssl} eq 'openssl')
 {
-	plan skip_all => 'SSL not supported by this build';
+	plan skip_all => 'OpenSSL not supported by this build';
 }
 
 my $clearpass = "FooBaR1";
 my $rot13pass = "SbbOnE1";
 
-# self-signed cert was generated like this:
-# system('openssl req -new -x509 -days 10000 -nodes -out server.crt -keyout server.ckey -subj "/CN=localhost"');
-# add the cleartext passphrase to the key, remove the unprotected key
-# system("openssl rsa -aes256 -in server.ckey -out server.key -passout pass:$clearpass");
-# unlink "server.ckey";
-
+# see the Makefile for how the certificate and key have been generated
 
 my $node = get_new_node('main');
 $node->init;

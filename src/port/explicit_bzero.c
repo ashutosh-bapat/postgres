@@ -2,7 +2,7 @@
  *
  * explicit_bzero.c
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -44,7 +44,7 @@ bzero2(void *buf, size_t len)
 	memset(buf, 0, len);
 }
 
-static void (* volatile bzero_p)(void *, size_t) = bzero2;
+static void (*volatile bzero_p) (void *, size_t) = bzero2;
 
 void
 explicit_bzero(void *buf, size_t len)

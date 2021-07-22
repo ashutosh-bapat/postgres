@@ -3,7 +3,7 @@
  * bloom.h
  *	  Header for bloom index.
  *
- * Copyright (c) 2016-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/bloom.h
@@ -22,7 +22,8 @@
 
 /* Support procedures numbers */
 #define BLOOM_HASH_PROC			1
-#define BLOOM_NPROC				1
+#define BLOOM_OPTIONS_PROC		2
+#define BLOOM_NPROC				2
 
 /* Scan strategies */
 #define BLOOM_EQUAL_STRATEGY	1
@@ -191,6 +192,7 @@ extern bool blvalidate(Oid opclassoid);
 extern bool blinsert(Relation index, Datum *values, bool *isnull,
 					 ItemPointer ht_ctid, Relation heapRel,
 					 IndexUniqueCheck checkUnique,
+					 bool indexUnchanged,
 					 struct IndexInfo *indexInfo);
 extern IndexScanDesc blbeginscan(Relation r, int nkeys, int norderbys);
 extern int64 blgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);

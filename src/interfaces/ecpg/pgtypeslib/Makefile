@@ -2,7 +2,7 @@
 #
 # Makefile for ecpg pgtypes library
 #
-# Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/interfaces/ecpg/pgtypeslib/Makefile
@@ -24,6 +24,7 @@ override CFLAGS += $(PTHREAD_CFLAGS)
 
 SHLIB_LINK_INTERNAL = -lpgcommon_shlib -lpgport_shlib
 SHLIB_LINK += $(filter -lintl -lm, $(LIBS))
+SHLIB_PREREQS = submake-libpgport
 
 SHLIB_EXPORTS = exports.txt
 

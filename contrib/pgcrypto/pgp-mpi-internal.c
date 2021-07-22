@@ -35,7 +35,7 @@
 #include "px.h"
 
 static mpz_t *
-mp_new()
+mp_new(void)
 {
 	mpz_t	   *mp = mp_int_alloc();
 
@@ -60,10 +60,10 @@ mp_px_rand(uint32 bits, mpz_t *res)
 	int			last_bits = bits & 7;
 	uint8	   *buf;
 
-	buf = px_alloc(bytes);
+	buf = palloc(bytes);
 	if (!pg_strong_random(buf, bytes))
 	{
-		px_free(buf);
+		pfree(buf);
 		return PXE_NO_RANDOM;
 	}
 
@@ -78,7 +78,7 @@ mp_px_rand(uint32 bits, mpz_t *res)
 
 	mp_int_read_unsigned(res, buf, bytes);
 
-	px_free(buf);
+	pfree(buf);
 
 	return 0;
 }

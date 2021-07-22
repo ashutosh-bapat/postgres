@@ -41,4 +41,6 @@ CATALOG(pg_propgraph_vertex,8298,PropgraphVertexRelationId)
  */
 typedef FormData_pg_propgraph_vertex *Form_pg_propgraph_vertex;
 
+DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_vertex_oid_index, 8301, PropgraphVertexObjectIndexId, on pg_propgraph_vertex using btree(oid oid_ops));
+
 #endif							/* PG_PROPGRAPH_VERTEX_H */

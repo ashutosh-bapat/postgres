@@ -3,7 +3,7 @@
  * rewriteDefine.c
  *	  routines for defining a rewrite rule
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,9 +23,9 @@
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
-#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/storage.h"
 #include "commands/policy.h"
@@ -268,8 +268,9 @@ DefineQueryRewrite(const char *rulename,
 		event_relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table or view",
-						RelationGetRelationName(event_relation))));
+				 errmsg("relation \"%s\" cannot have rules",
+						RelationGetRelationName(event_relation)),
+				 errdetail_relkind_not_supported(event_relation->rd_rel->relkind)));
 
 	if (!allowSystemTableMods && IsSystemRelation(event_relation))
 		ereport(ERROR,
@@ -413,13 +414,14 @@ DefineQueryRewrite(const char *rulename,
 		 * Are we converting a relation to a view?
 		 *
 		 * If so, check that the relation is empty because the storage for the
-		 * relation is going to be deleted.  Also insist that the rel not have
-		 * any triggers, indexes, child tables, policies, or RLS enabled.
-		 * (Note: these tests are too strict, because they will reject
-		 * relations that once had such but don't anymore.  But we don't
-		 * really care, because this whole business of converting relations to
-		 * views is just a kluge to allow dump/reload of views that
-		 * participate in circular dependencies.)
+		 * relation is going to be deleted.  Also insist that the rel not be
+		 * involved in partitioning, nor have any triggers, indexes, child or
+		 * parent tables, RLS policies, or RLS enabled.  (Note: some of these
+		 * tests are too strict, because they will reject relations that once
+		 * had such but don't anymore.  But we don't really care, because this
+		 * whole business of converting relations to views is just an obsolete
+		 * kluge to allow dump/reload of views that participate in circular
+		 * dependencies.)
 		 */
 		if (event_relation->rd_rel->relkind != RELKIND_VIEW &&
 			event_relation->rd_rel->relkind != RELKIND_MATVIEW)
@@ -433,6 +435,9 @@ DefineQueryRewrite(const char *rulename,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("cannot convert partitioned table \"%s\" to a view",
 								RelationGetRelationName(event_relation))));
+
+			/* only case left: */
+			Assert(event_relation->rd_rel->relkind == RELKIND_RELATION);
 
 			if (event_relation->rd_rel->relispartition)
 				ereport(ERROR,
@@ -469,6 +474,12 @@ DefineQueryRewrite(const char *rulename,
 				ereport(ERROR,
 						(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 						 errmsg("could not convert table \"%s\" to a view because it has child tables",
+								RelationGetRelationName(event_relation))));
+
+			if (has_superclass(RelationGetRelid(event_relation)))
+				ereport(ERROR,
+						(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+						 errmsg("could not convert table \"%s\" to a view because it has parent tables",
 								RelationGetRelationName(event_relation))));
 
 			if (event_relation->rd_rel->relrowsecurity)
@@ -621,7 +632,7 @@ DefineQueryRewrite(const char *rulename,
 		classForm->relam = InvalidOid;
 		classForm->reltablespace = InvalidOid;
 		classForm->relpages = 0;
-		classForm->reltuples = 0;
+		classForm->reltuples = -1;
 		classForm->relallvisible = 0;
 		classForm->reltoastrelid = InvalidOid;
 		classForm->relhasindex = false;
@@ -925,7 +936,8 @@ RangeVarCallbackForRenameRule(const RangeVar *rv, Oid relid, Oid oldrelid,
 		form->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table or view", rv->relname)));
+				 errmsg("relation \"%s\" cannot have rules", rv->relname),
+				 errdetail_relkind_not_supported(form->relkind)));
 
 	if (!allowSystemTableMods && IsSystemClass(relid, form))
 		ereport(ERROR,
@@ -1002,6 +1014,8 @@ RenameRewriteRule(RangeVar *relation, const char *oldName,
 	namestrcpy(&(ruleform->rulename), newName);
 
 	CatalogTupleUpdate(pg_rewrite_desc, &ruletup->t_self, ruletup);
+
+	InvokeObjectPostAlterHook(RewriteRelationId, ruleOid, 0);
 
 	heap_freetuple(ruletup);
 	table_close(pg_rewrite_desc, RowExclusiveLock);

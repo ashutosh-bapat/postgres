@@ -4,7 +4,7 @@
  *		helper routine to ensure restricted token on Windows
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -61,12 +61,12 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo)
 	Advapi32Handle = LoadLibrary("ADVAPI32.DLL");
 	if (Advapi32Handle == NULL)
 	{
-		pg_log_error("could not load advapi32.dll: error code %lu",
-					 GetLastError());
+		pg_log_error("could not load library \"%s\": error code %lu",
+					 "ADVAPI32.DLL", GetLastError());
 		return 0;
 	}
 
-	_CreateRestrictedToken = (__CreateRestrictedToken) GetProcAddress(Advapi32Handle, "CreateRestrictedToken");
+	_CreateRestrictedToken = (__CreateRestrictedToken) (pg_funcptr_t) GetProcAddress(Advapi32Handle, "CreateRestrictedToken");
 
 	if (_CreateRestrictedToken == NULL)
 	{
@@ -171,7 +171,7 @@ get_restricted_token(void)
 
 		cmdline = pg_strdup(GetCommandLine());
 
-		putenv("PG_RESTRICT_EXEC=1");
+		setenv("PG_RESTRICT_EXEC", "1", 1);
 
 		if ((restrictedToken = CreateRestrictedProcess(cmdline, &pi)) == 0)
 		{

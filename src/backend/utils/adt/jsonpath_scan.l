@@ -7,7 +7,7 @@
  * Splits jsonpath string into tokens represented as JsonPathString structs.
  * Decodes unicode and hex escaped strings.
  *
- * Copyright (c) 2019-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2019-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	src/backend/utils/adt/jsonpath_scan.l
@@ -42,6 +42,8 @@ fprintf_to_ereport(const char *fmt, const char *msg)
 {
 	ereport(ERROR, (errmsg_internal("%s", msg)));
 }
+
+/* LCOV_EXCL_START */
 
 %}
 
@@ -270,6 +272,8 @@ hex_fail	\\x{hex_dig}{0,1}
 <<EOF>>							{ yyterminate(); }
 
 %%
+
+/* LCOV_EXCL_STOP */
 
 void
 jsonpath_yyerror(JsonPathParseResult **result, const char *message)

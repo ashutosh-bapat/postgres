@@ -4,7 +4,7 @@
  *	  header file for postgres hash access method implementation
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/hash.h
@@ -148,7 +148,7 @@ typedef struct HashScanPosData
 		(scanpos).firstItem = 0; \
 		(scanpos).lastItem = 0; \
 		(scanpos).itemIndex = 0; \
-	} while (0);
+	} while (0)
 
 /*
  *	HashScanOpaqueData is private state for a hash index scan.
@@ -352,7 +352,8 @@ typedef struct HashOptions
  */
 #define HASHSTANDARD_PROC		1
 #define HASHEXTENDED_PROC		2
-#define HASHNProcs				2
+#define HASHOPTIONS_PROC		3
+#define HASHNProcs				3
 
 
 /* public routines */
@@ -363,6 +364,7 @@ extern void hashbuildempty(Relation index);
 extern bool hashinsert(Relation rel, Datum *values, bool *isnull,
 					   ItemPointer ht_ctid, Relation heapRel,
 					   IndexUniqueCheck checkUnique,
+					   bool indexUnchanged,
 					   struct IndexInfo *indexInfo);
 extern bool hashgettuple(IndexScanDesc scan, ScanDirection dir);
 extern int64 hashgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
@@ -378,6 +380,10 @@ extern IndexBulkDeleteResult *hashvacuumcleanup(IndexVacuumInfo *info,
 												IndexBulkDeleteResult *stats);
 extern bytea *hashoptions(Datum reloptions, bool validate);
 extern bool hashvalidate(Oid opclassoid);
+extern void hashadjustmembers(Oid opfamilyoid,
+							  Oid opclassoid,
+							  List *operators,
+							  List *functions);
 
 /* private routines */
 
@@ -450,7 +456,6 @@ extern uint32 _hash_datum2hashkey(Relation rel, Datum key);
 extern uint32 _hash_datum2hashkey_type(Relation rel, Datum key, Oid keytype);
 extern Bucket _hash_hashkey2bucket(uint32 hashkey, uint32 maxbucket,
 								   uint32 highmask, uint32 lowmask);
-extern uint32 _hash_log2(uint32 num);
 extern uint32 _hash_spareindex(uint32 num_bucket);
 extern uint32 _hash_get_totalbuckets(uint32 splitpoint_phase);
 extern void _hash_checkpage(Relation rel, Buffer buf, int flags);

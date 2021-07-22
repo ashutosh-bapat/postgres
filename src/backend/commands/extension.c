@@ -12,7 +12,7 @@
  * postgresql.conf.  An extension also has an installation script file,
  * containing SQL commands to create the extension's objects.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -682,7 +682,7 @@ read_extension_script_file(const ExtensionControlFile *control,
 		src_encoding = control->encoding;
 
 	/* make sure that source string is valid in the expected encoding */
-	pg_verify_mbstr_len(src_encoding, src_str, len, false);
+	(void) pg_verify_mbstr(src_encoding, src_str, len, false);
 
 	/*
 	 * Convert the encoding to the database encoding. read_whole_file
@@ -786,6 +786,7 @@ execute_sql_string(const char *sql)
 
 				ProcessUtility(stmt,
 							   sql,
+							   false,
 							   PROCESS_UTILITY_QUERY,
 							   NULL,
 							   NULL,
@@ -908,9 +909,21 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 								 GUC_ACTION_SAVE, true, 0, false);
 
 	/*
-	 * Set up the search path to contain the target schema, then the schemas
-	 * of any prerequisite extensions, and nothing else.  In particular this
-	 * makes the target schema be the default creation target namespace.
+	 * Similarly disable check_function_bodies, to ensure that SQL functions
+	 * won't be parsed during creation.
+	 */
+	if (check_function_bodies)
+		(void) set_config_option("check_function_bodies", "off",
+								 PGC_USERSET, PGC_S_SESSION,
+								 GUC_ACTION_SAVE, true, 0, false);
+
+	/*
+	 * Set up the search path to have the target schema first, making it be
+	 * the default creation target namespace.  Then add the schemas of any
+	 * prerequisite extensions, unless they are in pg_catalog which would be
+	 * searched anyway.  (Listing pg_catalog explicitly in a non-first
+	 * position would be bad for security.)  Finally add pg_temp to ensure
+	 * that temp objects can't take precedence over others.
 	 *
 	 * Note: it might look tempting to use PushOverrideSearchPath for this,
 	 * but we cannot do that.  We have to actually set the search_path GUC in
@@ -924,9 +937,10 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 		Oid			reqschema = lfirst_oid(lc);
 		char	   *reqname = get_namespace_name(reqschema);
 
-		if (reqname)
+		if (reqname && strcmp(reqname, "pg_catalog") != 0)
 			appendStringInfo(&pathbuf, ", %s", quote_identifier(reqname));
 	}
+	appendStringInfoString(&pathbuf, ", pg_temp");
 
 	(void) set_config_option("search_path", pathbuf.data,
 							 PGC_USERSET, PGC_S_SESSION,
@@ -1402,39 +1416,39 @@ CreateExtensionInternal(char *extensionName,
 	 * does what is needed, we try to find a sequence of update scripts that
 	 * will get us there.
 	 */
-		filename = get_extension_script_filename(pcontrol, NULL, versionName);
-		if (stat(filename, &fst) == 0)
-		{
-			/* Easy, no extra scripts */
-			updateVersions = NIL;
-		}
-		else
-		{
-			/* Look for best way to install this version */
-			List	   *evi_list;
-			ExtensionVersionInfo *evi_start;
-			ExtensionVersionInfo *evi_target;
+	filename = get_extension_script_filename(pcontrol, NULL, versionName);
+	if (stat(filename, &fst) == 0)
+	{
+		/* Easy, no extra scripts */
+		updateVersions = NIL;
+	}
+	else
+	{
+		/* Look for best way to install this version */
+		List	   *evi_list;
+		ExtensionVersionInfo *evi_start;
+		ExtensionVersionInfo *evi_target;
 
-			/* Extract the version update graph from the script directory */
-			evi_list = get_ext_ver_list(pcontrol);
+		/* Extract the version update graph from the script directory */
+		evi_list = get_ext_ver_list(pcontrol);
 
-			/* Identify the target version */
-			evi_target = get_ext_ver_info(versionName, &evi_list);
+		/* Identify the target version */
+		evi_target = get_ext_ver_info(versionName, &evi_list);
 
-			/* Identify best path to reach target */
-			evi_start = find_install_path(evi_list, evi_target,
-										  &updateVersions);
+		/* Identify best path to reach target */
+		evi_start = find_install_path(evi_list, evi_target,
+									  &updateVersions);
 
-			/* Fail if no path ... */
-			if (evi_start == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("extension \"%s\" has no installation script nor update path for version \"%s\"",
-								pcontrol->name, versionName)));
+		/* Fail if no path ... */
+		if (evi_start == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("extension \"%s\" has no installation script nor update path for version \"%s\"",
+							pcontrol->name, versionName)));
 
-			/* Otherwise, install best starting point and then upgrade */
-			versionName = evi_start->name;
-		}
+		/* Otherwise, install best starting point and then upgrade */
+		versionName = evi_start->name;
+	}
 
 	/*
 	 * Fetch control parameters for installation target version
@@ -1717,30 +1731,21 @@ CreateExtension(ParseState *pstate, CreateExtensionStmt *stmt)
 		if (strcmp(defel->defname, "schema") == 0)
 		{
 			if (d_schema)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			d_schema = defel;
 			schemaName = defGetString(d_schema);
 		}
 		else if (strcmp(defel->defname, "new_version") == 0)
 		{
 			if (d_new_version)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			d_new_version = defel;
 			versionName = defGetString(d_new_version);
 		}
 		else if (strcmp(defel->defname, "cascade") == 0)
 		{
 			if (d_cascade)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			d_cascade = defel;
 			cascade = defGetBoolean(d_cascade);
 		}
@@ -1783,6 +1788,7 @@ InsertExtensionTuple(const char *extName, Oid extOwner,
 	HeapTuple	tuple;
 	ObjectAddress myself;
 	ObjectAddress nsp;
+	ObjectAddresses *refobjs;
 	ListCell   *lc;
 
 	/*
@@ -1825,27 +1831,26 @@ InsertExtensionTuple(const char *extName, Oid extOwner,
 	 */
 	recordDependencyOnOwner(ExtensionRelationId, extensionOid, extOwner);
 
-	myself.classId = ExtensionRelationId;
-	myself.objectId = extensionOid;
-	myself.objectSubId = 0;
+	refobjs = new_object_addresses();
 
-	nsp.classId = NamespaceRelationId;
-	nsp.objectId = schemaOid;
-	nsp.objectSubId = 0;
+	ObjectAddressSet(myself, ExtensionRelationId, extensionOid);
 
-	recordDependencyOn(&myself, &nsp, DEPENDENCY_NORMAL);
+	ObjectAddressSet(nsp, NamespaceRelationId, schemaOid);
+	add_exact_object_address(&nsp, refobjs);
 
 	foreach(lc, requiredExtensions)
 	{
 		Oid			reqext = lfirst_oid(lc);
 		ObjectAddress otherext;
 
-		otherext.classId = ExtensionRelationId;
-		otherext.objectId = reqext;
-		otherext.objectSubId = 0;
-
-		recordDependencyOn(&myself, &otherext, DEPENDENCY_NORMAL);
+		ObjectAddressSet(otherext, ExtensionRelationId, reqext);
+		add_exact_object_address(&otherext, refobjs);
 	}
+
+	/* Record all of them (this includes duplicate elimination) */
+	record_object_address_dependencies(&myself, refobjs, DEPENDENCY_NORMAL);
+	free_object_addresses(refobjs);
+
 	/* Post creation hook for new extension */
 	InvokeObjectPostCreateHook(ExtensionRelationId, extensionOid, 0);
 
@@ -2919,7 +2924,7 @@ AlterExtensionNamespace(const char *extensionName, const char *newschema, Oid *o
 					 errmsg("extension \"%s\" does not support SET SCHEMA",
 							NameStr(extForm->extname)),
 					 errdetail("%s is not in the extension's schema \"%s\"",
-							   getObjectDescription(&dep),
+							   getObjectDescription(&dep, false),
 							   get_namespace_name(oldNspOid))));
 	}
 
@@ -3037,10 +3042,7 @@ ExecAlterExtensionStmt(ParseState *pstate, AlterExtensionStmt *stmt)
 		if (strcmp(defel->defname, "new_version") == 0)
 		{
 			if (d_new_version)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			d_new_version = defel;
 		}
 		else
@@ -3269,9 +3271,36 @@ ExecAlterExtensionContentsStmt(AlterExtensionContentsStmt *stmt,
 	Relation	relation;
 	Oid			oldExtension;
 
-	extension.classId = ExtensionRelationId;
-	extension.objectId = get_extension_oid(stmt->extname, false);
-	extension.objectSubId = 0;
+	switch (stmt->objtype)
+	{
+		case OBJECT_DATABASE:
+		case OBJECT_EXTENSION:
+		case OBJECT_INDEX:
+		case OBJECT_PUBLICATION:
+		case OBJECT_ROLE:
+		case OBJECT_STATISTIC_EXT:
+		case OBJECT_SUBSCRIPTION:
+		case OBJECT_TABLESPACE:
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("cannot add an object of this type to an extension")));
+			break;
+		default:
+			/* OK */
+			break;
+	}
+
+	/*
+	 * Find the extension and acquire a lock on it, to ensure it doesn't get
+	 * dropped concurrently.  A sharable lock seems sufficient: there's no
+	 * reason not to allow other sorts of manipulations, such as add/drop of
+	 * other objects, to occur concurrently.  Concurrently adding/dropping the
+	 * *same* object would be bad, but we prevent that by using a non-sharable
+	 * lock on the individual object, below.
+	 */
+	extension = get_object_address(OBJECT_EXTENSION,
+								   (Node *) makeString(stmt->extname),
+								   &relation, AccessShareLock, false);
 
 	/* Permission check: must own extension */
 	if (!pg_extension_ownercheck(extension.objectId, GetUserId()))
@@ -3309,7 +3338,7 @@ ExecAlterExtensionContentsStmt(AlterExtensionContentsStmt *stmt,
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 					 errmsg("%s is already a member of extension \"%s\"",
-							getObjectDescription(&object),
+							getObjectDescription(&object, false),
 							get_extension_name(oldExtension))));
 
 		/*
@@ -3349,7 +3378,7 @@ ExecAlterExtensionContentsStmt(AlterExtensionContentsStmt *stmt,
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 					 errmsg("%s is not a member of extension \"%s\"",
-							getObjectDescription(&object),
+							getObjectDescription(&object, false),
 							stmt->extname)));
 
 		/*

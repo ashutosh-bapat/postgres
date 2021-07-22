@@ -3,7 +3,7 @@
  * blvalidate.c
  *	  Opclass validator for bloom.
  *
- * Copyright (c) 2016-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/blvalidate.c
@@ -108,6 +108,9 @@ blvalidate(Oid opclassoid)
 				ok = check_amproc_signature(procform->amproc, INT4OID, false,
 											1, 1, opckeytype);
 				break;
+			case BLOOM_OPTIONS_PROC:
+				ok = check_amoptsproc_signature(procform->amproc);
+				break;
 			default:
 				ereport(INFO,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -204,6 +207,8 @@ blvalidate(Oid opclassoid)
 		if (opclassgroup &&
 			(opclassgroup->functionset & (((uint64) 1) << i)) != 0)
 			continue;			/* got it */
+		if (i == BLOOM_OPTIONS_PROC)
+			continue;			/* optional method */
 		ereport(INFO,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("bloom opclass %s is missing support function %d",

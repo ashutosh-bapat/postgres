@@ -31,22 +31,10 @@
  * them.  They will need to be re-read into shared buffers on first use after
  * the build finishes.
  *
- * Since the index will never be used unless it is completely built,
- * from a crash-recovery point of view there is no need to WAL-log the
- * steps of the build.  After completing the index build, we can just sync
- * the whole file to disk using smgrimmedsync() before exiting this module.
- * This can be seen to be sufficient for crash recovery by considering that
- * it's effectively equivalent to what would happen if a CHECKPOINT occurred
- * just after the index build.  However, it is clearly not sufficient if the
- * DBA is using the WAL log for PITR or replication purposes, since another
- * machine would not be able to reconstruct the index from WAL.  Therefore,
- * we log the completed index pages to WAL if and only if WAL archiving is
- * active.
- *
  * This code isn't concerned about the FSM at all. The caller is responsible
  * for initializing that.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -61,12 +49,12 @@
 #include "access/parallel.h"
 #include "access/relscan.h"
 #include "access/table.h"
-#include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "catalog/index.h"
 #include "commands/progress.h"
+#include "executor/instrument.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "storage/smgr.h"
@@ -81,6 +69,8 @@
 #define PARALLEL_KEY_TUPLESORT			UINT64CONST(0xA000000000000002)
 #define PARALLEL_KEY_TUPLESORT_SPOOL2	UINT64CONST(0xA000000000000003)
 #define PARALLEL_KEY_QUERY_TEXT			UINT64CONST(0xA000000000000004)
+#define PARALLEL_KEY_WAL_USAGE			UINT64CONST(0xA000000000000005)
+#define PARALLEL_KEY_BUFFER_USAGE		UINT64CONST(0xA000000000000006)
 
 /*
  * DISABLE_LEADER_PARTICIPATION disables the leader's participation in
@@ -203,6 +193,8 @@ typedef struct BTLeader
 	Sharedsort *sharedsort;
 	Sharedsort *sharedsort2;
 	Snapshot	snapshot;
+	WalUsage   *walusage;
+	BufferUsage *bufferusage;
 } BTLeader;
 
 /*
@@ -274,9 +266,10 @@ static void _bt_build_callback(Relation index, ItemPointer tid, Datum *values,
 							   bool *isnull, bool tupleIsAlive, void *state);
 static Page _bt_blnewpage(uint32 level);
 static BTPageState *_bt_pagestate(BTWriteState *wstate, uint32 level);
-static void _bt_slideleft(Page page);
+static void _bt_slideleft(Page rightmostpage);
 static void _bt_sortaddtup(Page page, Size itemsize,
-						   IndexTuple itup, OffsetNumber itup_off);
+						   IndexTuple itup, OffsetNumber itup_off,
+						   bool newfirstdataitem);
 static void _bt_buildadd(BTWriteState *wstate, BTPageState *state,
 						 IndexTuple itup, Size truncextra);
 static void _bt_sort_dedup_finish_pending(BTWriteState *wstate,
@@ -493,17 +486,17 @@ _bt_spools_heapscan(Relation heap, Relation index, BTBuildState *buildstate,
 	 * values set by table_index_build_scan
 	 */
 	{
-		const int	index[] = {
+		const int	progress_index[] = {
 			PROGRESS_CREATEIDX_TUPLES_TOTAL,
 			PROGRESS_SCAN_BLOCKS_TOTAL,
 			PROGRESS_SCAN_BLOCKS_DONE
 		};
-		const int64 val[] = {
+		const int64 progress_vals[] = {
 			buildstate->indtuples,
 			0, 0
 		};
 
-		pgstat_progress_update_multi_param(3, index, val);
+		pgstat_progress_update_multi_param(3, progress_index, progress_vals);
 	}
 
 	/* okay, all heap tuples are spooled */
@@ -554,6 +547,7 @@ _bt_leafbuild(BTSpool *btspool, BTSpool *btspool2)
 	}
 #endif							/* BTREE_BUILD_STATS */
 
+	/* Execute the sort */
 	pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
 								 PROGRESS_BTREE_PHASE_PERFORMSORT_1);
 	tuplesort_performsort(btspool->sortstate);
@@ -569,12 +563,7 @@ _bt_leafbuild(BTSpool *btspool, BTSpool *btspool2)
 	wstate.inskey = _bt_mkscankey(wstate.index, NULL);
 	/* _bt_mkscankey() won't set allequalimage without metapage */
 	wstate.inskey->allequalimage = _bt_allequalimage(wstate.index, true);
-
-	/*
-	 * We need to log index creation in WAL iff WAL archiving/streaming is
-	 * enabled UNLESS the index isn't WAL-logged anyway.
-	 */
-	wstate.btws_use_wal = XLogIsNeeded() && RelationNeedsWAL(wstate.index);
+	wstate.btws_use_wal = RelationNeedsWAL(wstate.index);
 
 	/* reserve the metapage */
 	wstate.btws_pages_alloced = BTREE_METAPAGE + 1;
@@ -632,7 +621,7 @@ _bt_blnewpage(uint32 level)
 	/* Initialize BT opaque state */
 	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	opaque->btpo_prev = opaque->btpo_next = P_NONE;
-	opaque->btpo.level = level;
+	opaque->btpo_level = level;
 	opaque->btpo_flags = (level > 0) ? 0 : BTP_LEAF;
 	opaque->btpo_cycleid = 0;
 
@@ -648,9 +637,6 @@ _bt_blnewpage(uint32 level)
 static void
 _bt_blwritepage(BTWriteState *wstate, Page page, BlockNumber blkno)
 {
-	/* Ensure rd_smgr is open (could have been closed by relcache flush!) */
-	RelationOpenSmgr(wstate->index);
-
 	/* XLOG stuff */
 	if (wstate->btws_use_wal)
 	{
@@ -670,7 +656,7 @@ _bt_blwritepage(BTWriteState *wstate, Page page, BlockNumber blkno)
 		if (!wstate->btws_zeropage)
 			wstate->btws_zeropage = (Page) palloc0(BLCKSZ);
 		/* don't set checksum for all-zero page */
-		smgrextend(wstate->index->rd_smgr, MAIN_FORKNUM,
+		smgrextend(RelationGetSmgr(wstate->index), MAIN_FORKNUM,
 				   wstate->btws_pages_written++,
 				   (char *) wstate->btws_zeropage,
 				   true);
@@ -685,14 +671,14 @@ _bt_blwritepage(BTWriteState *wstate, Page page, BlockNumber blkno)
 	if (blkno == wstate->btws_pages_written)
 	{
 		/* extending the file... */
-		smgrextend(wstate->index->rd_smgr, MAIN_FORKNUM, blkno,
+		smgrextend(RelationGetSmgr(wstate->index), MAIN_FORKNUM, blkno,
 				   (char *) page, true);
 		wstate->btws_pages_written++;
 	}
 	else
 	{
 		/* overwriting a block we zero-filled before */
-		smgrwrite(wstate->index->rd_smgr, MAIN_FORKNUM, blkno,
+		smgrwrite(RelationGetSmgr(wstate->index), MAIN_FORKNUM, blkno,
 				  (char *) page, true);
 	}
 
@@ -732,60 +718,59 @@ _bt_pagestate(BTWriteState *wstate, uint32 level)
 }
 
 /*
- * slide an array of ItemIds back one slot (from P_FIRSTKEY to
- * P_HIKEY, overwriting P_HIKEY).  we need to do this when we discover
- * that we have built an ItemId array in what has turned out to be a
- * P_RIGHTMOST page.
+ * Slide the array of ItemIds from the page back one slot (from P_FIRSTKEY to
+ * P_HIKEY, overwriting P_HIKEY).
+ *
+ * _bt_blnewpage() makes the P_HIKEY line pointer appear allocated, but the
+ * rightmost page on its level is not supposed to get a high key.  Now that
+ * it's clear that this page is a rightmost page, remove the unneeded empty
+ * P_HIKEY line pointer space.
  */
 static void
-_bt_slideleft(Page page)
+_bt_slideleft(Page rightmostpage)
 {
 	OffsetNumber off;
 	OffsetNumber maxoff;
 	ItemId		previi;
-	ItemId		thisii;
 
-	if (!PageIsEmpty(page))
+	maxoff = PageGetMaxOffsetNumber(rightmostpage);
+	Assert(maxoff >= P_FIRSTKEY);
+	previi = PageGetItemId(rightmostpage, P_HIKEY);
+	for (off = P_FIRSTKEY; off <= maxoff; off = OffsetNumberNext(off))
 	{
-		maxoff = PageGetMaxOffsetNumber(page);
-		previi = PageGetItemId(page, P_HIKEY);
-		for (off = P_FIRSTKEY; off <= maxoff; off = OffsetNumberNext(off))
-		{
-			thisii = PageGetItemId(page, off);
-			*previi = *thisii;
-			previi = thisii;
-		}
-		((PageHeader) page)->pd_lower -= sizeof(ItemIdData);
+		ItemId		thisii = PageGetItemId(rightmostpage, off);
+
+		*previi = *thisii;
+		previi = thisii;
 	}
+	((PageHeader) rightmostpage)->pd_lower -= sizeof(ItemIdData);
 }
 
 /*
  * Add an item to a page being built.
  *
- * The main difference between this routine and a bare PageAddItem call
- * is that this code knows that the leftmost data item on a non-leaf btree
- * page has a key that must be treated as minus infinity.  Therefore, it
- * truncates away all attributes.
+ * This is very similar to nbtinsert.c's _bt_pgaddtup(), but this variant
+ * raises an error directly.
  *
- * This is almost like nbtinsert.c's _bt_pgaddtup(), but we can't use
- * that because it assumes that P_RIGHTMOST() will return the correct
- * answer for the page.  Here, we don't know yet if the page will be
- * rightmost.  Offset P_FIRSTKEY is always the first data key.
+ * Note that our nbtsort.c caller does not know yet if the page will be
+ * rightmost.  Offset P_FIRSTKEY is always assumed to be the first data key by
+ * caller.  Page that turns out to be the rightmost on its level is fixed by
+ * calling _bt_slideleft().
  */
 static void
 _bt_sortaddtup(Page page,
 			   Size itemsize,
 			   IndexTuple itup,
-			   OffsetNumber itup_off)
+			   OffsetNumber itup_off,
+			   bool newfirstdataitem)
 {
-	BTPageOpaque opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 	IndexTupleData trunctuple;
 
-	if (!P_ISLEAF(opaque) && itup_off == P_FIRSTKEY)
+	if (newfirstdataitem)
 	{
 		trunctuple = *itup;
 		trunctuple.t_info = sizeof(IndexTupleData);
-		BTreeTupleSetNAtts(&trunctuple, 0);
+		BTreeTupleSetNAtts(&trunctuple, 0, false);
 		itup = &trunctuple;
 		itemsize = sizeof(IndexTupleData);
 	}
@@ -879,12 +864,13 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	 * Every newly built index will treat heap TID as part of the keyspace,
 	 * which imposes the requirement that new high keys must occasionally have
 	 * a heap TID appended within _bt_truncate().  That may leave a new pivot
-	 * tuple one or two MAXALIGN() quantums larger than the original first
-	 * right tuple it's derived from.  v4 deals with the problem by decreasing
-	 * the limit on the size of tuples inserted on the leaf level by the same
-	 * small amount.  Enforce the new v4+ limit on the leaf level, and the old
-	 * limit on internal levels, since pivot tuples may need to make use of
-	 * the reserved space.  This should never fail on internal pages.
+	 * tuple one or two MAXALIGN() quantums larger than the original
+	 * firstright tuple it's derived from.  v4 deals with the problem by
+	 * decreasing the limit on the size of tuples inserted on the leaf level
+	 * by the same small amount.  Enforce the new v4+ limit on the leaf level,
+	 * and the old limit on internal levels, since pivot tuples may need to
+	 * make use of the reserved space.  This should never fail on internal
+	 * pages.
 	 */
 	if (unlikely(itupsz > BTMaxItemSize(npage)))
 		_bt_check_third_page(wstate->index, wstate->heap, isleaf, npage,
@@ -908,6 +894,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 	 * assume that suffix truncation neither enlarges nor shrinks new high key
 	 * when applying soft limit, except when last tuple has a posting list.)
 	 */
+	Assert(last_truncextra == 0 || isleaf);
 	if (pgspc < itupsz + (isleaf ? MAXALIGN(sizeof(ItemPointerData)) : 0) ||
 		(pgspc + last_truncextra < state->btps_full && last_off > P_FIRSTKEY))
 	{
@@ -936,7 +923,8 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		Assert(last_off > P_FIRSTKEY);
 		ii = PageGetItemId(opage, last_off);
 		oitup = (IndexTuple) PageGetItem(opage, ii);
-		_bt_sortaddtup(npage, ItemIdGetLength(ii), oitup, P_FIRSTKEY);
+		_bt_sortaddtup(npage, ItemIdGetLength(ii), oitup, P_FIRSTKEY,
+					   !isleaf);
 
 		/*
 		 * Move 'last' into the high key position on opage.  _bt_blnewpage()
@@ -983,6 +971,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 			ii = PageGetItemId(opage, OffsetNumberPrev(last_off));
 			lastleft = (IndexTuple) PageGetItem(opage, ii);
 
+			Assert(IndexTupleSize(oitup) > last_truncextra);
 			truncated = _bt_truncate(wstate->index, lastleft, oitup,
 									 wstate->inskey);
 			if (!PageIndexTupleOverwrite(opage, P_HIKEY, (Item) truncated,
@@ -1057,14 +1046,15 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup,
 		Assert(state->btps_lowkey == NULL);
 		state->btps_lowkey = palloc0(sizeof(IndexTupleData));
 		state->btps_lowkey->t_info = sizeof(IndexTupleData);
-		BTreeTupleSetNAtts(state->btps_lowkey, 0);
+		BTreeTupleSetNAtts(state->btps_lowkey, 0, false);
 	}
 
 	/*
 	 * Add the new item into the current page.
 	 */
 	last_off = OffsetNumberNext(last_off);
-	_bt_sortaddtup(npage, itupsz, itup, last_off);
+	_bt_sortaddtup(npage, itupsz, itup, last_off,
+				   !isleaf && last_off == P_FIRSTKEY);
 
 	state->btps_page = npage;
 	state->btps_blkno = nblkno;
@@ -1103,6 +1093,7 @@ _bt_sort_dedup_finish_pending(BTWriteState *wstate, BTPageState *state,
 		pfree(postingtuple);
 	}
 
+	dstate->nmaxitems = 0;
 	dstate->nhtids = 0;
 	dstate->nitems = 0;
 	dstate->phystupsize = 0;
@@ -1198,7 +1189,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 	int64		tuples_done = 0;
 	bool		deduplicate;
 
-	deduplicate = wstate->inskey->allequalimage &&
+	deduplicate = wstate->inskey->allequalimage && !btspool->isunique &&
 		BTGetDeduplicateItems(wstate->index);
 
 	if (merge)
@@ -1318,6 +1309,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 
 		dstate = (BTDedupState) palloc(sizeof(BTDedupStateData));
 		dstate->deduplicate = true; /* unused */
+		dstate->nmaxitems = 0;	/* unused */
 		dstate->maxpostingsize = 0; /* set later */
 		/* Metadata about base tuple of current pending posting list */
 		dstate->base = NULL;
@@ -1424,25 +1416,16 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 	_bt_uppershutdown(wstate, state);
 
 	/*
-	 * If the index is WAL-logged, we must fsync it down to disk before it's
-	 * safe to commit the transaction.  (For a non-WAL-logged index we don't
-	 * care since the index will be uninteresting after a crash anyway.)
-	 *
-	 * It's obvious that we must do this when not WAL-logging the build. It's
-	 * less obvious that we have to do it even if we did WAL-log the index
-	 * pages.  The reason is that since we're building outside shared buffers,
-	 * a CHECKPOINT occurring during the build has no way to flush the
-	 * previously written data to disk (indeed it won't know the index even
-	 * exists).  A crash later on would replay WAL from the checkpoint,
-	 * therefore it wouldn't replay our earlier WAL entries. If we do not
-	 * fsync those pages here, they might still not be on disk when the crash
-	 * occurs.
+	 * When we WAL-logged index pages, we must nonetheless fsync index files.
+	 * Since we're building outside shared buffers, a CHECKPOINT occurring
+	 * during the build has no way to flush the previously written data to
+	 * disk (indeed it won't know the index even exists).  A crash later on
+	 * would replay WAL from the checkpoint, therefore it wouldn't replay our
+	 * earlier WAL entries. If we do not fsync those pages here, they might
+	 * still not be on disk when the crash occurs.
 	 */
-	if (RelationNeedsWAL(wstate->index))
-	{
-		RelationOpenSmgr(wstate->index);
-		smgrimmedsync(wstate->index->rd_smgr, MAIN_FORKNUM);
-	}
+	if (wstate->btws_use_wal)
+		smgrimmedsync(RelationGetSmgr(wstate->index), MAIN_FORKNUM);
 }
 
 /*
@@ -1474,8 +1457,9 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 	Sharedsort *sharedsort2;
 	BTSpool    *btspool = buildstate->spool;
 	BTLeader   *btleader = (BTLeader *) palloc0(sizeof(BTLeader));
+	WalUsage   *walusage;
+	BufferUsage *bufferusage;
 	bool		leaderparticipates = true;
-	char	   *sharedquery;
 	int			querylen;
 
 #ifdef DISABLE_LEADER_PARTICIPATION
@@ -1526,10 +1510,30 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 		shm_toc_estimate_keys(&pcxt->estimator, 3);
 	}
 
-	/* Finally, estimate PARALLEL_KEY_QUERY_TEXT space */
-	querylen = strlen(debug_query_string);
-	shm_toc_estimate_chunk(&pcxt->estimator, querylen + 1);
+	/*
+	 * Estimate space for WalUsage and BufferUsage -- PARALLEL_KEY_WAL_USAGE
+	 * and PARALLEL_KEY_BUFFER_USAGE.
+	 *
+	 * If there are no extensions loaded that care, we could skip this.  We
+	 * have no way of knowing whether anyone's looking at pgWalUsage or
+	 * pgBufferUsage, so do it unconditionally.
+	 */
+	shm_toc_estimate_chunk(&pcxt->estimator,
+						   mul_size(sizeof(WalUsage), pcxt->nworkers));
 	shm_toc_estimate_keys(&pcxt->estimator, 1);
+	shm_toc_estimate_chunk(&pcxt->estimator,
+						   mul_size(sizeof(BufferUsage), pcxt->nworkers));
+	shm_toc_estimate_keys(&pcxt->estimator, 1);
+
+	/* Finally, estimate PARALLEL_KEY_QUERY_TEXT space */
+	if (debug_query_string)
+	{
+		querylen = strlen(debug_query_string);
+		shm_toc_estimate_chunk(&pcxt->estimator, querylen + 1);
+		shm_toc_estimate_keys(&pcxt->estimator, 1);
+	}
+	else
+		querylen = 0;			/* keep compiler quiet */
 
 	/* Everyone's had a chance to ask for space, so now create the DSM */
 	InitializeParallelDSM(pcxt);
@@ -1593,9 +1597,25 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 	}
 
 	/* Store query string for workers */
-	sharedquery = (char *) shm_toc_allocate(pcxt->toc, querylen + 1);
-	memcpy(sharedquery, debug_query_string, querylen + 1);
-	shm_toc_insert(pcxt->toc, PARALLEL_KEY_QUERY_TEXT, sharedquery);
+	if (debug_query_string)
+	{
+		char	   *sharedquery;
+
+		sharedquery = (char *) shm_toc_allocate(pcxt->toc, querylen + 1);
+		memcpy(sharedquery, debug_query_string, querylen + 1);
+		shm_toc_insert(pcxt->toc, PARALLEL_KEY_QUERY_TEXT, sharedquery);
+	}
+
+	/*
+	 * Allocate space for each worker's WalUsage and BufferUsage; no need to
+	 * initialize.
+	 */
+	walusage = shm_toc_allocate(pcxt->toc,
+								mul_size(sizeof(WalUsage), pcxt->nworkers));
+	shm_toc_insert(pcxt->toc, PARALLEL_KEY_WAL_USAGE, walusage);
+	bufferusage = shm_toc_allocate(pcxt->toc,
+								   mul_size(sizeof(BufferUsage), pcxt->nworkers));
+	shm_toc_insert(pcxt->toc, PARALLEL_KEY_BUFFER_USAGE, bufferusage);
 
 	/* Launch workers, saving status for leader/caller */
 	LaunchParallelWorkers(pcxt);
@@ -1607,6 +1627,8 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 	btleader->sharedsort = sharedsort;
 	btleader->sharedsort2 = sharedsort2;
 	btleader->snapshot = snapshot;
+	btleader->walusage = walusage;
+	btleader->bufferusage = bufferusage;
 
 	/* If no workers were successfully launched, back out (do serial build) */
 	if (pcxt->nworkers_launched == 0)
@@ -1635,8 +1657,18 @@ _bt_begin_parallel(BTBuildState *buildstate, bool isconcurrent, int request)
 static void
 _bt_end_parallel(BTLeader *btleader)
 {
+	int			i;
+
 	/* Shutdown worker processes */
 	WaitForParallelWorkersToFinish(btleader->pcxt);
+
+	/*
+	 * Next, accumulate WAL usage.  (This must wait for the workers to finish,
+	 * or we might get incomplete data.)
+	 */
+	for (i = 0; i < btleader->pcxt->nworkers_launched; i++)
+		InstrAccumParallelQuery(&btleader->bufferusage[i], &btleader->walusage[i]);
+
 	/* Free last reference to MVCC snapshot, if one was used */
 	if (IsMVCCSnapshot(btleader->snapshot))
 		UnregisterSnapshot(btleader->snapshot);
@@ -1767,6 +1799,8 @@ _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 	Relation	indexRel;
 	LOCKMODE	heapLockmode;
 	LOCKMODE	indexLockmode;
+	WalUsage   *walusage;
+	BufferUsage *bufferusage;
 	int			sortmem;
 
 #ifdef BTREE_BUILD_STATS
@@ -1775,7 +1809,7 @@ _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 #endif							/* BTREE_BUILD_STATS */
 
 	/* Set debug_query_string for individual workers first */
-	sharedquery = shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT, false);
+	sharedquery = shm_toc_lookup(toc, PARALLEL_KEY_QUERY_TEXT, true);
 	debug_query_string = sharedquery;
 
 	/* Report the query string from leader */
@@ -1828,10 +1862,19 @@ _bt_parallel_build_main(dsm_segment *seg, shm_toc *toc)
 		tuplesort_attach_shared(sharedsort2, seg);
 	}
 
+	/* Prepare to track buffer usage during parallel execution */
+	InstrStartParallelQuery();
+
 	/* Perform sorting of spool, and possibly a spool2 */
 	sortmem = maintenance_work_mem / btshared->scantuplesortstates;
 	_bt_parallel_scan_and_sort(btspool, btspool2, btshared, sharedsort,
 							   sharedsort2, sortmem, false);
+
+	/* Report WAL/buffer usage during parallel execution */
+	bufferusage = shm_toc_lookup(toc, PARALLEL_KEY_BUFFER_USAGE, false);
+	walusage = shm_toc_lookup(toc, PARALLEL_KEY_WAL_USAGE, false);
+	InstrEndParallelQuery(&bufferusage[ParallelWorkerNumber],
+						  &walusage[ParallelWorkerNumber]);
 
 #ifdef BTREE_BUILD_STATS
 	if (log_btree_build_stats)
@@ -1923,16 +1966,18 @@ _bt_parallel_scan_and_sort(BTSpool *btspool, BTSpool *btspool2,
 									   true, progress, _bt_build_callback,
 									   (void *) &buildstate, scan);
 
-	/*
-	 * Execute this worker's part of the sort.
-	 *
-	 * Unlike leader and serial cases, we cannot avoid calling
-	 * tuplesort_performsort() for spool2 if it ends up containing no dead
-	 * tuples (this is disallowed for workers by tuplesort).
-	 */
+	/* Execute this worker's part of the sort */
+	if (progress)
+		pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
+									 PROGRESS_BTREE_PHASE_PERFORMSORT_1);
 	tuplesort_performsort(btspool->sortstate);
 	if (btspool2)
+	{
+		if (progress)
+			pgstat_progress_update_param(PROGRESS_CREATEIDX_SUBPHASE,
+										 PROGRESS_BTREE_PHASE_PERFORMSORT_2);
 		tuplesort_performsort(btspool2->sortstate);
+	}
 
 	/*
 	 * Done.  Record ambuild statistics, and whether we encountered a broken

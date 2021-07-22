@@ -3,7 +3,7 @@
  * sync.c
  *	  File synchronization management code.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,6 +18,9 @@
 #include <fcntl.h>
 #include <sys/file.h>
 
+#include "access/commit_ts.h"
+#include "access/clog.h"
+#include "access/multixact.h"
 #include "access/xlog.h"
 #include "access/xlogutils.h"
 #include "commands/tablespace.h"
@@ -90,12 +93,31 @@ typedef struct SyncOps
 										const FileTag *candidate);
 } SyncOps;
 
+/*
+ * These indexes must correspond to the values of the SyncRequestHandler enum.
+ */
 static const SyncOps syncsw[] = {
 	/* magnetic disk */
-	{
+	[SYNC_HANDLER_MD] = {
 		.sync_syncfiletag = mdsyncfiletag,
 		.sync_unlinkfiletag = mdunlinkfiletag,
 		.sync_filetagmatches = mdfiletagmatches
+	},
+	/* pg_xact */
+	[SYNC_HANDLER_CLOG] = {
+		.sync_syncfiletag = clogsyncfiletag
+	},
+	/* pg_commit_ts */
+	[SYNC_HANDLER_COMMIT_TS] = {
+		.sync_syncfiletag = committssyncfiletag
+	},
+	/* pg_multixact/offsets */
+	[SYNC_HANDLER_MULTIXACT_OFFSET] = {
+		.sync_syncfiletag = multixactoffsetssyncfiletag
+	},
+	/* pg_multixact/members */
+	[SYNC_HANDLER_MULTIXACT_MEMBER] = {
+		.sync_syncfiletag = multixactmemberssyncfiletag
 	}
 };
 
@@ -128,7 +150,6 @@ InitSync(void)
 											  ALLOCSET_DEFAULT_SIZES);
 		MemoryContextAllowInCriticalSection(pendingOpsCxt, true);
 
-		MemSet(&hash_ctl, 0, sizeof(hash_ctl));
 		hash_ctl.keysize = sizeof(FileTag);
 		hash_ctl.entrysize = sizeof(PendingFsyncEntry);
 		hash_ctl.hcxt = pendingOpsCxt;
@@ -316,14 +337,6 @@ ProcessSyncRequests(void)
 		int			failures;
 
 		/*
-		 * If fsync is off then we don't have to bother opening the file at
-		 * all.  (We delay checking until this point so that changing fsync on
-		 * the fly behaves sensibly.)
-		 */
-		if (!enableFsync)
-			continue;
-
-		/*
 		 * If the entry is new then don't process it this time; it is new.
 		 * Note "continue" bypasses the hash-remove call at the bottom of the
 		 * loop.
@@ -335,78 +348,88 @@ ProcessSyncRequests(void)
 		Assert((CycleCtr) (entry->cycle_ctr + 1) == sync_cycle_ctr);
 
 		/*
-		 * If in checkpointer, we want to absorb pending requests every so
-		 * often to prevent overflow of the fsync request queue.  It is
-		 * unspecified whether newly-added entries will be visited by
-		 * hash_seq_search, but we don't care since we don't need to process
-		 * them anyway.
+		 * If fsync is off then we don't have to bother opening the file at
+		 * all.  (We delay checking until this point so that changing fsync on
+		 * the fly behaves sensibly.)
 		 */
-		if (--absorb_counter <= 0)
+		if (enableFsync)
 		{
-			AbsorbSyncRequests();
-			absorb_counter = FSYNCS_PER_ABSORB;
-		}
-
-		/*
-		 * The fsync table could contain requests to fsync segments that have
-		 * been deleted (unlinked) by the time we get to them. Rather than
-		 * just hoping an ENOENT (or EACCES on Windows) error can be ignored,
-		 * what we do on error is absorb pending requests and then retry.
-		 * Since mdunlink() queues a "cancel" message before actually
-		 * unlinking, the fsync request is guaranteed to be marked canceled
-		 * after the absorb if it really was this case. DROP DATABASE likewise
-		 * has to tell us to forget fsync requests before it starts deletions.
-		 */
-		for (failures = 0; !entry->canceled; failures++)
-		{
-			char		path[MAXPGPATH];
-
-			INSTR_TIME_SET_CURRENT(sync_start);
-			if (syncsw[entry->tag.handler].sync_syncfiletag(&entry->tag,
-															path) == 0)
+			/*
+			 * If in checkpointer, we want to absorb pending requests every so
+			 * often to prevent overflow of the fsync request queue.  It is
+			 * unspecified whether newly-added entries will be visited by
+			 * hash_seq_search, but we don't care since we don't need to
+			 * process them anyway.
+			 */
+			if (--absorb_counter <= 0)
 			{
-				/* Success; update statistics about sync timing */
-				INSTR_TIME_SET_CURRENT(sync_end);
-				sync_diff = sync_end;
-				INSTR_TIME_SUBTRACT(sync_diff, sync_start);
-				elapsed = INSTR_TIME_GET_MICROSEC(sync_diff);
-				if (elapsed > longest)
-					longest = elapsed;
-				total_elapsed += elapsed;
-				processed++;
-
-				if (log_checkpoints)
-					elog(DEBUG1, "checkpoint sync: number=%d file=%s time=%.3f msec",
-						 processed,
-						 path,
-						 (double) elapsed / 1000);
-
-				break;			/* out of retry loop */
+				AbsorbSyncRequests();
+				absorb_counter = FSYNCS_PER_ABSORB;
 			}
 
 			/*
-			 * It is possible that the relation has been dropped or truncated
-			 * since the fsync request was entered. Therefore, allow ENOENT,
-			 * but only if we didn't fail already on this file.
+			 * The fsync table could contain requests to fsync segments that
+			 * have been deleted (unlinked) by the time we get to them. Rather
+			 * than just hoping an ENOENT (or EACCES on Windows) error can be
+			 * ignored, what we do on error is absorb pending requests and
+			 * then retry. Since mdunlink() queues a "cancel" message before
+			 * actually unlinking, the fsync request is guaranteed to be
+			 * marked canceled after the absorb if it really was this case.
+			 * DROP DATABASE likewise has to tell us to forget fsync requests
+			 * before it starts deletions.
 			 */
-			if (!FILE_POSSIBLY_DELETED(errno) || failures > 0)
-				ereport(data_sync_elevel(ERROR),
-						(errcode_for_file_access(),
-						 errmsg("could not fsync file \"%s\": %m",
-								path)));
-			else
-				ereport(DEBUG1,
-						(errcode_for_file_access(),
-						 errmsg("could not fsync file \"%s\" but retrying: %m",
-								path)));
+			for (failures = 0; !entry->canceled; failures++)
+			{
+				char		path[MAXPGPATH];
 
-			/*
-			 * Absorb incoming requests and check to see if a cancel arrived
-			 * for this relation fork.
-			 */
-			AbsorbSyncRequests();
-			absorb_counter = FSYNCS_PER_ABSORB; /* might as well... */
-		}						/* end retry loop */
+				INSTR_TIME_SET_CURRENT(sync_start);
+				if (syncsw[entry->tag.handler].sync_syncfiletag(&entry->tag,
+																path) == 0)
+				{
+					/* Success; update statistics about sync timing */
+					INSTR_TIME_SET_CURRENT(sync_end);
+					sync_diff = sync_end;
+					INSTR_TIME_SUBTRACT(sync_diff, sync_start);
+					elapsed = INSTR_TIME_GET_MICROSEC(sync_diff);
+					if (elapsed > longest)
+						longest = elapsed;
+					total_elapsed += elapsed;
+					processed++;
+
+					if (log_checkpoints)
+						elog(DEBUG1, "checkpoint sync: number=%d file=%s time=%.3f ms",
+							 processed,
+							 path,
+							 (double) elapsed / 1000);
+
+					break;		/* out of retry loop */
+				}
+
+				/*
+				 * It is possible that the relation has been dropped or
+				 * truncated since the fsync request was entered. Therefore,
+				 * allow ENOENT, but only if we didn't fail already on this
+				 * file.
+				 */
+				if (!FILE_POSSIBLY_DELETED(errno) || failures > 0)
+					ereport(data_sync_elevel(ERROR),
+							(errcode_for_file_access(),
+							 errmsg("could not fsync file \"%s\": %m",
+									path)));
+				else
+					ereport(DEBUG1,
+							(errcode_for_file_access(),
+							 errmsg_internal("could not fsync file \"%s\" but retrying: %m",
+											 path)));
+
+				/*
+				 * Absorb incoming requests and check to see if a cancel
+				 * arrived for this relation fork.
+				 */
+				AbsorbSyncRequests();
+				absorb_counter = FSYNCS_PER_ABSORB; /* might as well... */
+			}					/* end retry loop */
+		}
 
 		/* We are done with this entry, remove it */
 		if (hash_search(pendingOps, &entry->tag, HASH_REMOVE, NULL) == NULL)
@@ -503,8 +526,8 @@ RememberSyncRequest(const FileTag *ftag, SyncRequestType type)
 												  (void *) ftag,
 												  HASH_ENTER,
 												  &found);
-		/* if new entry, initialize it */
-		if (!found)
+		/* if new entry, or was previously canceled, initialize it */
+		if (!found || entry->canceled)
 		{
 			entry->cycle_ctr = sync_cycle_ctr;
 			entry->canceled = false;

@@ -3,7 +3,7 @@
  * pg_rewind.h
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *-------------------------------------------------------------------------
@@ -20,18 +20,14 @@
 
 /* Configuration options */
 extern char *datadir_target;
-extern char *datadir_source;
-extern char *connstr_source;
 extern bool showprogress;
 extern bool dry_run;
+extern bool do_sync;
 extern int	WalSegSz;
 
 /* Target history */
 extern TimeLineHistoryEntry *targetHistory;
 extern int	targetNentries;
-
-/* general state */
-extern PGconn *conn;
 
 /* Progress counters */
 extern uint64 fetch_size;
@@ -42,16 +38,18 @@ extern uint64 fetch_done;
 
 /* in parsexlog.c */
 extern void extractPageMap(const char *datadir, XLogRecPtr startpoint,
-						   int tliIndex, XLogRecPtr endpoint);
+						   int tliIndex, XLogRecPtr endpoint,
+						   const char *restoreCommand);
 extern void findLastCheckpoint(const char *datadir, XLogRecPtr searchptr,
 							   int tliIndex,
 							   XLogRecPtr *lastchkptrec, TimeLineID *lastchkpttli,
-							   XLogRecPtr *lastchkptredo);
+							   XLogRecPtr *lastchkptredo,
+							   const char *restoreCommand);
 extern XLogRecPtr readOneRecord(const char *datadir, XLogRecPtr ptr,
-								int tliIndex);
+								int tliIndex, const char *restoreCommand);
 
 /* in pg_rewind.c */
-extern void progress_report(bool force);
+extern void progress_report(bool finished);
 
 /* in timeline.c */
 extern TimeLineHistoryEntry *rewind_parseTimeLineHistory(char *buffer,

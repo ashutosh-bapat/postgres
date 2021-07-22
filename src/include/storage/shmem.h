@@ -11,7 +11,7 @@
  * at the same address.  This means shared memory pointers can be passed
  * around directly between different processes.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/shmem.h
@@ -60,7 +60,7 @@ typedef struct
 	char		key[SHMEM_INDEX_KEYSIZE];	/* string name */
 	void	   *location;		/* location in shared mem */
 	Size		size;			/* # bytes requested for the structure */
-	Size		allocated_size;	/* # bytes actually allocated */
+	Size		allocated_size; /* # bytes actually allocated */
 } ShmemIndexEnt;
 
 /*

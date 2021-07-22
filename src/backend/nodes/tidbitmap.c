@@ -29,7 +29,7 @@
  * and a non-lossy page.
  *
  *
- * Copyright (c) 2003-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/nodes/tidbitmap.c
@@ -889,7 +889,7 @@ tbm_prepare_shared_iterate(TIDBitmap *tbm)
 		pg_atomic_add_fetch_u32(&ptchunks->refcount, 1);
 
 	/* Initialize the iterator lock */
-	LWLockInitialize(&istate->lock, LWTRANCHE_TBM);
+	LWLockInitialize(&istate->lock, LWTRANCHE_SHARED_TIDBITMAP);
 
 	/* Initialize the shared iterator state */
 	istate->schunkbit = 0;

@@ -3,7 +3,7 @@
  * option.c
  *		  FDW option handling for postgres_fdw
  *
- * Portions Copyright (c) 2012-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/option.c
@@ -20,6 +20,7 @@
 #include "commands/extension.h"
 #include "postgres_fdw.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
 #include "utils/varlena.h"
 
 /*
@@ -107,7 +108,10 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 		 * Validate option value, when we can do so without any context.
 		 */
 		if (strcmp(def->defname, "use_remote_estimate") == 0 ||
-			strcmp(def->defname, "updatable") == 0)
+			strcmp(def->defname, "updatable") == 0 ||
+			strcmp(def->defname, "truncatable") == 0 ||
+			strcmp(def->defname, "async_capable") == 0 ||
+			strcmp(def->defname, "keep_connections") == 0)
 		{
 			/* these accept only boolean values */
 			(void) defGetBoolean(def);
@@ -116,14 +120,23 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 				 strcmp(def->defname, "fdw_tuple_cost") == 0)
 		{
 			/* these must have a non-negative numeric value */
-			double		val;
-			char	   *endp;
+			char	   *value;
+			double		real_val;
+			bool		is_parsed;
 
-			val = strtod(defGetString(def), &endp);
-			if (*endp || val < 0)
+			value = defGetString(def);
+			is_parsed = parse_real(value, &real_val, 0, NULL);
+
+			if (!is_parsed)
 				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("%s requires a non-negative numeric value",
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("invalid value for floating point option \"%s\": %s",
+								def->defname, value)));
+
+			if (real_val < 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("\"%s\" requires a non-negative floating point value",
 								def->defname)));
 		}
 		else if (strcmp(def->defname, "extensions") == 0)
@@ -131,26 +144,37 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 			/* check list syntax, warn about uninstalled extensions */
 			(void) ExtractExtensionList(defGetString(def), true);
 		}
-		else if (strcmp(def->defname, "fetch_size") == 0)
+		else if (strcmp(def->defname, "fetch_size") == 0 ||
+				 strcmp(def->defname, "batch_size") == 0)
 		{
-			int			fetch_size;
+			char	   *value;
+			int			int_val;
+			bool		is_parsed;
 
-			fetch_size = strtol(defGetString(def), NULL, 10);
-			if (fetch_size <= 0)
+			value = defGetString(def);
+			is_parsed = parse_int(value, &int_val, 0, NULL);
+
+			if (!is_parsed)
 				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("%s requires a non-negative integer value",
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("invalid value for integer option \"%s\": %s",
+								def->defname, value)));
+
+			if (int_val <= 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("\"%s\" requires a non-negative integer value",
 								def->defname)));
 		}
 		else if (strcmp(def->defname, "password_required") == 0)
 		{
-			bool pw_required = defGetBoolean(def);
+			bool		pw_required = defGetBoolean(def);
 
 			/*
 			 * Only the superuser may set this option on a user mapping, or
 			 * alter a user mapping on which this option is set. We allow a
-			 * user to clear this option if it's set - in fact, we don't have a
-			 * choice since we can't see the old mapping when validating an
+			 * user to clear this option if it's set - in fact, we don't have
+			 * a choice since we can't see the old mapping when validating an
 			 * alter.
 			 */
 			if (!superuser() && !pw_required)
@@ -200,15 +224,25 @@ InitPgFdwOptions(void)
 		/* updatable is available on both server and table */
 		{"updatable", ForeignServerRelationId, false},
 		{"updatable", ForeignTableRelationId, false},
+		/* truncatable is available on both server and table */
+		{"truncatable", ForeignServerRelationId, false},
+		{"truncatable", ForeignTableRelationId, false},
 		/* fetch_size is available on both server and table */
 		{"fetch_size", ForeignServerRelationId, false},
 		{"fetch_size", ForeignTableRelationId, false},
+		/* batch_size is available on both server and table */
+		{"batch_size", ForeignServerRelationId, false},
+		{"batch_size", ForeignTableRelationId, false},
+		/* async_capable is available on both server and table */
+		{"async_capable", ForeignServerRelationId, false},
+		{"async_capable", ForeignTableRelationId, false},
+		{"keep_connections", ForeignServerRelationId, false},
 		{"password_required", UserMappingRelationId, false},
+
 		/*
 		 * sslcert and sslkey are in fact libpq options, but we repeat them
-		 * here to allow them to appear in both foreign server context
-		 * (when we generate libpq options) and user mapping context
-		 * (from here).
+		 * here to allow them to appear in both foreign server context (when
+		 * we generate libpq options) and user mapping context (from here).
 		 */
 		{"sslcert", UserMappingRelationId, true},
 		{"sslkey", UserMappingRelationId, true},

@@ -1,3 +1,6 @@
+
+# Copyright (c) 2021, PostgreSQL Global Development Group
+
 #
 # pgbench tests which do not need a server
 #
@@ -23,7 +26,6 @@ sub pgbench
 	local $Test::Builder::Level = $Test::Builder::Level + 1;
 
 	my ($opts, $stat, $out, $err, $name) = @_;
-	print STDERR "opts=$opts, stat=$stat, out=$out, err=$err, name=$name";
 	command_checks_all([ 'pgbench', split(/\s+/, $opts) ],
 		$stat, $out, $err, $name);
 	return;
@@ -147,7 +149,10 @@ my @options = (
 	[
 		'invalid init step',
 		'-i -I dta',
-		[ qr{unrecognized initialization step}, qr{Allowed step characters are} ]
+		[
+			qr{unrecognized initialization step},
+			qr{Allowed step characters are}
+		]
 	],
 	[
 		'bad random seed',
@@ -158,12 +163,20 @@ my @options = (
 			qr{error while setting random seed from --random-seed option}
 		]
 	],
-	[ 'bad partition method', '-i --partition-method=BAD', [qr{"range"}, qr{"hash"}, qr{"BAD"}] ],
-	[ 'bad partition number', '-i --partitions -1', [ qr{invalid number of partitions: "-1"} ] ],
+	[
+		'bad partition method',
+		'-i --partition-method=BAD',
+		[ qr{"range"}, qr{"hash"}, qr{"BAD"} ]
+	],
+	[
+		'bad partition number',
+		'-i --partitions -1',
+		[qr{invalid number of partitions: "-1"}]
+	],
 	[
 		'partition method without partitioning',
 		'-i --partition-method=hash',
-		[ qr{partition-method requires greater than zero --partitions} ]
+		[qr{partition-method requires greater than zero --partitions}]
 	],
 
 	# logging sub-options
@@ -231,8 +244,10 @@ pgbench(
 	'--show-script se',
 	0,
 	[qr{^$}],
-	[ qr{select-only: }, qr{SELECT abalance FROM pgbench_accounts WHERE},
-	  qr{(?!UPDATE)}, qr{(?!INSERT)} ],
+	[
+		qr{select-only: }, qr{SELECT abalance FROM pgbench_accounts WHERE},
+		qr{(?!UPDATE)},    qr{(?!INSERT)}
+	],
 	'pgbench builtin listing');
 
 my @script_tests = (
@@ -328,6 +343,16 @@ my @script_tests = (
 		'set i',
 		[ qr{set i 1 }, qr{\^ error found here} ],
 		{ 'set_i_op' => "\\set i 1 +\n" }
+	],
+	[
+		'not enough arguments to permute',
+		[qr{unexpected number of arguments \(permute\)}],
+		{ 'bad-permute-1.sql' => "\\set i permute(1)\n" }
+	],
+	[
+		'too many arguments to permute',
+		[qr{unexpected number of arguments \(permute\)}],
+		{ 'bad-permute-2.sql' => "\\set i permute(1, 2, 3, 4)\n" }
 	],);
 
 for my $t (@script_tests)

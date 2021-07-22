@@ -26,9 +26,11 @@ void		_PG_fini(void);
 static char *ssl_passphrase = NULL;
 
 /* callback function */
-static int rot13_passphrase(char *buf, int size, int rwflag, void *userdata);
+static int	rot13_passphrase(char *buf, int size, int rwflag, void *userdata);
+
 /* hook function to set the callback */
 static void set_rot13(SSL_CTX *context, bool isServerStart);
+
 /*
  * Module load callback
  */
@@ -60,7 +62,7 @@ static void
 set_rot13(SSL_CTX *context, bool isServerStart)
 {
 	/* warn if the user has set ssl_passphrase_command */
-	if(ssl_passphrase_command[0])
+	if (ssl_passphrase_command[0])
 		ereport(WARNING,
 				(errmsg("ssl_passphrase_command setting ignored by ssl_passphrase_func module")));
 
@@ -72,7 +74,7 @@ rot13_passphrase(char *buf, int size, int rwflag, void *userdata)
 {
 
 	Assert(ssl_passphrase != NULL);
-	StrNCpy(buf, ssl_passphrase, size);
+	strlcpy(buf, ssl_passphrase, size);
 	for (char *p = buf; *p; p++)
 	{
 		char		c = *p;

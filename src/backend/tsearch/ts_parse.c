@@ -3,7 +3,7 @@
  * ts_parse.c
  *		main parse functions for tsearch
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -436,7 +436,7 @@ parsetext(Oid cfgId, ParsedText *prs, char *buf, int buflen)
 static void
 hladdword(HeadlineParsedText *prs, char *buf, int buflen, int type)
 {
-	while (prs->curwords >= prs->lenwords)
+	if (prs->curwords >= prs->lenwords)
 	{
 		prs->lenwords *= 2;
 		prs->words = (HeadlineWordEntry *) repalloc((void *) prs->words, prs->lenwords * sizeof(HeadlineWordEntry));

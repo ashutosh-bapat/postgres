@@ -3,7 +3,7 @@
  * auto_explain.c
  *
  *
- * Copyright (c) 2008-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2008-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/auto_explain/auto_explain.c
@@ -27,6 +27,7 @@ static int	auto_explain_log_min_duration = -1; /* msec or -1 */
 static bool auto_explain_log_analyze = false;
 static bool auto_explain_log_verbose = false;
 static bool auto_explain_log_buffers = false;
+static bool auto_explain_log_wal = false;
 static bool auto_explain_log_triggers = false;
 static bool auto_explain_log_timing = true;
 static bool auto_explain_log_settings = false;
@@ -141,6 +142,17 @@ _PG_init(void)
 							 "Log buffers usage.",
 							 NULL,
 							 &auto_explain_log_buffers,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomBoolVariable("auto_explain.log_wal",
+							 "Log WAL usage.",
+							 NULL,
+							 &auto_explain_log_wal,
 							 false,
 							 PGC_SUSET,
 							 0,
@@ -280,6 +292,8 @@ explain_ExecutorStart(QueryDesc *queryDesc, int eflags)
 				queryDesc->instrument_options |= INSTRUMENT_ROWS;
 			if (auto_explain_log_buffers)
 				queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
+			if (auto_explain_log_wal)
+				queryDesc->instrument_options |= INSTRUMENT_WAL;
 		}
 	}
 
@@ -300,7 +314,7 @@ explain_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			MemoryContext oldcxt;
 
 			oldcxt = MemoryContextSwitchTo(queryDesc->estate->es_query_cxt);
-			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL);
+			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL, false);
 			MemoryContextSwitchTo(oldcxt);
 		}
 	}
@@ -357,7 +371,14 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 {
 	if (queryDesc->totaltime && auto_explain_enabled())
 	{
+		MemoryContext oldcxt;
 		double		msec;
+
+		/*
+		 * Make sure we operate in the per-query context, so any cruft will be
+		 * discarded later during ExecutorEnd.
+		 */
+		oldcxt = MemoryContextSwitchTo(queryDesc->estate->es_query_cxt);
 
 		/*
 		 * Make sure stats accumulation is done.  (Note: it's okay if several
@@ -374,6 +395,7 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 			es->analyze = (queryDesc->instrument_options && auto_explain_log_analyze);
 			es->verbose = auto_explain_log_verbose;
 			es->buffers = (es->analyze && auto_explain_log_buffers);
+			es->wal = (es->analyze && auto_explain_log_wal);
 			es->timing = (es->analyze && auto_explain_log_timing);
 			es->summary = es->analyze;
 			es->format = auto_explain_log_format;
@@ -409,9 +431,9 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 					(errmsg("duration: %.3f ms  plan:\n%s",
 							msec, es->str->data),
 					 errhidestmt(true)));
-
-			pfree(es->str->data);
 		}
+
+		MemoryContextSwitchTo(oldcxt);
 	}
 
 	if (prev_ExecutorEnd)

@@ -11,7 +11,7 @@
  * so for all external functions, all the referenced functions (and
  * prerequisites) will be imported.
  *
- * Copyright (c) 2016-2020, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2021, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/lib/llvmjit/llvmjit_inline.cpp
@@ -56,7 +56,6 @@ extern "C"
 #include <llvm/Support/Error.h>
 #endif
 #include <llvm/IR/Attributes.h>
-#include <llvm/IR/CallSite.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/IRBuilder.h>
@@ -608,6 +607,17 @@ function_inlinable(llvm::Function &F,
 	{
 		if (rv->materialize())
 			elog(FATAL, "failed to materialize metadata");
+
+		/*
+		 * Don't inline functions that access thread local variables.  That
+		 * doesn't work on current LLVM releases (but might in future).
+		 */
+		if (rv->isThreadLocal())
+		{
+			ilog(DEBUG1, "cannot inline %s due to thread-local variable %s",
+				 F.getName().data(), rv->getName().data());
+			return false;
+		}
 
 		/*
 		 * Never want to inline externally visible vars, cheap enough to

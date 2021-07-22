@@ -284,31 +284,20 @@ pgstat_relation(Relation rel, FunctionCallInfo fcinfo)
 					err = "unknown index";
 					break;
 			}
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("index \"%s\" (%s) is not supported",
+							RelationGetRelationName(rel), err)));
 			break;
-		case RELKIND_VIEW:
-			err = "view";
-			break;
-		case RELKIND_COMPOSITE_TYPE:
-			err = "composite type";
-			break;
-		case RELKIND_FOREIGN_TABLE:
-			err = "foreign table";
-			break;
-		case RELKIND_PARTITIONED_TABLE:
-			err = "partitioned table";
-			break;
-		case RELKIND_PARTITIONED_INDEX:
-			err = "partitioned index";
-			break;
+
 		default:
-			err = "unknown";
-			break;
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot get tuple-level statistics for relation \"%s\"",
+							RelationGetRelationName(rel)),
+					 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 	}
 
-	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("\"%s\" (%s) is not supported",
-					RelationGetRelationName(rel), err)));
 	return 0;					/* should not happen */
 }
 
@@ -430,7 +419,7 @@ pgstat_btree_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
 		if (P_IGNORE(opaque))
 		{
-			/* recyclable page */
+			/* deleted or half-dead page */
 			stat->free_space += BLCKSZ;
 		}
 		else if (P_ISLEAF(opaque))
@@ -440,7 +429,7 @@ pgstat_btree_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 		}
 		else
 		{
-			/* root or node */
+			/* internal page */
 		}
 	}
 

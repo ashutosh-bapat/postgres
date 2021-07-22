@@ -3,7 +3,7 @@
  * aclchk.c
  *	  Routines to check access control permissions.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -59,6 +59,7 @@
 #include "catalog/pg_ts_template.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
+#include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
 #include "commands/proclang.h"
@@ -141,24 +142,6 @@ static void recordExtensionInitPrivWorker(Oid objoid, Oid classoid, int objsubid
 										  Acl *new_acl);
 
 
-#ifdef ACLDEBUG
-static void
-dumpacl(Acl *acl)
-{
-	int			i;
-	AclItem    *aip;
-
-	elog(DEBUG2, "acl size = %d, # acls = %d",
-		 ACL_SIZE(acl), ACL_NUM(acl));
-	aip = ACL_DAT(acl);
-	for (i = 0; i < ACL_NUM(acl); ++i)
-		elog(DEBUG2, "	acl[%d]: %s", i,
-			 DatumGetCString(DirectFunctionCall1(aclitemout,
-												 PointerGetDatum(aip + i))));
-}
-#endif							/* ACLDEBUG */
-
-
 /*
  * If is_grant is true, adds the given privileges for the list of
  * grantees to the existing old_acl.  If is_grant is false, the
@@ -178,9 +161,6 @@ merge_acl_with_grant(Acl *old_acl, bool is_grant,
 
 	modechg = is_grant ? ACL_MODECHG_ADD : ACL_MODECHG_DEL;
 
-#ifdef ACLDEBUG
-	dumpacl(old_acl);
-#endif
 	new_acl = old_acl;
 
 	foreach(j, grantees)
@@ -219,10 +199,6 @@ merge_acl_with_grant(Acl *old_acl, bool is_grant,
 		/* avoid memory leak when there are many grantees */
 		pfree(new_acl);
 		new_acl = newer_acl;
-
-#ifdef ACLDEBUG
-		dumpacl(new_acl);
-#endif
 	}
 
 	return new_acl;
@@ -387,6 +363,22 @@ ExecuteGrantStmt(GrantStmt *stmt)
 	ListCell   *cell;
 	const char *errormsg;
 	AclMode		all_privileges;
+
+	if (stmt->grantor)
+	{
+		Oid			grantor;
+
+		grantor = get_rolespec_oid(stmt->grantor, false);
+
+		/*
+		 * Currently, this clause is only for SQL compatibility, not very
+		 * interesting otherwise.
+		 */
+		if (grantor != GetUserId())
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("grantor must be current user")));
+	}
 
 	/*
 	 * Turn the regular GrantStmt into the InternalGrant form.
@@ -930,19 +922,13 @@ ExecAlterDefaultPrivilegesStmt(ParseState *pstate, AlterDefaultPrivilegesStmt *s
 		if (strcmp(defel->defname, "schemas") == 0)
 		{
 			if (dnspnames)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			dnspnames = defel;
 		}
 		else if (strcmp(defel->defname, "roles") == 0)
 		{
 			if (drolespecs)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options"),
-						 parser_errposition(pstate, defel->location)));
+				errorConflictingDefElem(defel, pstate);
 			drolespecs = defel;
 		}
 		else
@@ -1390,6 +1376,9 @@ SetDefaultACL(InternalDefaultACL *iacls)
 		ReleaseSysCache(tuple);
 
 	table_close(rel, RowExclusiveLock);
+
+	/* prevent error when processing duplicate objects */
+	CommandCounterIncrement();
 }
 
 
@@ -1520,39 +1509,6 @@ RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid)
 
 		ExecGrantStmt_oids(&istmt);
 	}
-}
-
-
-/*
- * Remove a pg_default_acl entry
- */
-void
-RemoveDefaultACLById(Oid defaclOid)
-{
-	Relation	rel;
-	ScanKeyData skey[1];
-	SysScanDesc scan;
-	HeapTuple	tuple;
-
-	rel = table_open(DefaultAclRelationId, RowExclusiveLock);
-
-	ScanKeyInit(&skey[0],
-				Anum_pg_default_acl_oid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(defaclOid));
-
-	scan = systable_beginscan(rel, DefaultAclOidIndexId, true,
-							  NULL, 1, skey);
-
-	tuple = systable_getnext(scan);
-
-	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "could not find tuple for default ACL %u", defaclOid);
-
-	CatalogTupleDelete(rel, &tuple->t_self);
-
-	systable_endscan(scan);
-	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -3172,7 +3128,7 @@ ExecGrant_Type(InternalGrant *istmt)
 
 		pg_type_tuple = (Form_pg_type) GETSTRUCT(tuple);
 
-		if (pg_type_tuple->typelem != 0 && pg_type_tuple->typlen == -1)
+		if (IsTrueArrayType(pg_type_tuple))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_GRANT_OPERATION),
 					 errmsg("cannot set privileges of array types"),
@@ -3751,6 +3707,20 @@ AclMode
 pg_attribute_aclmask(Oid table_oid, AttrNumber attnum, Oid roleid,
 					 AclMode mask, AclMaskHow how)
 {
+	return pg_attribute_aclmask_ext(table_oid, attnum, roleid,
+									mask, how, NULL);
+}
+
+/*
+ * Exported routine for examining a user's privileges for a column
+ *
+ * Does the bulk of the work for pg_attribute_aclmask(), and allows other
+ * callers to avoid the missing attribute ERROR when is_missing is non-NULL.
+ */
+AclMode
+pg_attribute_aclmask_ext(Oid table_oid, AttrNumber attnum, Oid roleid,
+						 AclMode mask, AclMaskHow how, bool *is_missing)
+{
 	AclMode		result;
 	HeapTuple	classTuple;
 	HeapTuple	attTuple;
@@ -3768,18 +3738,38 @@ pg_attribute_aclmask(Oid table_oid, AttrNumber attnum, Oid roleid,
 							   ObjectIdGetDatum(table_oid),
 							   Int16GetDatum(attnum));
 	if (!HeapTupleIsValid(attTuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("attribute %d of relation with OID %u does not exist",
-						attnum, table_oid)));
+	{
+		if (is_missing != NULL)
+		{
+			/* return "no privileges" instead of throwing an error */
+			*is_missing = true;
+			return 0;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("attribute %d of relation with OID %u does not exist",
+							attnum, table_oid)));
+	}
+
 	attributeForm = (Form_pg_attribute) GETSTRUCT(attTuple);
 
-	/* Throw error on dropped columns, too */
+	/* Check dropped columns, too */
 	if (attributeForm->attisdropped)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_COLUMN),
-				 errmsg("attribute %d of relation with OID %u does not exist",
-						attnum, table_oid)));
+	{
+		if (is_missing != NULL)
+		{
+			/* return "no privileges" instead of throwing an error */
+			*is_missing = true;
+			ReleaseSysCache(attTuple);
+			return 0;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("attribute %d of relation with OID %u does not exist",
+							attnum, table_oid)));
+	}
 
 	aclDatum = SysCacheGetAttr(ATTNUM, attTuple, Anum_pg_attribute_attacl,
 							   &isNull);
@@ -3836,6 +3826,19 @@ AclMode
 pg_class_aclmask(Oid table_oid, Oid roleid,
 				 AclMode mask, AclMaskHow how)
 {
+	return pg_class_aclmask_ext(table_oid, roleid, mask, how, NULL);
+}
+
+/*
+ * Exported routine for examining a user's privileges for a table
+ *
+ * Does the bulk of the work for pg_class_aclmask(), and allows other
+ * callers to avoid the missing relation ERROR when is_missing is non-NULL.
+ */
+AclMode
+pg_class_aclmask_ext(Oid table_oid, Oid roleid, AclMode mask,
+					 AclMaskHow how, bool *is_missing)
+{
 	AclMode		result;
 	HeapTuple	tuple;
 	Form_pg_class classForm;
@@ -3849,10 +3852,20 @@ pg_class_aclmask(Oid table_oid, Oid roleid,
 	 */
 	tuple = SearchSysCache1(RELOID, ObjectIdGetDatum(table_oid));
 	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_TABLE),
-				 errmsg("relation with OID %u does not exist",
-						table_oid)));
+	{
+		if (is_missing != NULL)
+		{
+			/* return "no privileges" instead of throwing an error */
+			*is_missing = true;
+			return 0;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_TABLE),
+					 errmsg("relation with OID %u does not exist",
+							table_oid)));
+	}
+
 	classForm = (Form_pg_class) GETSTRUCT(tuple);
 
 	/*
@@ -3867,21 +3880,13 @@ pg_class_aclmask(Oid table_oid, Oid roleid,
 		IsSystemClass(table_oid, classForm) &&
 		classForm->relkind != RELKIND_VIEW &&
 		!superuser_arg(roleid))
-	{
-#ifdef ACLDEBUG
-		elog(DEBUG2, "permission denied for system catalog update");
-#endif
 		mask &= ~(ACL_INSERT | ACL_UPDATE | ACL_DELETE | ACL_TRUNCATE | ACL_USAGE);
-	}
 
 	/*
 	 * Otherwise, superusers bypass all permission-checking.
 	 */
 	if (superuser_arg(roleid))
 	{
-#ifdef ACLDEBUG
-		elog(DEBUG2, "OID %u is superuser, home free", roleid);
-#endif
 		ReleaseSysCache(tuple);
 		return mask;
 	}
@@ -3920,6 +3925,27 @@ pg_class_aclmask(Oid table_oid, Oid roleid,
 		pfree(acl);
 
 	ReleaseSysCache(tuple);
+
+	/*
+	 * Check if ACL_SELECT is being checked and, if so, and not set already as
+	 * part of the result, then check if the user is a member of the
+	 * pg_read_all_data role, which allows read access to all relations.
+	 */
+	if (mask & ACL_SELECT && !(result & ACL_SELECT) &&
+		has_privs_of_role(roleid, ROLE_PG_READ_ALL_DATA))
+		result |= ACL_SELECT;
+
+	/*
+	 * Check if ACL_INSERT, ACL_UPDATE, or ACL_DELETE is being checked and, if
+	 * so, and not set already as part of the result, then check if the user
+	 * is a member of the pg_write_all_data role, which allows
+	 * INSERT/UPDATE/DELETE access to all relations (except system catalogs,
+	 * which requires superuser, see above).
+	 */
+	if (mask & (ACL_INSERT | ACL_UPDATE | ACL_DELETE) &&
+		!(result & (ACL_INSERT | ACL_UPDATE | ACL_DELETE)) &&
+		has_privs_of_role(roleid, ROLE_PG_WRITE_ALL_DATA))
+		result |= (mask & (ACL_INSERT | ACL_UPDATE | ACL_DELETE));
 
 	return result;
 }
@@ -4247,6 +4273,16 @@ pg_namespace_aclmask(Oid nsp_oid, Oid roleid,
 
 	ReleaseSysCache(tuple);
 
+	/*
+	 * Check if ACL_USAGE is being checked and, if so, and not set already as
+	 * part of the result, then check if the user is a member of the
+	 * pg_read_all_data or pg_write_all_data roles, which allow usage access
+	 * to all schemas.
+	 */
+	if (mask & ACL_USAGE && !(result & ACL_USAGE) &&
+		(has_privs_of_role(roleid, ROLE_PG_READ_ALL_DATA) ||
+		 has_privs_of_role(roleid, ROLE_PG_WRITE_ALL_DATA)))
+		result |= ACL_USAGE;
 	return result;
 }
 
@@ -4464,7 +4500,7 @@ pg_type_aclmask(Oid type_oid, Oid roleid, AclMode mask, AclMaskHow how)
 	 * "True" array types don't manage permissions of their own; consult the
 	 * element type instead.
 	 */
-	if (OidIsValid(typeForm->typelem) && typeForm->typlen == -1)
+	if (IsTrueArrayType(typeForm))
 	{
 		Oid			elttype_oid = typeForm->typelem;
 
@@ -4521,7 +4557,22 @@ AclResult
 pg_attribute_aclcheck(Oid table_oid, AttrNumber attnum,
 					  Oid roleid, AclMode mode)
 {
-	if (pg_attribute_aclmask(table_oid, attnum, roleid, mode, ACLMASK_ANY) != 0)
+	return pg_attribute_aclcheck_ext(table_oid, attnum, roleid, mode, NULL);
+}
+
+
+/*
+ * Exported routine for checking a user's access privileges to a column
+ *
+ * Does the bulk of the work for pg_attribute_aclcheck(), and allows other
+ * callers to avoid the missing attribute ERROR when is_missing is non-NULL.
+ */
+AclResult
+pg_attribute_aclcheck_ext(Oid table_oid, AttrNumber attnum,
+						  Oid roleid, AclMode mode, bool *is_missing)
+{
+	if (pg_attribute_aclmask_ext(table_oid, attnum, roleid, mode,
+								 ACLMASK_ANY, is_missing) != 0)
 		return ACLCHECK_OK;
 	else
 		return ACLCHECK_NO_PRIV;
@@ -4634,7 +4685,21 @@ pg_attribute_aclcheck_all(Oid table_oid, Oid roleid, AclMode mode,
 AclResult
 pg_class_aclcheck(Oid table_oid, Oid roleid, AclMode mode)
 {
-	if (pg_class_aclmask(table_oid, roleid, mode, ACLMASK_ANY) != 0)
+	return pg_class_aclcheck_ext(table_oid, roleid, mode, NULL);
+}
+
+/*
+ * Exported routine for checking a user's access privileges to a table
+ *
+ * Does the bulk of the work for pg_class_aclcheck(), and allows other
+ * callers to avoid the missing relation ERROR when is_missing is non-NULL.
+ */
+AclResult
+pg_class_aclcheck_ext(Oid table_oid, Oid roleid,
+					  AclMode mode, bool *is_missing)
+{
+	if (pg_class_aclmask_ext(table_oid, roleid, mode,
+							 ACLMASK_ANY, is_missing) != 0)
 		return ACLCHECK_OK;
 	else
 		return ACLCHECK_NO_PRIV;
@@ -5586,19 +5651,22 @@ recordExtObjInitPriv(Oid objoid, Oid classoid)
 			elog(ERROR, "cache lookup failed for relation %u", objoid);
 		pg_class_tuple = (Form_pg_class) GETSTRUCT(tuple);
 
-		/* Indexes don't have permissions */
+		/*
+		 * Indexes don't have permissions, neither do the pg_class rows for
+		 * composite types.  (These cases are unreachable given the
+		 * restrictions in ALTER EXTENSION ADD, but let's check anyway.)
+		 */
 		if (pg_class_tuple->relkind == RELKIND_INDEX ||
-			pg_class_tuple->relkind == RELKIND_PARTITIONED_INDEX)
+			pg_class_tuple->relkind == RELKIND_PARTITIONED_INDEX ||
+			pg_class_tuple->relkind == RELKIND_COMPOSITE_TYPE)
+		{
+			ReleaseSysCache(tuple);
 			return;
-
-		/* Composite types don't have permissions either */
-		if (pg_class_tuple->relkind == RELKIND_COMPOSITE_TYPE)
-			return;
+		}
 
 		/*
-		 * If this isn't a sequence, index, or composite type then it's
-		 * possibly going to have columns associated with it that might have
-		 * ACLs.
+		 * If this isn't a sequence then it's possibly going to have
+		 * column-level ACLs associated with it.
 		 */
 		if (pg_class_tuple->relkind != RELKIND_SEQUENCE)
 		{
@@ -5730,6 +5798,11 @@ recordExtObjInitPriv(Oid objoid, Oid classoid)
 		SysScanDesc scan;
 		Relation	relation;
 
+		/*
+		 * Note: this is dead code, given that we don't allow large objects to
+		 * be made extension members.  But it seems worth carrying in case
+		 * some future caller of this function has need for it.
+		 */
 		relation = table_open(LargeObjectMetadataRelationId, RowExclusiveLock);
 
 		/* There's no syscache for pg_largeobject_metadata */
@@ -5872,19 +5945,22 @@ removeExtObjInitPriv(Oid objoid, Oid classoid)
 			elog(ERROR, "cache lookup failed for relation %u", objoid);
 		pg_class_tuple = (Form_pg_class) GETSTRUCT(tuple);
 
-		/* Indexes don't have permissions */
+		/*
+		 * Indexes don't have permissions, neither do the pg_class rows for
+		 * composite types.  (These cases are unreachable given the
+		 * restrictions in ALTER EXTENSION DROP, but let's check anyway.)
+		 */
 		if (pg_class_tuple->relkind == RELKIND_INDEX ||
-			pg_class_tuple->relkind == RELKIND_PARTITIONED_INDEX)
+			pg_class_tuple->relkind == RELKIND_PARTITIONED_INDEX ||
+			pg_class_tuple->relkind == RELKIND_COMPOSITE_TYPE)
+		{
+			ReleaseSysCache(tuple);
 			return;
-
-		/* Composite types don't have permissions either */
-		if (pg_class_tuple->relkind == RELKIND_COMPOSITE_TYPE)
-			return;
+		}
 
 		/*
-		 * If this isn't a sequence, index, or composite type then it's
-		 * possibly going to have columns associated with it that might have
-		 * ACLs.
+		 * If this isn't a sequence then it's possibly going to have
+		 * column-level ACLs associated with it.
 		 */
 		if (pg_class_tuple->relkind != RELKIND_SEQUENCE)
 		{

@@ -4,7 +4,7 @@
  *	  header file for postgres btree access method implementation.
  *
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/nbtree.h
@@ -17,6 +17,7 @@
 #include "access/amapi.h"
 #include "access/itup.h"
 #include "access/sdir.h"
+#include "access/tableam.h"
 #include "access/xlogreader.h"
 #include "catalog/pg_am_d.h"
 #include "catalog/pg_index.h"
@@ -36,8 +37,9 @@ typedef uint16 BTCycleId;
  *
  *	In addition, we store the page's btree level (counting upwards from
  *	zero at a leaf page) as well as some flag bits indicating the page type
- *	and status.  If the page is deleted, we replace the level with the
- *	next-transaction-ID value indicating when it is safe to reclaim the page.
+ *	and status.  If the page is deleted, a BTDeletedPageData struct is stored
+ *	in the page's tuple area, while a standard BTPageOpaqueData struct is
+ *	stored in the page special area.
  *
  *	We also store a "vacuum cycle ID".  When a page is split while VACUUM is
  *	processing the index, a nonzero value associated with the VACUUM run is
@@ -51,17 +53,17 @@ typedef uint16 BTCycleId;
  *
  *	NOTE: the BTP_LEAF flag bit is redundant since level==0 could be tested
  *	instead.
+ *
+ *	NOTE: the btpo_level field used to be a union type in order to allow
+ *	deleted pages to store a 32-bit safexid in the same field.  We now store
+ *	64-bit/full safexid values using BTDeletedPageData instead.
  */
 
 typedef struct BTPageOpaqueData
 {
 	BlockNumber btpo_prev;		/* left sibling, or P_NONE if leftmost */
 	BlockNumber btpo_next;		/* right sibling, or P_NONE if rightmost */
-	union
-	{
-		uint32		level;		/* tree level --- zero for leaf pages */
-		TransactionId xact;		/* next transaction ID, if deleted */
-	}			btpo;
+	uint32		btpo_level;		/* tree level --- zero for leaf pages */
 	uint16		btpo_flags;		/* flag bits, see below */
 	BTCycleId	btpo_cycleid;	/* vacuum cycle ID of latest split */
 } BTPageOpaqueData;
@@ -75,8 +77,9 @@ typedef BTPageOpaqueData *BTPageOpaque;
 #define BTP_META		(1 << 3)	/* meta-page */
 #define BTP_HALF_DEAD	(1 << 4)	/* empty, but still in tree */
 #define BTP_SPLIT_END	(1 << 5)	/* rightmost page of split group */
-#define BTP_HAS_GARBAGE (1 << 6)	/* page has LP_DEAD tuples */
+#define BTP_HAS_GARBAGE (1 << 6)	/* page has LP_DEAD tuples (deprecated) */
 #define BTP_INCOMPLETE_SPLIT (1 << 7)	/* right sibling's downlink is missing */
+#define BTP_HAS_FULLXID	(1 << 8)	/* contains BTDeletedPageData */
 
 /*
  * The max allowed value of a cycle ID is a bit less than 64K.  This is
@@ -104,10 +107,12 @@ typedef struct BTMetaPageData
 	BlockNumber btm_fastroot;	/* current "fast" root location */
 	uint32		btm_fastlevel;	/* tree level of the "fast" root page */
 	/* remaining fields only valid when btm_version >= BTREE_NOVAC_VERSION */
-	TransactionId btm_oldest_btpo_xact; /* oldest btpo_xact among all deleted
-										 * pages */
-	float8		btm_last_cleanup_num_heap_tuples;	/* number of heap tuples
-													 * during last cleanup */
+
+	/* number of deleted, non-recyclable pages during last cleanup */
+	uint32		btm_last_cleanup_num_delpages;
+	/* number of heap tuples during last cleanup (deprecated) */
+	float8		btm_last_cleanup_num_heap_tuples;
+
 	bool		btm_allequalimage;	/* are all columns "equalimage"? */
 } BTMetaPageData;
 
@@ -168,7 +173,7 @@ typedef struct BTMetaPageData
 /*
  * MaxTIDsPerBTreePage is an upper bound on the number of heap TIDs tuples
  * that may be stored on a btree leaf page.  It is used to size the
- * per-page temporary buffers used by index scans.
+ * per-page temporary buffers.
  *
  * Note: we don't bother considering per-tuple overheads here to keep
  * things simple (value is based on how many elements a single array of
@@ -219,6 +224,126 @@ typedef struct BTMetaPageData
 #define P_IGNORE(opaque)		(((opaque)->btpo_flags & (BTP_DELETED|BTP_HALF_DEAD)) != 0)
 #define P_HAS_GARBAGE(opaque)	(((opaque)->btpo_flags & BTP_HAS_GARBAGE) != 0)
 #define P_INCOMPLETE_SPLIT(opaque)	(((opaque)->btpo_flags & BTP_INCOMPLETE_SPLIT) != 0)
+#define P_HAS_FULLXID(opaque)	(((opaque)->btpo_flags & BTP_HAS_FULLXID) != 0)
+
+/*
+ * BTDeletedPageData is the page contents of a deleted page
+ */
+typedef struct BTDeletedPageData
+{
+	FullTransactionId safexid;	/* See BTPageIsRecyclable() */
+} BTDeletedPageData;
+
+static inline void
+BTPageSetDeleted(Page page, FullTransactionId safexid)
+{
+	BTPageOpaque opaque;
+	PageHeader	header;
+	BTDeletedPageData *contents;
+
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	header = ((PageHeader) page);
+
+	opaque->btpo_flags &= ~BTP_HALF_DEAD;
+	opaque->btpo_flags |= BTP_DELETED | BTP_HAS_FULLXID;
+	header->pd_lower = MAXALIGN(SizeOfPageHeaderData) +
+		sizeof(BTDeletedPageData);
+	header->pd_upper = header->pd_special;
+
+	/* Set safexid in deleted page */
+	contents = ((BTDeletedPageData *) PageGetContents(page));
+	contents->safexid = safexid;
+}
+
+static inline FullTransactionId
+BTPageGetDeleteXid(Page page)
+{
+	BTPageOpaque opaque;
+	BTDeletedPageData *contents;
+
+	/* We only expect to be called with a deleted page */
+	Assert(!PageIsNew(page));
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	Assert(P_ISDELETED(opaque));
+
+	/* pg_upgrade'd deleted page -- must be safe to delete now */
+	if (!P_HAS_FULLXID(opaque))
+		return FirstNormalFullTransactionId;
+
+	/* Get safexid from deleted page */
+	contents = ((BTDeletedPageData *) PageGetContents(page));
+	return contents->safexid;
+}
+
+/*
+ * Is an existing page recyclable?
+ *
+ * This exists to centralize the policy on which deleted pages are now safe to
+ * re-use.  However, _bt_pendingfsm_finalize() duplicates some of the same
+ * logic because it doesn't work directly with pages -- keep the two in sync.
+ *
+ * Note: PageIsNew() pages are always safe to recycle, but we can't deal with
+ * them here (caller is responsible for that case themselves).  Caller might
+ * well need special handling for new pages anyway.
+ */
+static inline bool
+BTPageIsRecyclable(Page page)
+{
+	BTPageOpaque opaque;
+
+	Assert(!PageIsNew(page));
+
+	/* Recycling okay iff page is deleted and safexid is old enough */
+	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+	if (P_ISDELETED(opaque))
+	{
+		/*
+		 * The page was deleted, but when? If it was just deleted, a scan
+		 * might have seen the downlink to it, and will read the page later.
+		 * As long as that can happen, we must keep the deleted page around as
+		 * a tombstone.
+		 *
+		 * For that check if the deletion XID could still be visible to
+		 * anyone. If not, then no scan that's still in progress could have
+		 * seen its downlink, and we can recycle it.
+		 *
+		 * XXX: If we had the heap relation we could be more aggressive about
+		 * recycling deleted pages in non-catalog relations.  For now we just
+		 * pass NULL.  That is at least simple and consistent.
+		 */
+		return GlobalVisCheckRemovableFullXid(NULL, BTPageGetDeleteXid(page));
+	}
+
+	return false;
+}
+
+/*
+ * BTVacState and BTPendingFSM are private nbtree.c state used during VACUUM.
+ * They are exported for use by page deletion related code in nbtpage.c.
+ */
+typedef struct BTPendingFSM
+{
+	BlockNumber target;			/* Page deleted by current VACUUM */
+	FullTransactionId safexid;	/* Page's BTDeletedPageData.safexid */
+} BTPendingFSM;
+
+typedef struct BTVacState
+{
+	IndexVacuumInfo *info;
+	IndexBulkDeleteResult *stats;
+	IndexBulkDeleteCallback callback;
+	void	   *callback_state;
+	BTCycleId	cycleid;
+	MemoryContext pagedelcontext;
+
+	/*
+	 * _bt_pendingfsm_finalize() state
+	 */
+	int			bufsize;		/* pendingpages space (in # elements) */
+	int			maxbufsize;		/* max bufsize that respects work_mem */
+	BTPendingFSM *pendingpages; /* One entry per newly deleted page */
+	int			npendingpages;	/* current # valid pendingpages */
+} BTVacState;
 
 /*
  *	Lehman and Yao's algorithm requires a ``high key'' on every non-rightmost
@@ -282,7 +407,7 @@ typedef struct BTMetaPageData
  *
  * We store the number of columns present inside pivot tuples by abusing
  * their t_tid offset field, since pivot tuples never need to store a real
- * offset (downlinks only need to store a block number in t_tid).  The
+ * offset (pivot tuples generally store a downlink in t_tid, though).  The
  * offset field only stores the number of columns/attributes when the
  * INDEX_ALT_TID_MASK bit is set, which doesn't count the trailing heap
  * TID column sometimes stored in pivot tuples -- that's represented by
@@ -290,21 +415,19 @@ typedef struct BTMetaPageData
  * t_info is always set on BTREE_VERSION 4 pivot tuples, since
  * BTreeTupleIsPivot() must work reliably on heapkeyspace versions.
  *
- * In version 3 indexes, the INDEX_ALT_TID_MASK flag might not be set in
- * pivot tuples.  In that case, the number of key columns is implicitly
- * the same as the number of key columns in the index.  It is not usually
- * set on version 2 indexes, which predate the introduction of INCLUDE
- * indexes.  (Only explicitly truncated pivot tuples explicitly represent
- * the number of key columns on versions 2 and 3, whereas all pivot tuples
- * are formed using truncation on version 4.  A version 2 index will have
- * it set for an internal page negative infinity item iff internal page
- * split occurred after upgrade to Postgres 11+.)
+ * In version 2 or version 3 (!heapkeyspace) indexes, INDEX_ALT_TID_MASK
+ * might not be set in pivot tuples.  BTreeTupleIsPivot() won't work
+ * reliably as a result.  The number of columns stored is implicitly the
+ * same as the number of columns in the index, just like any non-pivot
+ * tuple. (The number of columns stored should not vary, since suffix
+ * truncation of key columns is unsafe within any !heapkeyspace index.)
  *
- * The 12 least significant offset bits from t_tid are used to represent
- * the number of columns in INDEX_ALT_TID_MASK tuples, leaving 4 status
- * bits (BT_RESERVED_OFFSET_MASK bits), 3 of which that are reserved for
- * future use.  BT_OFFSET_MASK should be large enough to store any number
- * of columns/attributes <= INDEX_MAX_KEYS.
+ * The 12 least significant bits from t_tid's offset number are used to
+ * represent the number of key columns within a pivot tuple.  This leaves 4
+ * status bits (BT_STATUS_OFFSET_MASK bits), which are shared by all tuples
+ * that have the INDEX_ALT_TID_MASK bit set (set in t_info) to store basic
+ * tuple metadata.  BTreeTupleIsPivot() and BTreeTupleIsPosting() use the
+ * BT_STATUS_OFFSET_MASK bits.
  *
  * Sometimes non-pivot tuples also use a representation that repurposes
  * t_tid to store metadata rather than a TID.  PostgreSQL v13 introduced a
@@ -321,31 +444,24 @@ typedef struct BTMetaPageData
  *
  * Posting list tuples are recognized as such by having the
  * INDEX_ALT_TID_MASK status bit set in t_info and the BT_IS_POSTING status
- * bit set in t_tid.  These flags redefine the content of the posting
- * tuple's t_tid to store an offset to the posting list, as well as the
- * total number of posting list array elements.
+ * bit set in t_tid's offset number.  These flags redefine the content of
+ * the posting tuple's t_tid to store the location of the posting list
+ * (instead of a block number), as well as the total number of heap TIDs
+ * present in the tuple (instead of a real offset number).
  *
- * The 12 least significant offset bits from t_tid are used to represent
- * the number of posting items present in the tuple, leaving 4 status
- * bits (BT_RESERVED_OFFSET_MASK bits), 3 of which that are reserved for
- * future use.  Like any non-pivot tuple, the number of columns stored is
- * always implicitly the total number in the index (in practice there can
- * never be non-key columns stored, since deduplication is not supported
- * with INCLUDE indexes).  BT_OFFSET_MASK should be large enough to store
- * any number of posting list TIDs that might be present in a tuple (since
- * tuple size is subject to the INDEX_SIZE_MASK limit).
- *
- * Note well: The macros that deal with the number of attributes in tuples
- * assume that a tuple with INDEX_ALT_TID_MASK set must be a pivot tuple or
- * non-pivot posting tuple, and that a tuple without INDEX_ALT_TID_MASK set
- * must be a non-pivot tuple (or must have the same number of attributes as
- * the index has generally in the case of !heapkeyspace indexes).
+ * The 12 least significant bits from t_tid's offset number are used to
+ * represent the number of heap TIDs present in the tuple, leaving 4 status
+ * bits (the BT_STATUS_OFFSET_MASK bits).  Like any non-pivot tuple, the
+ * number of columns stored is always implicitly the total number in the
+ * index (in practice there can never be non-key columns stored, since
+ * deduplication is not supported with INCLUDE indexes).
  */
 #define INDEX_ALT_TID_MASK			INDEX_AM_RESERVED_BIT
 
-/* Item pointer offset bits */
-#define BT_RESERVED_OFFSET_MASK		0xF000
+/* Item pointer offset bit masks */
 #define BT_OFFSET_MASK				0x0FFF
+#define BT_STATUS_OFFSET_MASK		0xF000
+/* BT_STATUS_OFFSET_MASK status bits */
 #define BT_PIVOT_HEAP_TID_ATTR		0x1000
 #define BT_IS_POSTING				0x2000
 
@@ -378,11 +494,13 @@ BTreeTupleIsPosting(IndexTuple itup)
 }
 
 static inline void
-BTreeTupleSetPosting(IndexTuple itup, int nhtids, int postingoffset)
+BTreeTupleSetPosting(IndexTuple itup, uint16 nhtids, int postingoffset)
 {
-	Assert(nhtids > 1 && (nhtids & BT_OFFSET_MASK) == nhtids);
+	Assert(nhtids > 1);
+	Assert((nhtids & BT_STATUS_OFFSET_MASK) == 0);
 	Assert((size_t) postingoffset == MAXALIGN(postingoffset));
 	Assert(postingoffset < INDEX_SIZE_MASK);
+	Assert(!BTreeTupleIsPivot(itup));
 
 	itup->t_info |= INDEX_ALT_TID_MASK;
 	ItemPointerSetOffsetNumber(&itup->t_tid, (nhtids | BT_IS_POSTING));
@@ -460,32 +578,28 @@ BTreeTupleSetDownLink(IndexTuple pivot, BlockNumber blkno)
 	)
 
 /*
- * Set number of attributes in tuple, making it into a pivot tuple
+ * Set number of key attributes in tuple.
+ *
+ * The heap TID tiebreaker attribute bit may also be set here, indicating that
+ * a heap TID value will be stored at the end of the tuple (i.e. using the
+ * special pivot tuple representation).
  */
 static inline void
-BTreeTupleSetNAtts(IndexTuple itup, int natts)
+BTreeTupleSetNAtts(IndexTuple itup, uint16 nkeyatts, bool heaptid)
 {
-	Assert(natts <= INDEX_MAX_KEYS);
+	Assert(nkeyatts <= INDEX_MAX_KEYS);
+	Assert((nkeyatts & BT_STATUS_OFFSET_MASK) == 0);
+	Assert(!heaptid || nkeyatts > 0);
+	Assert(!BTreeTupleIsPivot(itup) || nkeyatts == 0);
 
 	itup->t_info |= INDEX_ALT_TID_MASK;
-	/* BT_IS_POSTING bit may be unset -- tuple always becomes a pivot tuple */
-	ItemPointerSetOffsetNumber(&itup->t_tid, natts);
+
+	if (heaptid)
+		nkeyatts |= BT_PIVOT_HEAP_TID_ATTR;
+
+	/* BT_IS_POSTING bit is deliberately unset here */
+	ItemPointerSetOffsetNumber(&itup->t_tid, nkeyatts);
 	Assert(BTreeTupleIsPivot(itup));
-}
-
-/*
- * Set the bit indicating heap TID attribute present in pivot tuple
- */
-static inline void
-BTreeTupleSetAltHeapTID(IndexTuple pivot)
-{
-	OffsetNumber existing;
-
-	Assert(BTreeTupleIsPivot(pivot));
-
-	existing = ItemPointerGetOffsetNumberNoCheck(&pivot->t_tid);
-	ItemPointerSetOffsetNumber(&pivot->t_tid,
-							   existing | BT_PIVOT_HEAP_TID_ATTR);
 }
 
 /*
@@ -505,7 +619,7 @@ static inline void
 BTreeTupleSetTopParent(IndexTuple leafhikey, BlockNumber blkno)
 {
 	ItemPointerSetBlockNumber(&leafhikey->t_tid, blkno);
-	BTreeTupleSetNAtts(leafhikey, 0);
+	BTreeTupleSetNAtts(leafhikey, 0, false);
 }
 
 /*
@@ -587,7 +701,8 @@ BTreeTupleGetMaxHeapTID(IndexTuple itup)
 #define BTSORTSUPPORT_PROC	2
 #define BTINRANGE_PROC		3
 #define BTEQUALIMAGE_PROC	4
-#define BTNProcs			4
+#define BTOPTIONS_PROC		5
+#define BTNProcs			5
 
 /*
  *	We need to be able to tell the difference between read and write
@@ -749,6 +864,7 @@ typedef struct BTDedupStateData
 {
 	/* Deduplication status info for entire pass over page */
 	bool		deduplicate;	/* Still deduplicating page? */
+	int			nmaxitems;		/* Number of max-sized tuples so far */
 	Size		maxpostingsize; /* Limit on size of final tuple */
 
 	/* Metadata about base tuple of current pending posting list */
@@ -768,15 +884,16 @@ typedef struct BTDedupStateData
 	 * will not become posting list tuples do not appear in the array (they
 	 * are implicitly unchanged by deduplication pass).
 	 */
-	int			nintervals;		/* current size of intervals array */
+	int			nintervals;		/* current number of intervals in array */
 	BTDedupInterval intervals[MaxIndexTuplesPerPage];
 } BTDedupStateData;
 
 typedef BTDedupStateData *BTDedupState;
 
 /*
- * BTVacuumPostingData is state that represents how to VACUUM a posting list
- * tuple when some (though not all) of its TIDs are to be deleted.
+ * BTVacuumPostingData is state that represents how to VACUUM (or delete) a
+ * posting list tuple when some (though not all) of its TIDs are to be
+ * deleted.
  *
  * Convention is that itup field is the original posting list tuple on input,
  * and palloc()'d final tuple used to overwrite existing tuple on output.
@@ -898,7 +1015,7 @@ typedef BTScanPosData *BTScanPos;
 		(scanpos).buf = InvalidBuffer; \
 		(scanpos).lsn = InvalidXLogRecPtr; \
 		(scanpos).nextTupleOffset = 0; \
-	} while (0);
+	} while (0)
 
 /* We need one of these for each equality-type SK_SEARCHARRAY scan key */
 typedef struct BTArrayKeyInfo
@@ -969,8 +1086,7 @@ typedef struct BTOptions
 {
 	int32		varlena_header_;	/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
-	/* fraction of newly inserted tuples prior to trigger index cleanup */
-	float8		vacuum_cleanup_index_scale_factor;
+	float8		vacuum_cleanup_index_scale_factor;	/* deprecated */
 	bool		deduplicate_items;	/* Try to deduplicate items? */
 } BTOptions;
 
@@ -1005,6 +1121,7 @@ extern void btbuildempty(Relation index);
 extern bool btinsert(Relation rel, Datum *values, bool *isnull,
 					 ItemPointer ht_ctid, Relation heapRel,
 					 IndexUniqueCheck checkUnique,
+					 bool indexUnchanged,
 					 struct IndexInfo *indexInfo);
 extern IndexScanDesc btbeginscan(Relation rel, int nkeys, int norderbys);
 extern Size btestimateparallelscan(void);
@@ -1036,9 +1153,11 @@ extern void _bt_parallel_advance_array_keys(IndexScanDesc scan);
 /*
  * prototypes for functions in nbtdedup.c
  */
-extern void _bt_dedup_one_page(Relation rel, Buffer buf, Relation heapRel,
-							   IndexTuple newitem, Size newitemsz,
-							   bool checkingunique);
+extern void _bt_dedup_pass(Relation rel, Buffer buf, Relation heapRel,
+						   IndexTuple newitem, Size newitemsz,
+						   bool checkingunique);
+extern bool _bt_bottomupdel_pass(Relation rel, Buffer buf, Relation heapRel,
+								 Size newitemsz);
 extern void _bt_dedup_start_pending(BTDedupState state, IndexTuple base,
 									OffsetNumber baseoff);
 extern bool _bt_dedup_save_htid(BTDedupState state, IndexTuple itup);
@@ -1053,14 +1172,15 @@ extern IndexTuple _bt_swap_posting(IndexTuple newitem, IndexTuple oposting,
  * prototypes for functions in nbtinsert.c
  */
 extern bool _bt_doinsert(Relation rel, IndexTuple itup,
-						 IndexUniqueCheck checkUnique, Relation heapRel);
+						 IndexUniqueCheck checkUnique, bool indexUnchanged,
+						 Relation heapRel);
 extern void _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack);
 extern Buffer _bt_getstackbuf(Relation rel, BTStack stack, BlockNumber child);
 
 /*
  * prototypes for functions in nbtsplitloc.c
  */
-extern OffsetNumber _bt_findsplitloc(Relation rel, Page page,
+extern OffsetNumber _bt_findsplitloc(Relation rel, Page origpage,
 									 OffsetNumber newitemoff, Size newitemsz, IndexTuple newitem,
 									 bool *newitemonleft);
 
@@ -1069,8 +1189,8 @@ extern OffsetNumber _bt_findsplitloc(Relation rel, Page page,
  */
 extern void _bt_initmetapage(Page page, BlockNumber rootbknum, uint32 level,
 							 bool allequalimage);
-extern void _bt_update_meta_cleanup_info(Relation rel,
-										 TransactionId oldestBtpoXact, float8 numHeapTuples);
+extern bool _bt_vacuum_needs_cleanup(Relation rel);
+extern void _bt_set_cleanup_info(Relation rel, BlockNumber num_delpages);
 extern void _bt_upgrademetapage(Page page);
 extern Buffer _bt_getroot(Relation rel, int access);
 extern Buffer _bt_gettrueroot(Relation rel);
@@ -1082,15 +1202,21 @@ extern Buffer _bt_getbuf(Relation rel, BlockNumber blkno, int access);
 extern Buffer _bt_relandgetbuf(Relation rel, Buffer obuf,
 							   BlockNumber blkno, int access);
 extern void _bt_relbuf(Relation rel, Buffer buf);
+extern void _bt_lockbuf(Relation rel, Buffer buf, int access);
+extern void _bt_unlockbuf(Relation rel, Buffer buf);
+extern bool _bt_conditionallockbuf(Relation rel, Buffer buf);
+extern void _bt_upgradelockbufcleanup(Relation rel, Buffer buf);
 extern void _bt_pageinit(Page page, Size size);
-extern bool _bt_page_recyclable(Page page);
 extern void _bt_delitems_vacuum(Relation rel, Buffer buf,
 								OffsetNumber *deletable, int ndeletable,
 								BTVacuumPosting *updatable, int nupdatable);
-extern void _bt_delitems_delete(Relation rel, Buffer buf,
-								OffsetNumber *deletable, int ndeletable,
-								Relation heapRel);
-extern int	_bt_pagedel(Relation rel, Buffer buf);
+extern void _bt_delitems_delete_check(Relation rel, Buffer buf,
+									  Relation heapRel,
+									  TM_IndexDeleteOp *delstate);
+extern void _bt_pagedel(Relation rel, Buffer leafbuf, BTVacState *vstate);
+extern void _bt_pendingfsm_init(Relation rel, BTVacState *vstate,
+								bool cleanuponly);
+extern void _bt_pendingfsm_finalize(Relation rel, BTVacState *vstate);
 
 /*
  * prototypes for functions in nbtsearch.c
@@ -1145,6 +1271,10 @@ extern bool _bt_allequalimage(Relation rel, bool debugmessage);
  * prototypes for functions in nbtvalidate.c
  */
 extern bool btvalidate(Oid opclassoid);
+extern void btadjustmembers(Oid opfamilyoid,
+							Oid opclassoid,
+							List *operators,
+							List *functions);
 
 /*
  * prototypes for functions in nbtsort.c

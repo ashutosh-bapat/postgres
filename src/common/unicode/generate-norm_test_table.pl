@@ -5,7 +5,7 @@
 #
 # NormalizationTest.txt is part of the Unicode Character Database.
 #
-# Copyright (c) 2000-2020, PostgreSQL Global Development Group
+# Copyright (c) 2000-2021, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -30,7 +30,7 @@ print $OUTPUT <<HEADER;
  * norm_test_table.h
  *	  Test strings for Unicode normalization.
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/common/unicode/norm_test_table.h
@@ -94,7 +94,8 @@ while (my $line = <$INPUT>)
 	my $nfkc_utf8   = codepoint_string_to_hex($nfkc);
 	my $nfkd_utf8   = codepoint_string_to_hex($nfkd);
 
-	print $OUTPUT "\t{ $linenum, { $source_utf8 }, { { $nfc_utf8 }, { $nfd_utf8 }, { $nfkc_utf8 }, { $nfkd_utf8 } } },\n";
+	print $OUTPUT
+	  "\t{ $linenum, { $source_utf8 }, { { $nfc_utf8 }, { $nfd_utf8 }, { $nfkc_utf8 }, { $nfkd_utf8 } } },\n";
 }
 
 # Output terminator entry
