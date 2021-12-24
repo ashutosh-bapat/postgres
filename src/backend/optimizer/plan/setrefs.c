@@ -53,6 +53,7 @@ typedef struct
 	int			num_vars;		/* number of plain Var tlist entries */
 	bool		has_ph_vars;	/* are there PlaceHolderVar entries? */
 	bool		has_non_vars;	/* are there other entries? */
+	bool		is_empty_side;	/* Is this side of join empty? */
 	tlist_vinfo vars[FLEXIBLE_ARRAY_MEMBER];	/* has num_vars entries */
 } indexed_tlist;
 
@@ -168,7 +169,7 @@ static void set_param_references(PlannerInfo *root, Plan *plan);
 static Node *convert_combining_aggrefs(Node *node, void *context);
 static void set_dummy_tlist_references(Plan *plan, int rtoffset);
 static indexed_tlist *build_tlist_index(List *tlist);
-static Var *search_indexed_tlist_for_var(Var *var,
+static Node *search_indexed_tlist_for_var(Var *var,
 										 indexed_tlist *itlist,
 										 int newvarno,
 										 int rtoffset,
@@ -2258,6 +2259,43 @@ fix_scan_expr_walker(Node *node, fix_scan_expr_context *context)
 }
 
 /*
+ * A result plan with FALSE gating won't emit any rows so consider it as empty.
+ * 
+ * A Result plan node with resconstqual has boolean false is considered to be
+ * a FALSE gating qual.
+ */
+static bool
+is_inner_empty(Plan *inner_plan)
+{
+	Node   *resconstqual = NULL;
+	Const  *cnst = NULL;
+
+	/*
+	 * Extract gating qual from Result node. The result plan may be burried
+	 * under Sort or Hash.
+	 */
+	if (IsA(inner_plan, Hash) || IsA(inner_plan, Sort))
+		inner_plan = inner_plan->lefttree;
+	if (!IsA(inner_plan, Result))
+		return false;
+	resconstqual = ((Result *) inner_plan)->resconstantqual;
+	
+	/* Get boolean constant from the qating qual */
+	if (!resconstqual)
+		return false;
+	if (IsA(resconstqual, List) && list_length((List *) resconstqual) == 1)
+		resconstqual = linitial((List *) resconstqual);
+	if (!IsA(resconstqual, Const) || exprType(resconstqual) != BOOLOID)
+		return false;
+	cnst = (Const *) resconstqual;
+	
+	if (cnst->constisnull || cnst->constvalue != BoolGetDatum(false))
+		return false;
+
+	return true;
+}
+
+/*
  * set_join_references
  *	  Modify the target list and quals of a join node to reference its
  *	  subplans, by setting the varnos to OUTER_VAR or INNER_VAR and setting
@@ -2275,6 +2313,16 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 
 	outer_itlist = build_tlist_index(outer_plan->targetlist);
 	inner_itlist = build_tlist_index(inner_plan->targetlist);
+
+	/*
+	 * TODO: all the is_inner_empty handling should bubble up from join
+	 * planning. This function should be used only for converting the inner
+	 * references into NULL references. 
+	 */
+	inner_itlist->is_empty_side = is_inner_empty(inner_plan);
+	join->inner_empty = inner_itlist->is_empty_side;
+	if (inner_itlist->is_empty_side)
+		elog(LOG, "found a join with empty inner side");
 
 	/*
 	 * First process the joinquals (including merge or hash clauses).  These
@@ -2782,7 +2830,7 @@ build_tlist_index_other_vars(List *tlist, int ignore_rel)
  * we haven't cleaned things up completely, and we have to settle for
  * allowing subset or superset matches.
  */
-static Var *
+static Node *
 search_indexed_tlist_for_var(Var *var, indexed_tlist *itlist,
 							 int newvarno, int rtoffset,
 							 NullingRelsMatch nrm_match)
@@ -2799,7 +2847,11 @@ search_indexed_tlist_for_var(Var *var, indexed_tlist *itlist,
 		if (vinfo->varno == varno && vinfo->varattno == varattno)
 		{
 			/* Found a match */
-			Var		   *newvar = copyVar(var);
+			Var	   *newvar;
+
+			if (newvarno == INNER_VAR && itlist->is_empty_side)
+				return (Node *) makeNullConst(var->vartype, var->vartypmod,
+									   var->varcollid);
 
 			/*
 			 * Assert that we kept all the nullingrels machinations straight.
@@ -2822,11 +2874,12 @@ search_indexed_tlist_for_var(Var *var, indexed_tlist *itlist,
 					bms_is_subset(vinfo->varnullingrels, var->varnullingrels) :
 					bms_equal(vinfo->varnullingrels, var->varnullingrels)));
 
+			newvar = copyVar(var);
 			newvar->varno = newvarno;
 			newvar->varattno = vinfo->resno;
 			if (newvar->varnosyn > 0)
 				newvar->varnosyn += rtoffset;
-			return newvar;
+			return (Node *) newvar;
 		}
 		vinfo++;
 	}
@@ -3028,7 +3081,7 @@ fix_join_expr(PlannerInfo *root,
 static Node *
 fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 {
-	Var		   *newvar;
+	Node   *newvar;
 
 	if (node == NULL)
 		return NULL;
@@ -3045,7 +3098,7 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 												  context->rtoffset,
 												  context->nrm_match);
 			if (newvar)
-				return (Node *) newvar;
+				return newvar;
 		}
 
 		/* then in the inner. */
@@ -3057,7 +3110,7 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 												  context->rtoffset,
 												  context->nrm_match);
 			if (newvar)
-				return (Node *) newvar;
+				return newvar;
 		}
 
 		/* If it's for acceptable_rel, adjust and return it */
@@ -3080,21 +3133,21 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 		/* See if the PlaceHolderVar has bubbled up from a lower plan node */
 		if (context->outer_itlist && context->outer_itlist->has_ph_vars)
 		{
-			newvar = search_indexed_tlist_for_phv(phv,
-												  context->outer_itlist,
-												  OUTER_VAR,
-												  context->nrm_match);
+			newvar = (Node *) search_indexed_tlist_for_phv(phv,
+														  context->outer_itlist,
+														  OUTER_VAR,
+														  context->nrm_match);
 			if (newvar)
-				return (Node *) newvar;
+				return newvar;
 		}
 		if (context->inner_itlist && context->inner_itlist->has_ph_vars)
 		{
-			newvar = search_indexed_tlist_for_phv(phv,
-												  context->inner_itlist,
-												  INNER_VAR,
-												  context->nrm_match);
+			newvar = (Node *) search_indexed_tlist_for_phv(phv,
+														  context->inner_itlist,
+														  INNER_VAR,
+														  context->nrm_match);
 			if (newvar)
-				return (Node *) newvar;
+				return newvar;
 		}
 
 		/* If not supplied by input plans, evaluate the contained expr */
@@ -3104,19 +3157,19 @@ fix_join_expr_mutator(Node *node, fix_join_expr_context *context)
 	/* Try matching more complex expressions too, if tlists have any */
 	if (context->outer_itlist && context->outer_itlist->has_non_vars)
 	{
-		newvar = search_indexed_tlist_for_non_var((Expr *) node,
+		newvar = (Node *) search_indexed_tlist_for_non_var((Expr *) node,
 												  context->outer_itlist,
 												  OUTER_VAR);
 		if (newvar)
-			return (Node *) newvar;
+			return newvar;
 	}
 	if (context->inner_itlist && context->inner_itlist->has_non_vars)
 	{
-		newvar = search_indexed_tlist_for_non_var((Expr *) node,
+		newvar = (Node *) search_indexed_tlist_for_non_var((Expr *) node,
 												  context->inner_itlist,
 												  INNER_VAR);
 		if (newvar)
-			return (Node *) newvar;
+			return newvar;
 	}
 	/* Special cases (apply only AFTER failing to match to lower tlist) */
 	if (IsA(node, Param))
@@ -3187,7 +3240,7 @@ fix_upper_expr(PlannerInfo *root,
 static Node *
 fix_upper_expr_mutator(Node *node, fix_upper_expr_context *context)
 {
-	Var		   *newvar;
+	Node *newvar;
 
 	if (node == NULL)
 		return NULL;
@@ -3202,7 +3255,7 @@ fix_upper_expr_mutator(Node *node, fix_upper_expr_context *context)
 											  context->nrm_match);
 		if (!newvar)
 			elog(ERROR, "variable not found in subplan target list");
-		return (Node *) newvar;
+		return newvar;
 	}
 	if (IsA(node, PlaceHolderVar))
 	{
@@ -3211,12 +3264,12 @@ fix_upper_expr_mutator(Node *node, fix_upper_expr_context *context)
 		/* See if the PlaceHolderVar has bubbled up from a lower plan node */
 		if (context->subplan_itlist->has_ph_vars)
 		{
-			newvar = search_indexed_tlist_for_phv(phv,
+			newvar = (Node *) search_indexed_tlist_for_phv(phv,
 												  context->subplan_itlist,
 												  context->newvarno,
 												  context->nrm_match);
 			if (newvar)
-				return (Node *) newvar;
+				return newvar;
 		}
 		/* If not supplied by input plan, evaluate the contained expr */
 		/* XXX can we assert something about phnullingrels? */
@@ -3225,11 +3278,11 @@ fix_upper_expr_mutator(Node *node, fix_upper_expr_context *context)
 	/* Try matching more complex expressions too, if tlist has any */
 	if (context->subplan_itlist->has_non_vars)
 	{
-		newvar = search_indexed_tlist_for_non_var((Expr *) node,
+		newvar = (Node *) search_indexed_tlist_for_non_var((Expr *) node,
 												  context->subplan_itlist,
 												  context->newvarno);
 		if (newvar)
-			return (Node *) newvar;
+			return newvar;
 	}
 	/* Special cases (apply only AFTER failing to match to lower tlist) */
 	if (IsA(node, Param))

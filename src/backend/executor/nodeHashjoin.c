@@ -124,6 +124,7 @@
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
 #include "miscadmin.h"
+#include "optimizer/optimizer.h"
 #include "pgstat.h"
 #include "utils/memutils.h"
 #include "utils/sharedtuplestore.h"
@@ -673,6 +674,17 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
+	if (node->join.inner_empty)
+	{
+		/*
+		 * The inner references have been replaced with NULL values. There
+		 * might be more opportunities for constant folding.
+		 */
+		node->join.plan.qual = castNode(List, eval_const_expressions(NULL, (Node *)node->join.plan.qual));
+		node->join.joinqual = castNode(List, eval_const_expressions(NULL, (Node *)node->join.joinqual));
+		node->hashclauses = castNode(List, eval_const_expressions(NULL, (Node *)node->hashclauses));
+		node->join.plan.targetlist = castNode(List, eval_const_expressions(NULL, (Node *)node->join.plan.targetlist));
+	}
 	/*
 	 * create state structure
 	 */
