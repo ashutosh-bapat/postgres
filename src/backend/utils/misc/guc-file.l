@@ -2,7 +2,7 @@
 /*
  * Scanner for the configuration file
  *
- * Copyright (c) 2000-2021, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2022, PostgreSQL Global Development Group
  *
  * src/backend/utils/misc/guc-file.l
  */
@@ -49,10 +49,10 @@ static sigjmp_buf *GUC_flex_fatal_jmp;
 static void FreeConfigVariable(ConfigVariable *item);
 
 static void record_config_file_error(const char *errmsg,
-						 const char *config_file,
-						 int lineno,
-						 ConfigVariable **head_p,
-						 ConfigVariable **tail_p);
+									 const char *config_file,
+									 int lineno,
+									 ConfigVariable **head_p,
+									 ConfigVariable **tail_p);
 
 static int	GUC_flex_fatal(const char *msg);
 
@@ -346,6 +346,8 @@ ProcessConfigFileInternal(GucContext context, bool applySettings, int elevel)
 			continue;
 		if (gconf->context < PGC_SIGHUP)
 		{
+			/* The removal can't be effective without a restart */
+			gconf->status |= GUC_PENDING_RESTART;
 			ereport(elevel,
 					(errcode(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
 					 errmsg("parameter \"%s\" cannot be changed without restarting the server",

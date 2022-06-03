@@ -3,7 +3,7 @@
  * pquery.c
  *	  POSTGRES process query command code
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -177,6 +177,9 @@ ProcessQuery(PlannedStmt *plan,
 				break;
 			case CMD_DELETE:
 				SetQueryCompletion(qc, CMDTAG_DELETE, queryDesc->estate->es_processed);
+				break;
+			case CMD_MERGE:
+				SetQueryCompletion(qc, CMDTAG_MERGE, queryDesc->estate->es_processed);
 				break;
 			default:
 				SetQueryCompletion(qc, CMDTAG_UNKNOWN, queryDesc->estate->es_processed);
@@ -480,7 +483,9 @@ PortalStart(Portal portal, ParamListInfo params,
 				 * We could remember the snapshot in portal->portalSnapshot,
 				 * but presently there seems no need to, as this code path
 				 * cannot be used for non-atomic execution.  Hence there can't
-				 * be any commit/abort that might destroy the snapshot.
+				 * be any commit/abort that might destroy the snapshot.  Since
+				 * we don't do that, there's also no need to force a
+				 * non-default nesting level for the snapshot.
 				 */
 
 				/*
@@ -1136,9 +1141,15 @@ PortalRunUtility(Portal portal, PlannedStmt *pstmt,
 			snapshot = RegisterSnapshot(snapshot);
 			portal->holdSnapshot = snapshot;
 		}
-		/* In any case, make the snapshot active and remember it in portal */
-		PushActiveSnapshot(snapshot);
-		/* PushActiveSnapshot might have copied the snapshot */
+
+		/*
+		 * In any case, make the snapshot active and remember it in portal.
+		 * Because the portal now references the snapshot, we must tell
+		 * snapmgr.c that the snapshot belongs to the portal's transaction
+		 * level, else we risk portalSnapshot becoming a dangling pointer.
+		 */
+		PushActiveSnapshotWithLevel(snapshot, portal->createLevel);
+		/* PushActiveSnapshotWithLevel might have copied the snapshot */
 		portal->portalSnapshot = GetActiveSnapshot();
 	}
 	else
@@ -1472,9 +1483,8 @@ PortalRunFetch(Portal portal,
  * DoPortalRunFetch
  *		Guts of PortalRunFetch --- the portal context is already set up
  *
- * count <= 0 is interpreted as a no-op: the destination gets started up
- * and shut down, but nothing else happens.  Also, count == FETCH_ALL is
- * interpreted as "all rows".  (cf FetchStmt.howMany)
+ * Here, count < 0 typically reverses the direction.  Also, count == FETCH_ALL
+ * is interpreted as "all rows".  (cf FetchStmt.howMany)
  *
  * Returns number of rows processed (suitable for use in result tag)
  */
@@ -1491,6 +1501,15 @@ DoPortalRunFetch(Portal portal,
 		   portal->strategy == PORTAL_ONE_MOD_WITH ||
 		   portal->strategy == PORTAL_UTIL_SELECT);
 
+	/*
+	 * Note: we disallow backwards fetch (including re-fetch of current row)
+	 * for NO SCROLL cursors, but we interpret that very loosely: you can use
+	 * any of the FetchDirection options, so long as the end result is to move
+	 * forwards by at least one row.  Currently it's sufficient to check for
+	 * NO SCROLL in DoPortalRewind() and in the forward == false path in
+	 * PortalRunSelect(); but someday we might prefer to account for that
+	 * restriction explicitly here.
+	 */
 	switch (fdirection)
 	{
 		case FETCH_FORWARD:
@@ -1668,6 +1687,20 @@ DoPortalRewind(Portal portal)
 {
 	QueryDesc  *queryDesc;
 
+	/*
+	 * No work is needed if we've not advanced nor attempted to advance the
+	 * cursor (and we don't want to throw a NO SCROLL error in this case).
+	 */
+	if (portal->atStart && !portal->atEnd)
+		return;
+
+	/* Otherwise, cursor must allow scrolling */
+	if (portal->cursorOptions & CURSOR_OPT_NO_SCROLL)
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("cursor can only scan forward"),
+				 errhint("Declare it with SCROLL option to enable backward scan.")));
+
 	/* Rewind holdStore, if we have one */
 	if (portal->holdStore)
 	{
@@ -1758,11 +1791,17 @@ EnsurePortalSnapshotExists(void)
 
 	/* Otherwise, we'd better have an active Portal */
 	portal = ActivePortal;
-	Assert(portal != NULL);
+	if (unlikely(portal == NULL))
+		elog(ERROR, "cannot execute SQL without an outer snapshot or portal");
 	Assert(portal->portalSnapshot == NULL);
 
-	/* Create a new snapshot and make it active */
-	PushActiveSnapshot(GetTransactionSnapshot());
-	/* PushActiveSnapshot might have copied the snapshot */
+	/*
+	 * Create a new snapshot, make it active, and remember it in portal.
+	 * Because the portal now references the snapshot, we must tell snapmgr.c
+	 * that the snapshot belongs to the portal's transaction level, else we
+	 * risk portalSnapshot becoming a dangling pointer.
+	 */
+	PushActiveSnapshotWithLevel(GetTransactionSnapshot(), portal->createLevel);
+	/* PushActiveSnapshotWithLevel might have copied the snapshot */
 	portal->portalSnapshot = GetActiveSnapshot();
 }

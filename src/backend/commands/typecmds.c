@@ -3,7 +3,7 @@
  * typecmds.c
  *	  Routines for SQL commands that manipulate types (and domains).
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -495,7 +495,7 @@ DefineType(ParseState *pstate, List *names, List *parameters)
 		analyzeOid = findTypeAnalyzeFunction(analyzeName, typoid);
 
 	/*
-	 * Likewise look up the subscripting procedure if any.  If it is not
+	 * Likewise look up the subscripting function if any.  If it is not
 	 * specified, but a typelem is specified, allow that if
 	 * raw_array_subscript_handler can be used.  (This is for backwards
 	 * compatibility; maybe someday we should throw an error instead.)
@@ -509,7 +509,7 @@ DefineType(ParseState *pstate, List *names, List *parameters)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("element type cannot be specified without a valid subscripting procedure")));
+					 errmsg("element type cannot be specified without a subscripting function")));
 	}
 
 	/*
@@ -837,7 +837,7 @@ DefineDomain(CreateDomainStmt *stmt)
 	analyzeProcedure = baseType->typanalyze;
 
 	/*
-	 * Domains don't need a subscript procedure, since they are not
+	 * Domains don't need a subscript function, since they are not
 	 * subscriptable on their own.  If the base type is subscriptable, the
 	 * parser will reduce the type to the base type before subscripting.
 	 */
@@ -1707,7 +1707,6 @@ DefineRange(ParseState *pstate, CreateRangeStmt *stmt)
 	/* Create cast from the range type to its multirange type */
 	CastCreate(typoid, multirangeOid, castFuncOid, 'e', 'f', DEPENDENCY_INTERNAL);
 
-	pfree(multirangeTypeName);
 	pfree(multirangeArrayName);
 
 	return address;
@@ -1896,10 +1895,10 @@ makeMultirangeConstructors(const char *name, Oid namespace,
 	allParamTypes = ObjectIdGetDatum(rangeArrayOid);
 	allParameterTypes = construct_array(&allParamTypes,
 										1, OIDOID,
-										sizeof(Oid), true, 'i');
+										sizeof(Oid), true, TYPALIGN_INT);
 	paramModes = CharGetDatum(FUNC_PARAM_VARIADIC);
 	parameterModes = construct_array(&paramModes, 1, CHAROID,
-									 1, true, 'c');
+									 1, true, TYPALIGN_CHAR);
 	myself = ProcedureCreate(name,	/* name: same as multirange type */
 							 namespace,
 							 false, /* replace */
@@ -2675,6 +2674,7 @@ AlterDomainDefault(List *names, Node *defaultRaw)
 							 0, /* relation kind is n/a */
 							 false, /* a domain isn't an implicit array */
 							 false, /* nor is it any kind of dependent type */
+							 false, /* don't touch extension membership */
 							 true); /* We do need to rebuild dependencies */
 
 	InvokeObjectPostAlterHook(TypeRelationId, domainoid, 0);
@@ -3545,6 +3545,8 @@ domainAddConstraint(Oid domainOid, Oid domainNamespace, Oid baseTypeOid,
 							  0,
 							  ' ',
 							  ' ',
+							  NULL,
+							  0,
 							  ' ',
 							  NULL, /* not an exclusion constraint */
 							  expr, /* Tree form of check constraint */
@@ -4415,6 +4417,7 @@ AlterTypeRecurse(Oid typeOid, bool isImplicitArray,
 							 0, /* we rejected composite types above */
 							 isImplicitArray,	/* it might be an array */
 							 isImplicitArray,	/* dependent iff it's array */
+							 false, /* don't touch extension membership */
 							 true);
 
 	InvokeObjectPostAlterHook(TypeRelationId, typeOid, 0);

@@ -3,7 +3,7 @@
  * parse_agg.c
  *	  handle aggregates and window functions in parser
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -434,6 +434,13 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 		case EXPR_KIND_UPDATE_TARGET:
 			errkind = true;
 			break;
+		case EXPR_KIND_MERGE_WHEN:
+			if (isAgg)
+				err = _("aggregate functions are not allowed in MERGE WHEN conditions");
+			else
+				err = _("grouping operations are not allowed in MERGE WHEN conditions");
+
+			break;
 		case EXPR_KIND_GROUP_BY:
 			errkind = true;
 			break;
@@ -627,13 +634,8 @@ check_agg_arguments(ParseState *pstate,
 	context.min_agglevel = -1;
 	context.sublevels_up = 0;
 
-	(void) expression_tree_walker((Node *) args,
-								  check_agg_arguments_walker,
-								  (void *) &context);
-
-	(void) expression_tree_walker((Node *) filter,
-								  check_agg_arguments_walker,
-								  (void *) &context);
+	(void) check_agg_arguments_walker((Node *) args, &context);
+	(void) check_agg_arguments_walker((Node *) filter, &context);
 
 	/*
 	 * If we found no vars nor aggs at all, it's a level-zero aggregate;
@@ -680,9 +682,7 @@ check_agg_arguments(ParseState *pstate,
 	{
 		context.min_varlevel = -1;
 		context.min_agglevel = -1;
-		(void) expression_tree_walker((Node *) directargs,
-									  check_agg_arguments_walker,
-									  (void *) &context);
+		(void) check_agg_arguments_walker((Node *) directargs, &context);
 		if (context.min_varlevel >= 0 && context.min_varlevel < agglevel)
 			ereport(ERROR,
 					(errcode(ERRCODE_GROUPING_ERROR),
@@ -885,6 +885,9 @@ transformWindowFuncCall(ParseState *pstate, WindowFunc *wfunc,
 		case EXPR_KIND_UPDATE_SOURCE:
 		case EXPR_KIND_UPDATE_TARGET:
 			errkind = true;
+			break;
+		case EXPR_KIND_MERGE_WHEN:
+			err = _("window functions are not allowed in MERGE WHEN conditions");
 			break;
 		case EXPR_KIND_GROUP_BY:
 			errkind = true;

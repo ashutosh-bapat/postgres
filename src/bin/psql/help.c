@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2021, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2022, PostgreSQL Global Development Group
  *
  * src/bin/psql/help.c
  */
@@ -58,10 +58,7 @@ usage(unsigned short int pager)
 	{
 		user = get_user_name(&errstr);
 		if (!user)
-		{
-			pg_log_fatal("%s", errstr);
-			exit(EXIT_FAILURE);
-		}
+			pg_fatal("%s", errstr);
 	}
 
 	/*
@@ -166,17 +163,17 @@ slashUsage(unsigned short int pager)
 	 * Use "psql --help=commands | wc" to count correctly.  It's okay to count
 	 * the USE_READLINE line even in builds without that.
 	 */
-	output = PageOutput(135, pager ? &(pset.popt.topt) : NULL);
+	output = PageOutput(138, pager ? &(pset.popt.topt) : NULL);
 
 	fprintf(output, _("General\n"));
 	fprintf(output, _("  \\copyright             show PostgreSQL usage and distribution terms\n"));
-	fprintf(output, _("  \\crosstabview [COLUMNS] execute query and display results in crosstab\n"));
+	fprintf(output, _("  \\crosstabview [COLUMNS] execute query and display result in crosstab\n"));
 	fprintf(output, _("  \\errverbose            show most recent error message at maximum verbosity\n"));
-	fprintf(output, _("  \\g [(OPTIONS)] [FILE]  execute query (and send results to file or |pipe);\n"
+	fprintf(output, _("  \\g [(OPTIONS)] [FILE]  execute query (and send result to file or |pipe);\n"
 					  "                         \\g with no arguments is equivalent to a semicolon\n"));
 	fprintf(output, _("  \\gdesc                 describe result of query, without executing it\n"));
 	fprintf(output, _("  \\gexec                 execute query, then execute each value in its result\n"));
-	fprintf(output, _("  \\gset [PREFIX]         execute query and store results in psql variables\n"));
+	fprintf(output, _("  \\gset [PREFIX]         execute query and store result in psql variables\n"));
 	fprintf(output, _("  \\gx [(OPTIONS)] [FILE] as \\g, but forces expanded output mode\n"));
 	fprintf(output, _("  \\q                     quit psql\n"));
 	fprintf(output, _("  \\watch [SEC]           execute query every SEC seconds\n"));
@@ -231,13 +228,14 @@ slashUsage(unsigned short int pager)
 	fprintf(output, _("  \\dAp[+] [AMPTRN [OPFPTRN]]   list support functions of operator families\n"));
 	fprintf(output, _("  \\db[+]  [PATTERN]      list tablespaces\n"));
 	fprintf(output, _("  \\dc[S+] [PATTERN]      list conversions\n"));
+	fprintf(output, _("  \\dconfig[+] [PATTERN]  list configuration parameters\n"));
 	fprintf(output, _("  \\dC[+]  [PATTERN]      list casts\n"));
 	fprintf(output, _("  \\dd[S]  [PATTERN]      show object descriptions not displayed elsewhere\n"));
 	fprintf(output, _("  \\dD[S+] [PATTERN]      list domains\n"));
 	fprintf(output, _("  \\ddp    [PATTERN]      list default privileges\n"));
 	fprintf(output, _("  \\dE[S+] [PATTERN]      list foreign tables\n"));
-	fprintf(output, _("  \\det[+] [PATTERN]      list foreign tables\n"));
 	fprintf(output, _("  \\des[+] [PATTERN]      list foreign servers\n"));
+	fprintf(output, _("  \\det[+] [PATTERN]      list foreign tables\n"));
 	fprintf(output, _("  \\deu[+] [PATTERN]      list user mappings\n"));
 	fprintf(output, _("  \\dew[+] [PATTERN]      list foreign-data wrappers\n"));
 	fprintf(output, _("  \\df[anptw][S+] [FUNCPTRN [TYPEPTRN ...]]\n"
@@ -249,7 +247,7 @@ slashUsage(unsigned short int pager)
 	fprintf(output, _("  \\dg[S+] [PATTERN]      list roles\n"));
 	fprintf(output, _("  \\dG[S+] [PATTERN]      list property graphs\n"));
 	fprintf(output, _("  \\di[S+] [PATTERN]      list indexes\n"));
-	fprintf(output, _("  \\dl                    list large objects, same as \\lo_list\n"));
+	fprintf(output, _("  \\dl[+]                 list large objects, same as \\lo_list\n"));
 	fprintf(output, _("  \\dL[S+] [PATTERN]      list procedural languages\n"));
 	fprintf(output, _("  \\dm[S+] [PATTERN]      list materialized views\n"));
 	fprintf(output, _("  \\dn[S+] [PATTERN]      list schemas\n"));
@@ -258,7 +256,7 @@ slashUsage(unsigned short int pager)
 	fprintf(output, _("  \\dO[S+] [PATTERN]      list collations\n"));
 	fprintf(output, _("  \\dp     [PATTERN]      list table, view, and sequence access privileges\n"));
 	fprintf(output, _("  \\dP[itn+] [PATTERN]    list [only index/table] partitioned relations [n=nested]\n"));
-	fprintf(output, _("  \\drds [PATRN1 [PATRN2]] list per-database role settings\n"));
+	fprintf(output, _("  \\drds [ROLEPTRN [DBPTRN]] list per-database role settings\n"));
 	fprintf(output, _("  \\dRp[+] [PATTERN]      list replication publications\n"));
 	fprintf(output, _("  \\dRs[+] [PATTERN]      list replication subscriptions\n"));
 	fprintf(output, _("  \\ds[S+] [PATTERN]      list sequences\n"));
@@ -310,6 +308,7 @@ slashUsage(unsigned short int pager)
 
 	fprintf(output, _("Operating System\n"));
 	fprintf(output, _("  \\cd [DIR]              change the current working directory\n"));
+	fprintf(output, _("  \\getenv PSQLVAR ENVVAR fetch environment variable\n"));
 	fprintf(output, _("  \\setenv NAME [VALUE]   set or unset environment variable\n"));
 	fprintf(output, _("  \\timing [on|off]       toggle timing of commands (currently %s)\n"),
 			ON(pset.timing));
@@ -325,7 +324,7 @@ slashUsage(unsigned short int pager)
 	fprintf(output, _("Large Objects\n"));
 	fprintf(output, _("  \\lo_export LOBOID FILE\n"
 					  "  \\lo_import FILE [COMMENT]\n"
-					  "  \\lo_list\n"
+					  "  \\lo_list[+]\n"
 					  "  \\lo_unlink LOBOID      large object operations\n"));
 
 	ClosePager(output);
@@ -345,10 +344,10 @@ helpVariables(unsigned short int pager)
 	/*
 	 * Keep this line count in sync with the number of lines printed below!
 	 * Use "psql --help=variables | wc" to count correctly; but notice that
-	 * Windows builds currently print one more line than non-Windows builds.
+	 * Windows builds currently print one fewer line than non-Windows builds.
 	 * Using the larger number is fine.
 	 */
-	output = PageOutput(160, pager ? &(pset.popt.topt) : NULL);
+	output = PageOutput(161, pager ? &(pset.popt.topt) : NULL);
 
 	fprintf(output, _("List of specially treated variables\n\n"));
 
@@ -413,6 +412,8 @@ helpVariables(unsigned short int pager)
 	fprintf(output, _("  SERVER_VERSION_NAME\n"
 					  "  SERVER_VERSION_NUM\n"
 					  "    server's version (in short string or numeric format)\n"));
+	fprintf(output, _("  SHOW_ALL_RESULTS\n"
+					  "    show all results of a combined query (\\;) instead of only the last\n"));
 	fprintf(output, _("  SHOW_CONTEXT\n"
 					  "    controls display of message context fields [never, errors, always]\n"));
 	fprintf(output, _("  SINGLELINE\n"
@@ -693,7 +694,7 @@ print_copyright(void)
 {
 	puts("PostgreSQL Database Management System\n"
 		 "(formerly known as Postgres, then as Postgres95)\n\n"
-		 "Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group\n\n"
+		 "Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group\n\n"
 		 "Portions Copyright (c) 1994, The Regents of the University of California\n\n"
 		 "Permission to use, copy, modify, and distribute this software and its\n"
 		 "documentation for any purpose, without fee, and without a written agreement\n"

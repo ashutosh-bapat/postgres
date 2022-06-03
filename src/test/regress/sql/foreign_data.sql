@@ -2,6 +2,17 @@
 -- Test foreign-data wrapper and server management.
 --
 
+-- directory paths and dlsuffix are passed to us in environment variables
+\getenv libdir PG_LIBDIR
+\getenv dlsuffix PG_DLSUFFIX
+
+\set regresslib :libdir '/regress' :dlsuffix
+
+CREATE FUNCTION test_fdw_handler()
+    RETURNS fdw_handler
+    AS :'regresslib', 'test_fdw_handler'
+    LANGUAGE C;
+
 -- Clean up in case a prior regression run failed
 
 -- Suppress NOTICE messages when roles don't exist
@@ -59,6 +70,8 @@ CREATE FOREIGN DATA WRAPPER test_fdw HANDLER test_fdw_handler;
 DROP FOREIGN DATA WRAPPER test_fdw;
 
 -- ALTER FOREIGN DATA WRAPPER
+ALTER FOREIGN DATA WRAPPER foo OPTIONS (nonexistent 'fdw');         -- ERROR
+
 ALTER FOREIGN DATA WRAPPER foo;                             -- ERROR
 ALTER FOREIGN DATA WRAPPER foo VALIDATOR bar;               -- ERROR
 ALTER FOREIGN DATA WRAPPER foo NO VALIDATOR;

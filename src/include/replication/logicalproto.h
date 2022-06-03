@@ -3,7 +3,7 @@
  * logicalproto.h
  *		logical replication protocol
  *
- * Copyright (c) 2015-2021, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/include/replication/logicalproto.h
@@ -14,6 +14,7 @@
 #define LOGICAL_PROTO_H
 
 #include "access/xact.h"
+#include "executor/tuptable.h"
 #include "replication/reorderbuffer.h"
 #include "utils/rel.h"
 
@@ -65,9 +66,10 @@ typedef enum LogicalRepMsgType
 	LOGICAL_REP_MSG_COMMIT_PREPARED = 'K',
 	LOGICAL_REP_MSG_ROLLBACK_PREPARED = 'r',
 	LOGICAL_REP_MSG_STREAM_START = 'S',
-	LOGICAL_REP_MSG_STREAM_END = 'E',
+	LOGICAL_REP_MSG_STREAM_STOP = 'E',
 	LOGICAL_REP_MSG_STREAM_COMMIT = 'c',
-	LOGICAL_REP_MSG_STREAM_ABORT = 'A'
+	LOGICAL_REP_MSG_STREAM_ABORT = 'A',
+	LOGICAL_REP_MSG_STREAM_PREPARE = 'p'
 } LogicalRepMsgType;
 
 /*
@@ -196,23 +198,28 @@ extern void logicalrep_write_rollback_prepared(StringInfo out, ReorderBufferTXN 
 											   TimestampTz prepare_time);
 extern void logicalrep_read_rollback_prepared(StringInfo in,
 											  LogicalRepRollbackPreparedTxnData *rollback_data);
-
+extern void logicalrep_write_stream_prepare(StringInfo out, ReorderBufferTXN *txn,
+											XLogRecPtr prepare_lsn);
+extern void logicalrep_read_stream_prepare(StringInfo in,
+										   LogicalRepPreparedTxnData *prepare_data);
 
 extern void logicalrep_write_origin(StringInfo out, const char *origin,
 									XLogRecPtr origin_lsn);
 extern char *logicalrep_read_origin(StringInfo in, XLogRecPtr *origin_lsn);
 extern void logicalrep_write_insert(StringInfo out, TransactionId xid,
-									Relation rel, HeapTuple newtuple,
-									bool binary);
+									Relation rel,
+									TupleTableSlot *newslot,
+									bool binary, Bitmapset *columns);
 extern LogicalRepRelId logicalrep_read_insert(StringInfo in, LogicalRepTupleData *newtup);
 extern void logicalrep_write_update(StringInfo out, TransactionId xid,
-									Relation rel, HeapTuple oldtuple,
-									HeapTuple newtuple, bool binary);
+									Relation rel,
+									TupleTableSlot *oldslot,
+									TupleTableSlot *newslot, bool binary, Bitmapset *columns);
 extern LogicalRepRelId logicalrep_read_update(StringInfo in,
 											  bool *has_oldtuple, LogicalRepTupleData *oldtup,
 											  LogicalRepTupleData *newtup);
 extern void logicalrep_write_delete(StringInfo out, TransactionId xid,
-									Relation rel, HeapTuple oldtuple,
+									Relation rel, TupleTableSlot *oldtuple,
 									bool binary);
 extern LogicalRepRelId logicalrep_read_delete(StringInfo in,
 											  LogicalRepTupleData *oldtup);
@@ -224,7 +231,7 @@ extern List *logicalrep_read_truncate(StringInfo in,
 extern void logicalrep_write_message(StringInfo out, TransactionId xid, XLogRecPtr lsn,
 									 bool transactional, const char *prefix, Size sz, const char *message);
 extern void logicalrep_write_rel(StringInfo out, TransactionId xid,
-								 Relation rel);
+								 Relation rel, Bitmapset *columns);
 extern LogicalRepRelation *logicalrep_read_rel(StringInfo in);
 extern void logicalrep_write_typ(StringInfo out, TransactionId xid,
 								 Oid typoid);
@@ -242,5 +249,6 @@ extern void logicalrep_write_stream_abort(StringInfo out, TransactionId xid,
 										  TransactionId subxid);
 extern void logicalrep_read_stream_abort(StringInfo in, TransactionId *xid,
 										 TransactionId *subxid);
+extern char *logicalrep_message_type(LogicalRepMsgType action);
 
 #endif							/* LOGICAL_PROTO_H */

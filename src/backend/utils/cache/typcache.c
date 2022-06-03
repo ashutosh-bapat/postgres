@@ -31,7 +31,7 @@
  * constraint changes are also tracked properly.
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -1515,14 +1515,17 @@ cache_record_field_properties(TypeCacheEntry *typentry)
 	/*
 	 * For type RECORD, we can't really tell what will work, since we don't
 	 * have access here to the specific anonymous type.  Just assume that
-	 * everything will (we may get a failure at runtime ...)
+	 * equality and comparison will (we may get a failure at runtime).  We
+	 * could also claim that hashing works, but then if code that has the
+	 * option between a comparison-based (sort-based) and a hash-based plan
+	 * chooses hashing, stuff could fail that would otherwise work if it chose
+	 * a comparison-based plan.  In practice more types support comparison
+	 * than hashing.
 	 */
 	if (typentry->type_id == RECORDOID)
 	{
 		typentry->flags |= (TCFLAGS_HAVE_FIELD_EQUALITY |
-							TCFLAGS_HAVE_FIELD_COMPARE |
-							TCFLAGS_HAVE_FIELD_HASHING |
-							TCFLAGS_HAVE_FIELD_EXTENDED_HASHING);
+							TCFLAGS_HAVE_FIELD_COMPARE);
 	}
 	else if (typentry->typtype == TYPTYPE_COMPOSITE)
 	{
@@ -1817,8 +1820,11 @@ lookup_rowtype_tupdesc_internal(Oid type_id, int32 typmod, bool noError)
  * for example from record_in().)
  *
  * Note: on success, we increment the refcount of the returned TupleDesc,
- * and log the reference in CurrentResourceOwner.  Caller should call
- * ReleaseTupleDesc or DecrTupleDescRefCount when done using the tupdesc.
+ * and log the reference in CurrentResourceOwner.  Caller must call
+ * ReleaseTupleDesc when done using the tupdesc.  (There are some
+ * cases in which the returned tupdesc is not refcounted, in which
+ * case PinTupleDesc/ReleaseTupleDesc are no-ops; but in these cases
+ * the tupdesc is guaranteed to live till process exit.)
  */
 TupleDesc
 lookup_rowtype_tupdesc(Oid type_id, int32 typmod)

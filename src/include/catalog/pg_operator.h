@@ -4,7 +4,7 @@
  *	  definition of the "operator" system catalog (pg_operator)
  *
  *
- * Portions Copyright (c) 1996-2021, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_operator.h
@@ -98,7 +98,9 @@ extern ObjectAddress OperatorCreate(const char *operatorName,
 									bool canMerge,
 									bool canHash);
 
-extern ObjectAddress makeOperatorDependencies(HeapTuple tuple, bool isUpdate);
+extern ObjectAddress makeOperatorDependencies(HeapTuple tuple,
+											  bool makeExtensionDep,
+											  bool isUpdate);
 
 extern void OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete);
 
