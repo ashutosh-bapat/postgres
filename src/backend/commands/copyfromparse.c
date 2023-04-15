@@ -47,7 +47,7 @@
  * and 'attribute_buf' are expanded on demand, to hold the longest line
  * encountered so far.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -444,7 +444,7 @@ CopyConvertBuf(CopyFromState cstate)
 			 * least one character, and a failure to do so means that we've
 			 * hit an invalid byte sequence.
 			 */
-			if (cstate->raw_reached_eof || unverifiedlen >= pg_database_encoding_max_length())
+			if (cstate->raw_reached_eof || unverifiedlen >= pg_encoding_max_length(cstate->file_encoding))
 				cstate->input_reached_error = true;
 			return;
 		}
@@ -782,18 +782,19 @@ NextCopyFromRawFields(CopyFromState cstate, char ***fields, int *nfields)
 			if (fldct != list_length(cstate->attnumlist))
 				ereport(ERROR,
 						(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
-						 errmsg("wrong number of fields in header line: field count is %d, expected %d",
+						 errmsg("wrong number of fields in header line: got %d, expected %d",
 								fldct, list_length(cstate->attnumlist))));
 
 			fldnum = 0;
 			foreach(cur, cstate->attnumlist)
 			{
 				int			attnum = lfirst_int(cur);
-				char	   *colName = cstate->raw_fields[attnum - 1];
+				char	   *colName;
 				Form_pg_attribute attr = TupleDescAttr(tupDesc, attnum - 1);
 
-				fldnum++;
+				Assert(fldnum < cstate->max_fields);
 
+				colName = cstate->raw_fields[fldnum++];
 				if (colName == NULL)
 					ereport(ERROR,
 							(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
@@ -841,9 +842,10 @@ NextCopyFromRawFields(CopyFromState cstate, char ***fields, int *nfields)
 /*
  * Read next tuple from file for COPY FROM. Return false if no more tuples.
  *
- * 'econtext' is used to evaluate default expression for each columns not
- * read from the file. It can be NULL when no default values are used, i.e.
- * when all columns are read from the file.
+ * 'econtext' is used to evaluate default expression for each column that is
+ * either not read from the file or is using the DEFAULT option of COPY FROM.
+ * It can be NULL when no default values are used, i.e. when all columns are
+ * read from the file, and DEFAULT option is unset.
  *
  * 'values' and 'nulls' arrays must be the same length as columns of the
  * relation passed to BeginCopyFrom. This function fills the arrays.
@@ -869,6 +871,7 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 	/* Initialize all values for row to NULL */
 	MemSet(values, 0, num_phys_attrs * sizeof(Datum));
 	MemSet(nulls, true, num_phys_attrs * sizeof(bool));
+	cstate->defaults = (bool *) palloc0(num_phys_attrs * sizeof(bool));
 
 	if (!cstate->opts.binary)
 	{
@@ -937,12 +940,27 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 
 			cstate->cur_attname = NameStr(att->attname);
 			cstate->cur_attval = string;
-			values[m] = InputFunctionCall(&in_functions[m],
-										  string,
-										  typioparams[m],
-										  att->atttypmod);
+
 			if (string != NULL)
 				nulls[m] = false;
+
+			if (cstate->defaults[m])
+			{
+				/*
+				 * The caller must supply econtext and have switched into the
+				 * per-tuple memory context in it.
+				 */
+				Assert(econtext != NULL);
+				Assert(CurrentMemoryContext == econtext->ecxt_per_tuple_memory);
+
+				values[m] = ExecEvalExpr(defexprs[m], econtext, &nulls[m]);
+			}
+			else
+				values[m] = InputFunctionCall(&in_functions[m],
+											  string,
+											  typioparams[m],
+											  att->atttypmod);
+
 			cstate->cur_attname = NULL;
 			cstate->cur_attval = NULL;
 		}
@@ -1018,9 +1036,11 @@ NextCopyFrom(CopyFromState cstate, ExprContext *econtext,
 		Assert(econtext != NULL);
 		Assert(CurrentMemoryContext == econtext->ecxt_per_tuple_memory);
 
-		values[defmap[i]] = ExecEvalExpr(defexprs[i], econtext,
+		values[defmap[i]] = ExecEvalExpr(defexprs[defmap[i]], econtext,
 										 &nulls[defmap[i]]);
 	}
+
+	pfree(cstate->defaults);
 
 	return true;
 }
@@ -1172,14 +1192,12 @@ CopyReadLineText(CopyFromState cstate)
 		char		c;
 
 		/*
-		 * Load more data if needed.  Ideally we would just force four bytes
-		 * of read-ahead and avoid the many calls to
-		 * IF_NEED_REFILL_AND_NOT_EOF_CONTINUE(), but the COPY_OLD_FE protocol
-		 * does not allow us to read too far ahead or we might read into the
-		 * next data, so we read-ahead only as far we know we can.  One
-		 * optimization would be to read-ahead four byte here if
-		 * cstate->copy_src != COPY_OLD_FE, but it hardly seems worth it,
-		 * considering the size of the buffer.
+		 * Load more data if needed.
+		 *
+		 * TODO: We could just force four bytes of read-ahead and avoid the
+		 * many calls to IF_NEED_REFILL_AND_NOT_EOF_CONTINUE().  That was
+		 * unsafe with the old v2 COPY protocol, but we don't support that
+		 * anymore.
 		 */
 		if (input_buf_ptr >= copy_buf_len || need_data)
 		{
@@ -1214,9 +1232,6 @@ CopyReadLineText(CopyFromState cstate)
 			 * Force fetch of the next character if we don't already have it.
 			 * We need to do this before changing CSV state, in case one of
 			 * these characters is also the quote or escape character.
-			 *
-			 * Note: old-protocol does not like forced prefetch, but it's OK
-			 * here since we cannot validly be at EOF.
 			 */
 			if (c == '\\' || c == '\r')
 			{
@@ -1667,6 +1682,32 @@ CopyReadAttributesText(CopyFromState cstate)
 		if (input_len == cstate->opts.null_print_len &&
 			strncmp(start_ptr, cstate->opts.null_print, input_len) == 0)
 			cstate->raw_fields[fieldno] = NULL;
+		/* Check whether raw input matched default marker */
+		else if (fieldno < list_length(cstate->attnumlist) &&
+				 cstate->opts.default_print &&
+				 input_len == cstate->opts.default_print_len &&
+				 strncmp(start_ptr, cstate->opts.default_print, input_len) == 0)
+		{
+			/* fieldno is 0-indexed and attnum is 1-indexed */
+			int			m = list_nth_int(cstate->attnumlist, fieldno) - 1;
+
+			if (cstate->defexprs[m] != NULL)
+			{
+				/* defaults contain entries for all physical attributes */
+				cstate->defaults[m] = true;
+			}
+			else
+			{
+				TupleDesc	tupDesc = RelationGetDescr(cstate->rel);
+				Form_pg_attribute att = TupleDescAttr(tupDesc, m);
+
+				ereport(ERROR,
+						(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
+						 errmsg("unexpected DEFAULT in COPY data"),
+						 errdetail("Column \"%s\" has no DEFAULT value.",
+								   NameStr(att->attname))));
+			}
+		}
 		else
 		{
 			/*
@@ -1856,6 +1897,32 @@ endfield:
 		if (!saw_quote && input_len == cstate->opts.null_print_len &&
 			strncmp(start_ptr, cstate->opts.null_print, input_len) == 0)
 			cstate->raw_fields[fieldno] = NULL;
+		/* Check whether raw input matched default marker */
+		else if (fieldno < list_length(cstate->attnumlist) &&
+				 cstate->opts.default_print &&
+				 input_len == cstate->opts.default_print_len &&
+				 strncmp(start_ptr, cstate->opts.default_print, input_len) == 0)
+		{
+			/* fieldno is 0-index and attnum is 1-index */
+			int			m = list_nth_int(cstate->attnumlist, fieldno) - 1;
+
+			if (cstate->defexprs[m] != NULL)
+			{
+				/* defaults contain entries for all physical attributes */
+				cstate->defaults[m] = true;
+			}
+			else
+			{
+				TupleDesc	tupDesc = RelationGetDescr(cstate->rel);
+				Form_pg_attribute att = TupleDescAttr(tupDesc, m);
+
+				ereport(ERROR,
+						(errcode(ERRCODE_BAD_COPY_FILE_FORMAT),
+						 errmsg("unexpected DEFAULT in COPY data"),
+						 errdetail("Column \"%s\" has no DEFAULT value.",
+								   NameStr(att->attname))));
+			}
+		}
 
 		fieldno++;
 		/* Done if we hit EOL instead of a delim */

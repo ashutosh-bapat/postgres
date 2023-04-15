@@ -8,7 +8,7 @@
  * and only the receiver may receive.  This is intended to allow a user
  * backend to communicate with worker backends that it has registered.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/storage/ipc/shm_mq.c
@@ -518,8 +518,7 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait,
 
 	/*
 	 * If the counterparty is known to have attached, we can read mq_receiver
-	 * without acquiring the spinlock and assume it isn't NULL.  Otherwise,
-	 * more caution is needed.
+	 * without acquiring the spinlock.  Otherwise, more caution is needed.
 	 */
 	if (mqh->mqh_counterparty_attached)
 		receiver = mq->mq_receiver;
@@ -528,9 +527,8 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait,
 		SpinLockAcquire(&mq->mq_mutex);
 		receiver = mq->mq_receiver;
 		SpinLockRelease(&mq->mq_mutex);
-		if (receiver == NULL)
-			return SHM_MQ_SUCCESS;
-		mqh->mqh_counterparty_attached = true;
+		if (receiver != NULL)
+			mqh->mqh_counterparty_attached = true;
 	}
 
 	/*
@@ -541,7 +539,8 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait,
 	if (force_flush || mqh->mqh_send_pending > (mq->mq_ring_size >> 2))
 	{
 		shm_mq_inc_bytes_written(mq, mqh->mqh_send_pending);
-		SetLatch(&receiver->procLatch);
+		if (receiver != NULL)
+			SetLatch(&receiver->procLatch);
 		mqh->mqh_send_pending = 0;
 	}
 

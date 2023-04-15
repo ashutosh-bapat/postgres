@@ -63,7 +63,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		char	   *aliasname;
 		int2vector *iv;
 
-		relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
+		relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
 
 		rel = table_open(relid, NoLock);
 
@@ -163,7 +163,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		char	   *aliasname;
 		int2vector *iv;
 
-		relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsTable, NULL);
+		relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
 
 		rel = table_open(relid, NoLock);
 

@@ -34,7 +34,7 @@
  * happen, it would tie up KnownAssignedXids indefinitely, so we protect
  * ourselves by pruning the array when a valid list of running XIDs arrives.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -58,6 +58,7 @@
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "port/pg_lfind.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/spin.h"
@@ -256,10 +257,26 @@ typedef enum GlobalVisHorizonKind
 	VISHORIZON_TEMP
 } GlobalVisHorizonKind;
 
+/*
+ * Reason codes for KnownAssignedXidsCompress().
+ */
+typedef enum KAXCompressReason
+{
+	KAX_NO_SPACE,				/* need to free up space at array end */
+	KAX_PRUNE,					/* we just pruned old entries */
+	KAX_TRANSACTION_END,		/* we just committed/removed some XIDs */
+	KAX_STARTUP_PROCESS_IDLE	/* startup process is about to sleep */
+} KAXCompressReason;
+
 
 static ProcArrayStruct *procArray;
 
 static PGPROC *allProcs;
+
+/*
+ * Cache to reduce overhead of repeated calls to TransactionIdIsInProgress()
+ */
+static TransactionId cachedXidIsNotInProgress = InvalidTransactionId;
 
 /*
  * Bookkeeping for tracking emulated transactions in recovery
@@ -330,7 +347,7 @@ static void DisplayXidCache(void);
 #endif							/* XIDCACHE_DEBUG */
 
 /* Primitives for KnownAssignedXids array handling for standby */
-static void KnownAssignedXidsCompress(bool force);
+static void KnownAssignedXidsCompress(KAXCompressReason reason, bool haveLock);
 static void KnownAssignedXidsAdd(TransactionId from_xid, TransactionId to_xid,
 								 bool exclusive_lock);
 static bool KnownAssignedXidsSearch(TransactionId xid, bool remove);
@@ -338,7 +355,7 @@ static bool KnownAssignedXidExists(TransactionId xid);
 static void KnownAssignedXidsRemove(TransactionId xid);
 static void KnownAssignedXidsRemoveTree(TransactionId xid, int nsubxids,
 										TransactionId *subxids);
-static void KnownAssignedXidsRemovePreceding(TransactionId xid);
+static void KnownAssignedXidsRemovePreceding(TransactionId removeXid);
 static int	KnownAssignedXidsGet(TransactionId *xarray, TransactionId xmax);
 static int	KnownAssignedXidsGetAndSetXmin(TransactionId *xarray,
 										   TransactionId *xmin,
@@ -350,6 +367,9 @@ static inline void ProcArrayEndTransactionInternal(PGPROC *proc, TransactionId l
 static void ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid);
 static void MaintainLatestCompletedXid(TransactionId latestXid);
 static void MaintainLatestCompletedXidRecovery(TransactionId latestXid);
+static void TransactionIdRetreatSafely(TransactionId *xid,
+									   int retreat_by,
+									   FullTransactionId rel);
 
 static inline FullTransactionId FullXidRelativeTo(FullTransactionId rel,
 												  TransactionId xid);
@@ -1396,7 +1416,7 @@ TransactionIdIsInProgress(TransactionId xid)
 	 * already known to be completed, we can fall out without any access to
 	 * shared memory.
 	 */
-	if (TransactionIdIsKnownCompleted(xid))
+	if (TransactionIdEquals(cachedXidIsNotInProgress, xid))
 	{
 		xc_by_known_xact_inc();
 		return false;
@@ -1554,6 +1574,7 @@ TransactionIdIsInProgress(TransactionId xid)
 	if (nxids == 0)
 	{
 		xc_no_overflow_inc();
+		cachedXidIsNotInProgress = xid;
 		return false;
 	}
 
@@ -1568,7 +1589,10 @@ TransactionIdIsInProgress(TransactionId xid)
 	xc_slow_answer_inc();
 
 	if (TransactionIdDidAbort(xid))
+	{
+		cachedXidIsNotInProgress = xid;
 		return false;
+	}
 
 	/*
 	 * It isn't aborted, so check whether the transaction tree it belongs to
@@ -1577,15 +1601,11 @@ TransactionIdIsInProgress(TransactionId xid)
 	 */
 	topxid = SubTransGetTopmostTransaction(xid);
 	Assert(TransactionIdIsValid(topxid));
-	if (!TransactionIdEquals(topxid, xid))
-	{
-		for (int i = 0; i < nxids; i++)
-		{
-			if (TransactionIdEquals(xids[i], topxid))
-				return true;
-		}
-	}
+	if (!TransactionIdEquals(topxid, xid) &&
+		pg_lfind32(topxid, xids, nxids))
+		return true;
 
+	cachedXidIsNotInProgress = xid;
 	return false;
 }
 
@@ -1659,13 +1679,7 @@ TransactionIdIsActive(TransactionId xid)
  * relations that's not required, since only backends in my own database could
  * ever see the tuples in them. Also, we can ignore concurrently running lazy
  * VACUUMs because (a) they must be working on other tables, and (b) they
- * don't need to do snapshot-based lookups.  Similarly, for the non-catalog
- * horizon, we can ignore CREATE INDEX CONCURRENTLY and REINDEX CONCURRENTLY
- * when they are working on non-partial, non-expressional indexes, for the
- * same reasons and because they can't run in transaction blocks.  (They are
- * not possible to ignore for catalogs, because CIC and RC do some catalog
- * operations.)  Do note that this means that CIC and RC must use a lock level
- * that conflicts with VACUUM.
+ * don't need to do snapshot-based lookups.
  *
  * This also computes a horizon used to truncate pg_subtrans. For that
  * backends in all databases have to be considered, and concurrently running
@@ -1715,6 +1729,9 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 	bool		in_recovery = RecoveryInProgress();
 	TransactionId *other_xids = ProcGlobal->xids;
 
+	/* inferred after ProcArrayLock is released */
+	h->catalog_oldest_nonremovable = InvalidTransactionId;
+
 	LWLockAcquire(ProcArrayLock, LW_SHARED);
 
 	h->latest_completed = ShmemVariableCache->latestCompletedXid;
@@ -1734,7 +1751,6 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 
 		h->oldest_considered_running = initial;
 		h->shared_oldest_nonremovable = initial;
-		h->catalog_oldest_nonremovable = initial;
 		h->data_oldest_nonremovable = initial;
 
 		/*
@@ -1833,24 +1849,10 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 			(statusFlags & PROC_AFFECTS_ALL_HORIZONS) ||
 			in_recovery)
 		{
-			/*
-			 * We can ignore this backend if it's running CREATE INDEX
-			 * CONCURRENTLY or REINDEX CONCURRENTLY on a "safe" index -- but
-			 * only on vacuums of user-defined tables.
-			 */
-			if (!(statusFlags & PROC_IN_SAFE_IC))
-				h->data_oldest_nonremovable =
-					TransactionIdOlder(h->data_oldest_nonremovable, xmin);
-
-			/* Catalog tables need to consider all backends in this db */
-			h->catalog_oldest_nonremovable =
-				TransactionIdOlder(h->catalog_oldest_nonremovable, xmin);
+			h->data_oldest_nonremovable =
+				TransactionIdOlder(h->data_oldest_nonremovable, xmin);
 		}
 	}
-
-	/* catalog horizon should never be later than data */
-	Assert(TransactionIdPrecedesOrEquals(h->catalog_oldest_nonremovable,
-										 h->data_oldest_nonremovable));
 
 	/*
 	 * If in recovery fetch oldest xid in KnownAssignedXids, will be applied
@@ -1873,8 +1875,6 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 			TransactionIdOlder(h->shared_oldest_nonremovable, kaxmin);
 		h->data_oldest_nonremovable =
 			TransactionIdOlder(h->data_oldest_nonremovable, kaxmin);
-		h->catalog_oldest_nonremovable =
-			TransactionIdOlder(h->catalog_oldest_nonremovable, kaxmin);
 		/* temp relations cannot be accessed in recovery */
 	}
 	else
@@ -1891,20 +1891,35 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 		 * so guc.c should limit it to no more than the xidStopLimit threshold
 		 * in varsup.c.  Also note that we intentionally don't apply
 		 * vacuum_defer_cleanup_age on standby servers.
+		 *
+		 * Need to use TransactionIdRetreatSafely() instead of open-coding the
+		 * subtraction, to prevent creating an xid before
+		 * FirstNormalTransactionId.
 		 */
-		h->oldest_considered_running =
-			TransactionIdRetreatedBy(h->oldest_considered_running,
-									 vacuum_defer_cleanup_age);
-		h->shared_oldest_nonremovable =
-			TransactionIdRetreatedBy(h->shared_oldest_nonremovable,
-									 vacuum_defer_cleanup_age);
-		h->data_oldest_nonremovable =
-			TransactionIdRetreatedBy(h->data_oldest_nonremovable,
-									 vacuum_defer_cleanup_age);
-		h->catalog_oldest_nonremovable =
-			TransactionIdRetreatedBy(h->catalog_oldest_nonremovable,
-									 vacuum_defer_cleanup_age);
-		/* defer doesn't apply to temp relations */
+		Assert(TransactionIdPrecedesOrEquals(h->oldest_considered_running,
+											 h->shared_oldest_nonremovable));
+		Assert(TransactionIdPrecedesOrEquals(h->shared_oldest_nonremovable,
+											 h->data_oldest_nonremovable));
+
+		if (vacuum_defer_cleanup_age > 0)
+		{
+			TransactionIdRetreatSafely(&h->oldest_considered_running,
+									   vacuum_defer_cleanup_age,
+									   h->latest_completed);
+			TransactionIdRetreatSafely(&h->shared_oldest_nonremovable,
+									   vacuum_defer_cleanup_age,
+									   h->latest_completed);
+			TransactionIdRetreatSafely(&h->data_oldest_nonremovable,
+									   vacuum_defer_cleanup_age,
+									   h->latest_completed);
+			/* defer doesn't apply to temp relations */
+
+
+			Assert(TransactionIdPrecedesOrEquals(h->oldest_considered_running,
+												 h->shared_oldest_nonremovable));
+			Assert(TransactionIdPrecedesOrEquals(h->shared_oldest_nonremovable,
+												 h->data_oldest_nonremovable));
+		}
 	}
 
 	/*
@@ -1926,9 +1941,7 @@ ComputeXidHorizons(ComputeXidHorizonsResult *h)
 	h->shared_oldest_nonremovable =
 		TransactionIdOlder(h->shared_oldest_nonremovable,
 						   h->slot_catalog_xmin);
-	h->catalog_oldest_nonremovable =
-		TransactionIdOlder(h->catalog_oldest_nonremovable,
-						   h->slot_xmin);
+	h->catalog_oldest_nonremovable = h->data_oldest_nonremovable;
 	h->catalog_oldest_nonremovable =
 		TransactionIdOlder(h->catalog_oldest_nonremovable,
 						   h->slot_catalog_xmin);
@@ -2402,7 +2415,7 @@ GetSnapshotData(Snapshot snapshot)
 						pg_read_barrier();	/* pairs with GetNewTransactionId */
 
 						memcpy(snapshot->subxip + subcount,
-							   (void *) proc->subxids.xids,
+							   proc->subxids.xids,
 							   nsubxids * sizeof(TransactionId));
 						subcount += nsubxids;
 					}
@@ -2428,7 +2441,7 @@ GetSnapshotData(Snapshot snapshot)
 		 * We could try to store xids into xip[] first and then into subxip[]
 		 * if there are too many xids. That only works if the snapshot doesn't
 		 * overflow because we do not search subxip[] in that case. A simpler
-		 * way is to just store all xids in the subxact array because this is
+		 * way is to just store all xids in the subxip array because this is
 		 * by far the bigger array. We just leave the xip array empty.
 		 *
 		 * Either way we need to change the way XidInMVCCSnapshot() works
@@ -2478,8 +2491,10 @@ GetSnapshotData(Snapshot snapshot)
 		oldestfxid = FullXidRelativeTo(latest_completed, oldestxid);
 
 		/* apply vacuum_defer_cleanup_age */
-		def_vis_xid_data =
-			TransactionIdRetreatedBy(xmin, vacuum_defer_cleanup_age);
+		def_vis_xid_data = xmin;
+		TransactionIdRetreatSafely(&def_vis_xid_data,
+								   vacuum_defer_cleanup_age,
+								   oldestfxid);
 
 		/* Check whether there's a replication slot requiring an older xmin. */
 		def_vis_xid_data =
@@ -2685,17 +2700,14 @@ ProcArrayInstallRestoredXmin(TransactionId xmin, PGPROC *proc)
 		TransactionIdIsNormal(xid) &&
 		TransactionIdPrecedesOrEquals(xid, xmin))
 	{
-		/* Install xmin */
+		/*
+		 * Install xmin and propagate the statusFlags that affect how the
+		 * value is interpreted by vacuum.
+		 */
 		MyProc->xmin = TransactionXmin = xmin;
-
-		/* walsender cheats by passing proc == MyProc, don't check its flags */
-		if (proc != MyProc)
-		{
-			/* Flags being copied must be valid copy-able flags. */
-			Assert((proc->statusFlags & (~PROC_COPYABLE_FLAGS)) == 0);
-			MyProc->statusFlags = proc->statusFlags;
-			ProcGlobal->statusFlags[MyProc->pgxactoff] = MyProc->statusFlags;
-		}
+		MyProc->statusFlags = (MyProc->statusFlags & ~PROC_XMIN_FLAGS) |
+			(proc->statusFlags & PROC_XMIN_FLAGS);
+		ProcGlobal->statusFlags[MyProc->pgxactoff] = MyProc->statusFlags;
 
 		result = true;
 	}
@@ -2857,7 +2869,7 @@ GetRunningTransactionData(void)
 				/* barrier not really required, as XidGenLock is held, but ... */
 				pg_read_barrier();	/* pairs with GetNewTransactionId */
 
-				memcpy(&xids[count], (void *) proc->subxids.xids,
+				memcpy(&xids[count], proc->subxids.xids,
 					   nsubxids * sizeof(TransactionId));
 				count += nsubxids;
 				subcount += nsubxids;
@@ -3359,12 +3371,17 @@ GetCurrentVirtualXIDs(TransactionId limitXmin, bool excludeXmin0,
  * GetConflictingVirtualXIDs -- returns an array of currently active VXIDs.
  *
  * Usage is limited to conflict resolution during recovery on standby servers.
- * limitXmin is supplied as either latestRemovedXid, or InvalidTransactionId
- * in cases where we cannot accurately determine a value for latestRemovedXid.
+ * limitXmin is supplied as either a cutoff with snapshotConflictHorizon
+ * semantics, or InvalidTransactionId in cases where caller cannot accurately
+ * determine a safe snapshotConflictHorizon value.
  *
  * If limitXmin is InvalidTransactionId then we want to kill everybody,
  * so we're not worried if they have a snapshot or not, nor does it really
- * matter what type of lock we hold.
+ * matter what type of lock we hold.  Caller must avoid calling here with
+ * snapshotConflictHorizon style cutoffs that were set to InvalidTransactionId
+ * during original execution, since that actually indicates that there is
+ * definitely no need for a recovery conflict (the snapshotConflictHorizon
+ * convention for InvalidTransactionId values is the opposite of our own!).
  *
  * All callers that are checking xmins always now supply a valid and useful
  * value for limitXmin. The limitXmin is always lower than the lowest
@@ -3866,7 +3883,9 @@ TerminateOtherDBBackends(Oid databaseId)
 					!has_privs_of_role(GetUserId(), ROLE_PG_SIGNAL_BACKEND))
 					ereport(ERROR,
 							(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-							 errmsg("must be a member of the role whose process is being terminated or member of pg_signal_backend")));
+							 errmsg("permission denied to terminate process"),
+							 errdetail("Only roles with privileges of the role whose process is being terminated or with privileges of the \"%s\" role may terminate this process.",
+									   "pg_signal_backend")));
 			}
 		}
 
@@ -3918,6 +3937,9 @@ ProcArraySetReplicationSlotXmin(TransactionId xmin, TransactionId catalog_xmin,
 
 	if (!already_locked)
 		LWLockRelease(ProcArrayLock);
+
+	elog(DEBUG1, "xmin required by slots: data %u, catalog %u",
+		 xmin, catalog_xmin);
 }
 
 /*
@@ -4230,8 +4252,8 @@ GlobalVisTestIsRemovableXid(GlobalVisState *state, TransactionId xid)
 	/*
 	 * Convert 32 bit argument to FullTransactionId. We can do so safely
 	 * because we know the xid has to, at the very least, be between
-	 * [oldestXid, nextFullXid), i.e. within 2 billion of xid. To avoid taking
-	 * a lock to determine either, we can just compare with
+	 * [oldestXid, nextXid), i.e. within 2 billion of xid. To avoid taking a
+	 * lock to determine either, we can just compare with
 	 * state->definitely_needed, which was based on those value at the time
 	 * the current snapshot was built.
 	 */
@@ -4296,6 +4318,44 @@ GlobalVisCheckRemovableXid(Relation rel, TransactionId xid)
 	state = GlobalVisTestFor(rel);
 
 	return GlobalVisTestIsRemovableXid(state, xid);
+}
+
+/*
+ * Safely retract *xid by retreat_by, store the result in *xid.
+ *
+ * Need to be careful to prevent *xid from retreating below
+ * FirstNormalTransactionId during epoch 0. This is important to prevent
+ * generating xids that cannot be converted to a FullTransactionId without
+ * wrapping around.
+ *
+ * If retreat_by would lead to a too old xid, FirstNormalTransactionId is
+ * returned instead.
+ */
+static void
+TransactionIdRetreatSafely(TransactionId *xid, int retreat_by, FullTransactionId rel)
+{
+	TransactionId original_xid = *xid;
+	FullTransactionId fxid;
+	uint64		fxid_i;
+
+	Assert(TransactionIdIsNormal(original_xid));
+	Assert(retreat_by >= 0);	/* relevant GUCs are stored as ints */
+	AssertTransactionIdInAllowableRange(original_xid);
+
+	if (retreat_by == 0)
+		return;
+
+	fxid = FullXidRelativeTo(rel, original_xid);
+	fxid_i = U64FromFullTransactionId(fxid);
+
+	if ((fxid_i - FirstNormalTransactionId) <= retreat_by)
+		*xid = FirstNormalTransactionId;
+	else
+	{
+		*xid = TransactionIdRetreatedBy(original_xid, retreat_by);
+		Assert(TransactionIdIsNormal(*xid));
+		Assert(NormalTransactionIdPrecedes(*xid, original_xid));
+	}
 }
 
 /*
@@ -4523,6 +4583,17 @@ ExpireOldKnownAssignedTransactionIds(TransactionId xid)
 	LWLockRelease(ProcArrayLock);
 }
 
+/*
+ * KnownAssignedTransactionIdsIdleMaintenance
+ *		Opportunistically do maintenance work when the startup process
+ *		is about to go idle.
+ */
+void
+KnownAssignedTransactionIdsIdleMaintenance(void)
+{
+	KnownAssignedXidsCompress(KAX_STARTUP_PROCESS_IDLE, false);
+}
+
 
 /*
  * Private module functions to manipulate KnownAssignedXids
@@ -4605,7 +4676,9 @@ ExpireOldKnownAssignedTransactionIds(TransactionId xid)
  * so there is an optimal point for any workload mix. We use a heuristic to
  * decide when to compress the array, though trimming also helps reduce
  * frequency of compressing. The heuristic requires us to track the number of
- * currently valid XIDs in the array.
+ * currently valid XIDs in the array (N).  Except in special cases, we'll
+ * compress when S >= 2N.  Bounding S at 2N in turn bounds the time for
+ * taking a snapshot to be O(N), which it would have to be anyway.
  */
 
 
@@ -4613,42 +4686,91 @@ ExpireOldKnownAssignedTransactionIds(TransactionId xid)
  * Compress KnownAssignedXids by shifting valid data down to the start of the
  * array, removing any gaps.
  *
- * A compression step is forced if "force" is true, otherwise we do it
- * only if a heuristic indicates it's a good time to do it.
+ * A compression step is forced if "reason" is KAX_NO_SPACE, otherwise
+ * we do it only if a heuristic indicates it's a good time to do it.
  *
- * Caller must hold ProcArrayLock in exclusive mode.
+ * Compression requires holding ProcArrayLock in exclusive mode.
+ * Caller must pass haveLock = true if it already holds the lock.
  */
 static void
-KnownAssignedXidsCompress(bool force)
+KnownAssignedXidsCompress(KAXCompressReason reason, bool haveLock)
 {
 	ProcArrayStruct *pArray = procArray;
 	int			head,
-				tail;
+				tail,
+				nelements;
 	int			compress_index;
 	int			i;
 
-	/* no spinlock required since we hold ProcArrayLock exclusively */
+	/* Counters for compression heuristics */
+	static unsigned int transactionEndsCounter;
+	static TimestampTz lastCompressTs;
+
+	/* Tuning constants */
+#define KAX_COMPRESS_FREQUENCY 128	/* in transactions */
+#define KAX_COMPRESS_IDLE_INTERVAL 1000 /* in ms */
+
+	/*
+	 * Since only the startup process modifies the head/tail pointers, we
+	 * don't need a lock to read them here.
+	 */
 	head = pArray->headKnownAssignedXids;
 	tail = pArray->tailKnownAssignedXids;
+	nelements = head - tail;
 
-	if (!force)
+	/*
+	 * If we can choose whether to compress, use a heuristic to avoid
+	 * compressing too often or not often enough.  "Compress" here simply
+	 * means moving the values to the beginning of the array, so it is not as
+	 * complex or costly as typical data compression algorithms.
+	 */
+	if (nelements == pArray->numKnownAssignedXids)
 	{
 		/*
-		 * If we can choose how much to compress, use a heuristic to avoid
-		 * compressing too often or not often enough.
-		 *
-		 * Heuristic is if we have a large enough current spread and less than
-		 * 50% of the elements are currently in use, then compress. This
-		 * should ensure we compress fairly infrequently. We could compress
-		 * less often though the virtual array would spread out more and
-		 * snapshots would become more expensive.
+		 * When there are no gaps between head and tail, don't bother to
+		 * compress, except in the KAX_NO_SPACE case where we must compress to
+		 * create some space after the head.
 		 */
-		int			nelements = head - tail;
-
-		if (nelements < 4 * PROCARRAY_MAXPROCS ||
-			nelements < 2 * pArray->numKnownAssignedXids)
+		if (reason != KAX_NO_SPACE)
 			return;
 	}
+	else if (reason == KAX_TRANSACTION_END)
+	{
+		/*
+		 * Consider compressing only once every so many commits.  Frequency
+		 * determined by benchmarks.
+		 */
+		if ((transactionEndsCounter++) % KAX_COMPRESS_FREQUENCY != 0)
+			return;
+
+		/*
+		 * Furthermore, compress only if the used part of the array is less
+		 * than 50% full (see comments above).
+		 */
+		if (nelements < 2 * pArray->numKnownAssignedXids)
+			return;
+	}
+	else if (reason == KAX_STARTUP_PROCESS_IDLE)
+	{
+		/*
+		 * We're about to go idle for lack of new WAL, so we might as well
+		 * compress.  But not too often, to avoid ProcArray lock contention
+		 * with readers.
+		 */
+		if (lastCompressTs != 0)
+		{
+			TimestampTz compress_after;
+
+			compress_after = TimestampTzPlusMilliseconds(lastCompressTs,
+														 KAX_COMPRESS_IDLE_INTERVAL);
+			if (GetCurrentTimestamp() < compress_after)
+				return;
+		}
+	}
+
+	/* Need to compress, so get the lock if we don't have it. */
+	if (!haveLock)
+		LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
 
 	/*
 	 * We compress the array by reading the valid values from tail to head,
@@ -4664,9 +4786,16 @@ KnownAssignedXidsCompress(bool force)
 			compress_index++;
 		}
 	}
+	Assert(compress_index == pArray->numKnownAssignedXids);
 
 	pArray->tailKnownAssignedXids = 0;
 	pArray->headKnownAssignedXids = compress_index;
+
+	if (!haveLock)
+		LWLockRelease(ProcArrayLock);
+
+	/* Update timestamp for maintenance.  No need to hold lock for this. */
+	lastCompressTs = GetCurrentTimestamp();
 }
 
 /*
@@ -4738,17 +4867,10 @@ KnownAssignedXidsAdd(TransactionId from_xid, TransactionId to_xid,
 	 */
 	if (head + nxids > pArray->maxKnownAssignedXids)
 	{
-		/* must hold lock to compress */
-		if (!exclusive_lock)
-			LWLockAcquire(ProcArrayLock, LW_EXCLUSIVE);
-
-		KnownAssignedXidsCompress(true);
+		KnownAssignedXidsCompress(KAX_NO_SPACE, exclusive_lock);
 
 		head = pArray->headKnownAssignedXids;
 		/* note: we no longer care about the tail pointer */
-
-		if (!exclusive_lock)
-			LWLockRelease(ProcArrayLock);
 
 		/*
 		 * If it still won't fit then we're out of memory
@@ -4943,7 +5065,7 @@ KnownAssignedXidsRemoveTree(TransactionId xid, int nsubxids,
 		KnownAssignedXidsRemove(subxids[i]);
 
 	/* Opportunistically compress the array */
-	KnownAssignedXidsCompress(false);
+	KnownAssignedXidsCompress(KAX_TRANSACTION_END, true);
 }
 
 /*
@@ -5018,7 +5140,7 @@ KnownAssignedXidsRemovePreceding(TransactionId removeXid)
 	}
 
 	/* Opportunistically compress the array */
-	KnownAssignedXidsCompress(false);
+	KnownAssignedXidsCompress(KAX_PRUNE, true);
 }
 
 /*

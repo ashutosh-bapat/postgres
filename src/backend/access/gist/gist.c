@@ -4,7 +4,7 @@
  *	  interface routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -78,7 +78,7 @@ gisthandler(PG_FUNCTION_ARGS)
 	amroutine->amcanparallel = false;
 	amroutine->amcaninclude = true;
 	amroutine->amusemaintenanceworkmem = false;
-	amroutine->amhotblocking = true;
+	amroutine->amsummarizing = false;
 	amroutine->amparallelvacuumoptions =
 		VACUUM_OPTION_PARALLEL_BULKDEL | VACUUM_OPTION_PARALLEL_COND_CLEANUP;
 	amroutine->amkeytype = InvalidOid;
@@ -134,8 +134,8 @@ gistbuildempty(Relation index)
 	Buffer		buffer;
 
 	/* Initialize the root page */
-	buffer = ReadBufferExtended(index, INIT_FORKNUM, P_NEW, RBM_NORMAL, NULL);
-	LockBuffer(buffer, BUFFER_LOCK_EXCLUSIVE);
+	buffer = ExtendBufferedRel(EB_REL(index), INIT_FORKNUM, NULL,
+							   EB_SKIP_EXTENSION_LOCK | EB_LOCK_FIRST);
 
 	/* Initialize and xlog buffer */
 	START_CRIT_SECTION();
@@ -235,7 +235,6 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 	Page		page = BufferGetPage(buffer);
 	bool		is_leaf = (GistPageIsLeaf(page)) ? true : false;
 	XLogRecPtr	recptr;
-	int			i;
 	bool		is_split;
 
 	/*
@@ -350,7 +349,7 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 		for (; ptr; ptr = ptr->next)
 		{
 			/* Allocate new page */
-			ptr->buffer = gistNewBuffer(rel);
+			ptr->buffer = gistNewBuffer(rel, heapRel);
 			GISTInitBuffer(ptr->buffer, (is_leaf) ? F_LEAF : 0);
 			ptr->page = BufferGetPage(ptr->buffer);
 			ptr->block.blkno = BufferGetBlockNumber(ptr->buffer);
@@ -421,7 +420,7 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 		{
 			char	   *data = (char *) (ptr->list);
 
-			for (i = 0; i < ptr->block.num; i++)
+			for (int i = 0; i < ptr->block.num; i++)
 			{
 				IndexTuple	thistup = (IndexTuple) data;
 
@@ -1667,10 +1666,10 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 
 	if (ndeletable > 0)
 	{
-		TransactionId latestRemovedXid = InvalidTransactionId;
+		TransactionId snapshotConflictHorizon = InvalidTransactionId;
 
 		if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
-			latestRemovedXid =
+			snapshotConflictHorizon =
 				index_compute_xid_horizon_for_tuples(rel, heapRel, buffer,
 													 deletable, ndeletable);
 
@@ -1696,7 +1695,8 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 
 			recptr = gistXLogDelete(buffer,
 									deletable, ndeletable,
-									latestRemovedXid);
+									snapshotConflictHorizon,
+									heapRel);
 
 			PageSetLSN(page, recptr);
 		}

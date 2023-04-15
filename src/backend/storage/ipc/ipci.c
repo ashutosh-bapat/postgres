@@ -3,7 +3,7 @@
  * ipci.c
  *	  POSTGRES inter-process communication initialization code.
  *
- * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -47,6 +47,7 @@
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
 #include "storage/spin.h"
+#include "utils/guc.h"
 #include "utils/snapmgr.h"
 
 /* GUCs */
@@ -334,7 +335,8 @@ InitializeShmemGUCs(void)
 	size_b = CalculateShmemSize(NULL);
 	size_mb = add_size(size_b, (1024 * 1024) - 1) / (1024 * 1024);
 	sprintf(buf, "%zu", size_mb);
-	SetConfigOption("shared_memory_size", buf, PGC_INTERNAL, PGC_S_OVERRIDE);
+	SetConfigOption("shared_memory_size", buf,
+					PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
 
 	/*
 	 * Calculate the number of huge pages required.
@@ -346,6 +348,7 @@ InitializeShmemGUCs(void)
 
 		hp_required = add_size(size_b / hp_size, 1);
 		sprintf(buf, "%zu", hp_required);
-		SetConfigOption("shared_memory_size_in_huge_pages", buf, PGC_INTERNAL, PGC_S_OVERRIDE);
+		SetConfigOption("shared_memory_size_in_huge_pages", buf,
+						PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
 	}
 }

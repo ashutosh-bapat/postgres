@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  * Logging framework for frontend programs
  *
- * Copyright (c) 2018-2022, PostgreSQL Global Development Group
+ * Copyright (c) 2018-2023, PostgreSQL Global Development Group
  *
  * src/common/logging.c
  *
@@ -246,8 +246,7 @@ pg_log_generic_v(enum pg_log_level level, enum pg_log_part part,
 
 	fmt = _(fmt);
 
-	if (part == PG_LOG_PRIMARY &&
-		(!(log_flags & PG_LOG_FLAG_TERSE) || filename))
+	if (!(log_flags & PG_LOG_FLAG_TERSE) || filename)
 	{
 		if (sgr_locus)
 			fprintf(stderr, ANSI_ESCAPE_FMT, sgr_locus);

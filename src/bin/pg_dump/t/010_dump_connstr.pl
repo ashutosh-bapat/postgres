@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+# Copyright (c) 2021-2023, PostgreSQL Global Development Group
 
 use strict;
 use warnings;
@@ -30,7 +30,8 @@ my $dbname1 =
   . generate_ascii_string(1,  9)
   . generate_ascii_string(11, 12)
   . generate_ascii_string(14, 33)
-  . ($PostgreSQL::Test::Utils::windows_os
+  . (
+	$PostgreSQL::Test::Utils::windows_os
 	? ''
 	: '"x"')    # IPC::Run mishandles '"' on Windows
   . generate_ascii_string(35, 43)    # skip ','

@@ -4,6 +4,9 @@ PostgreSQL documentation
 -->
 
 <refentry id="sql-merge">
+ <indexterm zone="sql-merge">
+  <primary>MERGE</primary>
+ </indexterm>
 
  <refmeta>
   <refentrytitle>MERGE</refentrytitle>
@@ -19,31 +22,31 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 [ WITH <replaceable class="parameter">with_query</replaceable> [, ...] ]
-MERGE INTO <replaceable class="parameter">target_table_name</replaceable> [ [ AS ] <replaceable class="parameter">target_alias</replaceable> ]
+MERGE INTO [ ONLY ] <replaceable class="parameter">target_table_name</replaceable> [ * ] [ [ AS ] <replaceable class="parameter">target_alias</replaceable> ]
 USING <replaceable class="parameter">data_source</replaceable> ON <replaceable class="parameter">join_condition</replaceable>
 <replaceable class="parameter">when_clause</replaceable> [...]
 
-<phrase>where <replaceable class="parameter">data_source</replaceable> is</phrase>
+<phrase>where <replaceable class="parameter">data_source</replaceable> is:</phrase>
 
-{ <replaceable class="parameter">source_table_name</replaceable> | ( <replaceable class="parameter">source_query</replaceable> ) } [ [ AS ] <replaceable class="parameter">source_alias</replaceable> ]
+{ [ ONLY ] <replaceable class="parameter">source_table_name</replaceable> [ * ] | ( <replaceable class="parameter">source_query</replaceable> ) } [ [ AS ] <replaceable class="parameter">source_alias</replaceable> ]
 
-<phrase>and <replaceable class="parameter">when_clause</replaceable> is</phrase>
+<phrase>and <replaceable class="parameter">when_clause</replaceable> is:</phrase>
 
 { WHEN MATCHED [ AND <replaceable class="parameter">condition</replaceable> ] THEN { <replaceable class="parameter">merge_update</replaceable> | <replaceable class="parameter">merge_delete</replaceable> | DO NOTHING } |
   WHEN NOT MATCHED [ AND <replaceable class="parameter">condition</replaceable> ] THEN { <replaceable class="parameter">merge_insert</replaceable> | DO NOTHING } }
 
-<phrase>and <replaceable class="parameter">merge_insert</replaceable> is</phrase>
+<phrase>and <replaceable class="parameter">merge_insert</replaceable> is:</phrase>
 
 INSERT [( <replaceable class="parameter">column_name</replaceable> [, ...] )]
 [ OVERRIDING { SYSTEM | USER } VALUE ]
 { VALUES ( { <replaceable class="parameter">expression</replaceable> | DEFAULT } [, ...] ) | DEFAULT VALUES }
 
-<phrase>and <replaceable class="parameter">merge_update</replaceable> is</phrase>
+<phrase>and <replaceable class="parameter">merge_update</replaceable> is:</phrase>
 
 UPDATE SET { <replaceable class="parameter">column_name</replaceable> = { <replaceable class="parameter">expression</replaceable> | DEFAULT } |
              ( <replaceable class="parameter">column_name</replaceable> [, ...] ) = ( { <replaceable class="parameter">expression</replaceable> | DEFAULT } [, ...] ) } [, ...]
 
-<phrase>and <replaceable class="parameter">merge_delete</replaceable> is</phrase>
+<phrase>and <replaceable class="parameter">merge_delete</replaceable> is:</phrase>
 
 DELETE
 </synopsis>
@@ -126,6 +129,14 @@ DELETE
     <listitem>
      <para>
       The name (optionally schema-qualified) of the target table to merge into.
+      If <literal>ONLY</literal> is specified before the table name, matching
+      rows are updated or deleted in the named table only.  If
+      <literal>ONLY</literal> is not specified, matching rows are also updated
+      or deleted in any tables inheriting from the named table.  Optionally,
+      <literal>*</literal> can be specified after the table name to explicitly
+      indicate that descendant tables are included.  The
+      <literal>ONLY</literal> keyword and <literal>*</literal> option do not
+      affect insert actions, which always insert into the named table only.
      </para>
     </listitem>
    </varlistentry>
@@ -148,7 +159,12 @@ DELETE
     <listitem>
      <para>
       The name (optionally schema-qualified) of the source table, view, or
-      transition table.
+      transition table.  If <literal>ONLY</literal> is specified before the
+      table name, matching rows are included from the named table only.  If
+      <literal>ONLY</literal> is not specified, matching rows are also included
+      from any tables inheriting from the named table.  Optionally,
+      <literal>*</literal> can be specified after the table name to explicitly
+      indicate that descendant tables are included.
      </para>
     </listitem>
    </varlistentry>
@@ -262,10 +278,6 @@ DELETE
       Each column not present in the explicit or implicit column list will be
       filled with a default value, either its declared default value
       or null if there is none.
-     </para>
-     <para>
-      If the expression for any column is not of the correct data type,
-      automatic type conversion will be attempted.
      </para>
      <para>
       If <replaceable class="parameter">target_table_name</replaceable>
@@ -539,6 +551,10 @@ MERGE <replaceable class="parameter">total_count</replaceable>
   </para>
 
   <para>
+   When <command>MERGE</command> is run concurrently with other commands
+   that modify the target table, the usual transaction isolation rules
+   apply; see <xref linkend="transaction-iso"/> for an explanation
+   on the behavior at each isolation level.
    You may also wish to consider using <command>INSERT ... ON CONFLICT</command>
    as an alternative statement which offers the ability to run an
    <command>UPDATE</command> if a concurrent <command>INSERT</command>
@@ -551,18 +567,18 @@ MERGE <replaceable class="parameter">total_count</replaceable>
   <title>Examples</title>
 
   <para>
-   Perform maintenance on <literal>CustomerAccounts</literal> based
-   upon new <literal>Transactions</literal>.
+   Perform maintenance on <literal>customer_accounts</literal> based
+   upon new <literal>recent_transactions</literal>.
 
 <programlisting>
-MERGE INTO CustomerAccount CA
-USING RecentTransactions T
-ON T.CustomerId = CA.CustomerId
+MERGE INTO customer_account ca
+USING recent_transactions t
+ON t.customer_id = ca.customer_id
 WHEN MATCHED THEN
-  UPDATE SET Balance = Balance + TransactionValue
+  UPDATE SET balance = balance + transaction_value
 WHEN NOT MATCHED THEN
-  INSERT (CustomerId, Balance)
-  VALUES (T.CustomerId, T.TransactionValue);
+  INSERT (customer_id, balance)
+  VALUES (t.customer_id, t.transaction_value);
 </programlisting>
   </para>
 
@@ -572,14 +588,14 @@ WHEN NOT MATCHED THEN
    during execution.
 
 <programlisting>
-MERGE INTO CustomerAccount CA
-USING (Select CustomerId, TransactionValue From RecentTransactions) AS T
-ON CA.CustomerId = T.CustomerId
-WHEN NOT MATCHED THEN
-  INSERT (CustomerId, Balance)
-  VALUES (T.CustomerId, T.TransactionValue)
+MERGE INTO customer_account ca
+USING (SELECT customer_id, transaction_value FROM recent_transactions) AS t
+ON t.customer_id = ca.customer_id
 WHEN MATCHED THEN
-  UPDATE SET Balance = Balance + TransactionValue;
+  UPDATE SET balance = balance + transaction_value
+WHEN NOT MATCHED THEN
+  INSERT (customer_id, balance)
+  VALUES (t.customer_id, t.transaction_value);
 </programlisting>
   </para>
 
