@@ -36,6 +36,12 @@ CREATE PROPERTY GRAPH gx
     );
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 
+
+-- information schema
+
+SELECT * FROM information_schema.property_graphs;
+
+
 --\dG
 
 -- TODO

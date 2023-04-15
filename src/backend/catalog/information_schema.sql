@@ -3035,3 +3035,136 @@ CREATE VIEW user_mappings AS
     FROM _pg_user_mappings;
 
 GRANT SELECT ON user_mappings TO PUBLIC;
+
+
+-- SQL/PGQ views; these use section numbers from part 16 of the standard.
+
+/*
+ * 15.2
+ * PG_DEFINED_LABEL_SETS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.3
+ * PG_DEFINED_LABEL_SET_LABELS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.4
+ * PG_EDGE_DEFINED_LABEL_SETS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.5
+ * PG_EDGE_TABLE_COMPONENTS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.6
+ * PG_EDGE_TRIPLETS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.7
+ * PG_ELEMENT_TABLE_KEY_COLUMNS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.8
+ * PG_ELEMENT_TABLE_LABELS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.9
+ * PG_ELEMENT_TABLE_PROPERTIES view
+ */
+
+-- TODO
+
+
+/*
+ * 15.10
+ * PG_ELEMENT_TABLES view
+ */
+
+-- TODO
+
+
+/*
+ * 15.11
+ * PG_LABEL_PROPERTIES view
+ */
+
+-- TODO
+
+
+/*
+ * 15.12
+ * PG_LABELS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.13
+ * PG_PROPERTY_DATA_TYPES view
+ */
+
+-- TODO
+
+
+/*
+ * 15.14
+ * PG_PROPERTY_GRAPH_PRIVILEGES view
+ */
+
+-- TODO
+
+
+/*
+ * 15.15
+ * PG_VERTEX_DEFINED_LABEL_SETS view
+ */
+
+-- TODO
+
+
+/*
+ * 15.16
+ * PROPERTY_GRAPHS view
+ */
+
+CREATE VIEW property_graphs AS
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(nc.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(c.relname AS sql_identifier) AS property_graph_name
+    FROM pg_namespace nc, pg_class c
+    WHERE c.relnamespace = nc.oid
+          AND c.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(nc.oid))
+          AND (pg_has_role(c.relowner, 'USAGE')
+               OR has_table_privilege(c.oid, 'SELECT'));
+
+GRANT SELECT ON property_graphs TO PUBLIC;
