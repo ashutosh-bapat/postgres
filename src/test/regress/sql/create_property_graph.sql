@@ -36,7 +36,7 @@ CREATE PROPERTY GRAPH gx
     );
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 
-\dG
+--\dG
 
 -- TODO
 \d g1

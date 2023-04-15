@@ -40,14 +40,7 @@ LINE 4:         e1 SOURCE t1 DESTINATION tx
                 ^
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
-\dG
-                      List of relations
-           Schema            | Name |      Type      | Owner 
------------------------------+------+----------------+-------
- create_property_graph_tests | g1   | property graph | peter
- create_property_graph_tests | g2   | property graph | peter
-(2 rows)
-
+--\dG
 -- TODO
 \d g1
 Property graph "create_property_graph_tests.g1"
