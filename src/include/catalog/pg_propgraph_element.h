@@ -31,6 +31,7 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 	Oid			pgepgid;		/* OID of the property graph */
 	Oid			pgerelid;		/* OID of the underlying relation */
 	NameData	pgealias;		/* element alias */
+	char		pgekind;		/* see PGEKIND_* below */
 	Oid			pgesrcvertexid;	/* source vertex */
 	Oid			pgedestvertexid;/* destination vertex */
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
@@ -41,7 +42,6 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 	int2vector	pgedestref;		/* column numbers in pgedestvertexid relation */
 #endif
 } FormData_pg_propgraph_element;
-// TODO: element type/kind?
 
 /* ----------------
  *		Form_pg_propgraph_element corresponds to a pointer to a tuple with
@@ -52,5 +52,15 @@ typedef FormData_pg_propgraph_element *Form_pg_propgraph_element;
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_element_oid_index, 8300, PropgraphElementObjectIndexId, on pg_propgraph_element using btree(oid oid_ops));
 DECLARE_UNIQUE_INDEX(pg_propgraph_element_alias_index, 8301, PropgraphElementAliasIndexId, on pg_propgraph_element using btree(pgealias name_ops));
+
+#ifdef EXPOSE_TO_CLIENT_CODE
+
+/*
+ * Symbolic values for pgekind column
+ */
+#define PGEKIND_VERTEX 'v'
+#define PGEKIND_EDGE 'e'
+
+#endif							/* EXPOSE_TO_CLIENT_CODE */
 
 #endif							/* PG_PROPGRAPH_ELEMENT_H */

@@ -311,6 +311,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(relid);
 		namestrcpy(&aliasname, aliasstr);
 		values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
+		values[Anum_pg_propgraph_element_pgekind - 1] = CharGetDatum(PGEKIND_VERTEX);
 		values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(key);
 
 		nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true;
@@ -354,6 +355,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(relid);
 		namestrcpy(&aliasname, aliasstr);
 		values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
+		values[Anum_pg_propgraph_element_pgekind - 1] = CharGetDatum(PGEKIND_EDGE);
 		values[Anum_pg_propgraph_element_pgesrcvertexid - 1] = 0; // TODO
 		values[Anum_pg_propgraph_element_pgedestvertexid - 1] = 0; // TODO
 		values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(key);
