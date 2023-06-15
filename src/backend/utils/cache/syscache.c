@@ -437,6 +437,12 @@ static const struct cachedesc cacheinfo[] = {
 		KEY(Anum_pg_proc_oid),
 		128
 	},
+	[PROPGRAPHELALIAS] = {
+		PropgraphElementRelationId,
+		PropgraphElementAliasIndexId,
+		KEY(Anum_pg_propgraph_element_pgealias),
+		128
+	},
 	[PROPGRAPHELOID] = {
 		PropgraphElementRelationId,
 		PropgraphElementObjectIndexId,

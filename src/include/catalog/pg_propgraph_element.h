@@ -41,7 +41,6 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 	int2vector	pgedestref;		/* column numbers in pgedestvertexid relation */
 #endif
 } FormData_pg_propgraph_element;
-// TODO: alias unique
 // TODO: element type/kind?
 
 /* ----------------
@@ -52,5 +51,6 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 typedef FormData_pg_propgraph_element *Form_pg_propgraph_element;
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_element_oid_index, 8300, PropgraphElementObjectIndexId, on pg_propgraph_element using btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_propgraph_element_alias_index, 8301, PropgraphElementAliasIndexId, on pg_propgraph_element using btree(pgealias name_ops));
 
 #endif							/* PG_PROPGRAPH_ELEMENT_H */
