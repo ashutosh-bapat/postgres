@@ -65,8 +65,7 @@ catalog_headers = [
   'pg_publication_rel.h',
   'pg_subscription.h',
   'pg_subscription_rel.h',
-  'pg_propgraph_edge.h',
-  'pg_propgraph_vertex.h',
+  'pg_propgraph_element.h',
 ]
 
 bki_data = [

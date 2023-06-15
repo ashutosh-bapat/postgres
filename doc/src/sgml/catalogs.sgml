@@ -241,13 +241,8 @@
      </row>
 
      <row>
-      <entry><link linkend="catalog-pg-propgraph-edge"><structname>pg_propgraph_edge</structname></link></entry>
-      <entry>property graph edges</entry>
-     </row>
-
-     <row>
-      <entry><link linkend="catalog-pg-propgraph-vertex"><structname>pg_propgraph_vertex</structname></link></entry>
-      <entry>property graph vertices</entry>
+      <entry><link linkend="catalog-pg-propgraph-element"><structname>pg_propgraph_element</structname></link></entry>
+      <entry>property graph elements (vertices and edges)</entry>
      </row>
 
      <row>
@@ -6246,21 +6241,11 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
  </sect1>
 
- <sect1 id="catalog-pg-propgraph-edge">
-  <title><structname>pg_propgraph_edge</structname></title>
+ <sect1 id="catalog-pg-propgraph-element">
+  <title><structname>pg_propgraph_element</structname></title>
 
-  <indexterm zone="catalog-pg-propgraph-edge">
-   <primary>pg_propgraph_edge</primary>
-  </indexterm>
-
-  <para>TODO</para>
- </sect1>
-
- <sect1 id="catalog-pg-propgraph-vertex">
-  <title><structname>pg_propgraph_vertex</structname></title>
-
-  <indexterm zone="catalog-pg-propgraph-vertex">
-   <primary>pg_propgraph_vertex</primary>
+  <indexterm zone="catalog-pg-propgraph-element">
+   <primary>pg_propgraph_element</primary>
   </indexterm>
 
   <para>TODO</para>

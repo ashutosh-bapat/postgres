@@ -123,8 +123,7 @@ typedef enum ObjectClass
 	OCLASS_EVENT_TRIGGER,		/* pg_event_trigger */
 	OCLASS_PARAMETER_ACL,		/* pg_parameter_acl */
 	OCLASS_POLICY,				/* pg_policy */
-	OCLASS_PROPGRAPH_EDGE,		/* pg_propgraph_edge */
-	OCLASS_PROPGRAPH_VERTEX,	/* pg_propgraph_vertex */
+	OCLASS_PROPGRAPH_ELEMENT,	/* pg_propgraph_element */
 	OCLASS_PUBLICATION,			/* pg_publication */
 	OCLASS_PUBLICATION_NAMESPACE,	/* pg_publication_namespace */
 	OCLASS_PUBLICATION_REL,		/* pg_publication_rel */

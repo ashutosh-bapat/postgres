@@ -49,8 +49,7 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_propgraph_edge.h"
-#include "catalog/pg_propgraph_vertex.h"
+#include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -848,13 +847,9 @@ static const struct object_type_map
 	{
 		"policy", OBJECT_POLICY
 	},
-	/* OCLASS_PROPGRAPH_EDGE */
+	/* OCLASS_PROPGRAPH_ELEMENT */
 	{
-		"property graph edge", -1 // TODO
-	},
-	/* OCLASS_PROPGRAPH_VERTEX */
-	{
-		"property graph vertex", -1 // TODO
+		"property graph element", -1 // TODO
 	},
 	/* OCLASS_PUBLICATION */
 	{
@@ -3978,51 +3973,26 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
-		case OCLASS_PROPGRAPH_EDGE:
+		case OCLASS_PROPGRAPH_ELEMENT:
 			{
 				HeapTuple	tup;
-				Form_pg_propgraph_edge pgeform;
+				Form_pg_propgraph_element pgeform;
 				StringInfoData rel;
 
-				tup = SearchSysCache1(PROPGRAPHEDGEOID,
+				tup = SearchSysCache1(PROPGRAPHELOID,
 									  ObjectIdGetDatum(object->objectId));
 				if (!HeapTupleIsValid(tup))
-					elog(ERROR, "cache lookup failed for property graph edge %u",
+					elog(ERROR, "cache lookup failed for property graph element %u",
 						 object->objectId);
 
-				pgeform = (Form_pg_propgraph_edge) GETSTRUCT(tup);
+				pgeform = (Form_pg_propgraph_element) GETSTRUCT(tup);
 
 				initStringInfo(&rel);
 				getRelationDescription(&rel, pgeform->pgerelid, false);
 
 				/* translator: second %s is, e.g., "property graph %s" */
-				appendStringInfo(&buffer, _("edge %s in %s"),
+				appendStringInfo(&buffer, _("element %s in %s"),
 								 NameStr(pgeform->pgealias), rel.data);
-				pfree(rel.data);
-				ReleaseSysCache(tup);
-				break;
-			}
-
-		case OCLASS_PROPGRAPH_VERTEX:
-			{
-				HeapTuple	tup;
-				Form_pg_propgraph_vertex pgvform;
-				StringInfoData rel;
-
-				tup = SearchSysCache1(PROPGRAPHVERTEXOID,
-									  ObjectIdGetDatum(object->objectId));
-				if (!HeapTupleIsValid(tup))
-					elog(ERROR, "cache lookup failed for property graph vertex %u",
-						 object->objectId);
-
-				pgvform = (Form_pg_propgraph_vertex) GETSTRUCT(tup);
-
-				initStringInfo(&rel);
-				getRelationDescription(&rel, pgvform->pgvrelid, false);
-
-				/* translator: second %s is, e.g., "property graph %s" */
-				appendStringInfo(&buffer, _("vertex %s in %s"),
-								 NameStr(pgvform->pgvalias), rel.data);
 				pfree(rel.data);
 				ReleaseSysCache(tup);
 				break;
@@ -4639,12 +4609,8 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 			appendStringInfoString(&buffer, "policy");
 			break;
 
-		case OCLASS_PROPGRAPH_EDGE:
-			appendStringInfoString(&buffer, "property graph edge");
-			break;
-
-		case OCLASS_PROPGRAPH_VERTEX:
-			appendStringInfoString(&buffer, "property graph vertex");
+		case OCLASS_PROPGRAPH_ELEMENT:
+			appendStringInfoString(&buffer, "property graph element");
 			break;
 
 		case OCLASS_PUBLICATION:
@@ -5889,11 +5855,7 @@ getObjectIdentityParts(const ObjectAddress *object,
 				break;
 			}
 
-		case OCLASS_PROPGRAPH_EDGE:
-			elog(ERROR, "TODO2");
-			break;
-
-		case OCLASS_PROPGRAPH_VERTEX:
+		case OCLASS_PROPGRAPH_ELEMENT:
 			elog(ERROR, "TODO2");
 			break;
 

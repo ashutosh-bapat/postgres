@@ -19,8 +19,7 @@
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_propgraph_edge.h"
-#include "catalog/pg_propgraph_vertex.h"
+#include "catalog/pg_propgraph_element.h"
 #include "commands/propgraphcmds.h"
 #include "commands/tablecmds.h"
 #include "utils/builtins.h"
@@ -42,8 +41,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	List	   *edge_relids = NIL;
 	List	   *edge_aliases = NIL;
 	List	   *edge_keys = NIL;
-	Relation	vertexrel;
-	Relation	edgerel;
+	Relation	elrel;
 
 	if (stmt->pgname->relpersistence == RELPERSISTENCE_UNLOGGED)
 		ereport(ERROR,
@@ -52,8 +50,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	components_persistence = RELPERSISTENCE_PERMANENT;
 
-	vertexrel = table_open(PropgraphVertexRelationId, RowExclusiveLock);
-	edgerel = table_open(PropgraphEdgeRelationId, RowExclusiveLock);
+	elrel = table_open(PropgraphElementRelationId, RowExclusiveLock);
 
 	foreach (lc, stmt->vertex_tables)
 	{
@@ -301,26 +298,31 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		int2vector *key = lfirst(lc3);
 		NameData	aliasname;
 		Oid			pvoid;
-		Datum		values[Natts_pg_propgraph_vertex] = {0};
-		bool		nulls[Natts_pg_propgraph_vertex] = {0};
+		Datum		values[Natts_pg_propgraph_element] = {0};
+		bool		nulls[Natts_pg_propgraph_element] = {0};
 		HeapTuple	tup;
 		ObjectAddress myself;
 		ObjectAddress referenced;
 
-		pvoid = GetNewOidWithIndex(vertexrel, PropgraphVertexObjectIndexId,
-								   Anum_pg_propgraph_vertex_oid);
-		values[Anum_pg_propgraph_vertex_oid - 1] = ObjectIdGetDatum(pvoid);
-		values[Anum_pg_propgraph_vertex_pgvpgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
-		values[Anum_pg_propgraph_vertex_pgvrelid - 1] = ObjectIdGetDatum(relid);
+		pvoid = GetNewOidWithIndex(elrel, PropgraphElementObjectIndexId,
+								   Anum_pg_propgraph_element_oid);
+		values[Anum_pg_propgraph_element_oid - 1] = ObjectIdGetDatum(pvoid);
+		values[Anum_pg_propgraph_element_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
+		values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(relid);
 		namestrcpy(&aliasname, aliasstr);
-		values[Anum_pg_propgraph_vertex_pgvalias - 1] = NameGetDatum(&aliasname);
-		values[Anum_pg_propgraph_vertex_pgvkey - 1] = PointerGetDatum(key);
+		values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
+		values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(key);
 
-		tup = heap_form_tuple(RelationGetDescr(vertexrel), values, nulls);
-		CatalogTupleInsert(vertexrel, tup);
+		nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true;
+		nulls[Anum_pg_propgraph_element_pgesrcref - 1] = true;
+		nulls[Anum_pg_propgraph_element_pgedestkey - 1] = true;
+		nulls[Anum_pg_propgraph_element_pgedestref - 1] = true;
+
+		tup = heap_form_tuple(RelationGetDescr(elrel), values, nulls);
+		CatalogTupleInsert(elrel, tup);
 		heap_freetuple(tup);
 
-		ObjectAddressSet(myself, PropgraphVertexRelationId, pvoid);
+		ObjectAddressSet(myself, PropgraphElementRelationId, pvoid);
 
 		/* Add dependency on the property graph */
 		recordDependencyOn(&myself, &pgaddress, DEPENDENCY_INTERNAL);
@@ -339,32 +341,32 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		int2vector *key = lfirst(lc3);
 		NameData	aliasname;
 		Oid			peoid;
-		Datum		values[Natts_pg_propgraph_edge] = {0};
-		bool		nulls[Natts_pg_propgraph_edge] = {0};
+		Datum		values[Natts_pg_propgraph_element] = {0};
+		bool		nulls[Natts_pg_propgraph_element] = {0};
 		HeapTuple	tup;
 		ObjectAddress myself;
 		ObjectAddress referenced;
 
-		peoid = GetNewOidWithIndex(edgerel, PropgraphEdgeObjectIndexId,
-								   Anum_pg_propgraph_edge_oid);
-		values[Anum_pg_propgraph_edge_oid - 1] = ObjectIdGetDatum(peoid);
-		values[Anum_pg_propgraph_edge_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
-		values[Anum_pg_propgraph_edge_pgerelid - 1] = ObjectIdGetDatum(relid);
+		peoid = GetNewOidWithIndex(elrel, PropgraphElementObjectIndexId,
+								   Anum_pg_propgraph_element_oid);
+		values[Anum_pg_propgraph_element_oid - 1] = ObjectIdGetDatum(peoid);
+		values[Anum_pg_propgraph_element_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
+		values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(relid);
 		namestrcpy(&aliasname, aliasstr);
-		values[Anum_pg_propgraph_edge_pgealias - 1] = NameGetDatum(&aliasname);
-		values[Anum_pg_propgraph_edge_pgesrcvertexid - 1] = 0; // TODO
-		values[Anum_pg_propgraph_edge_pgedestvertexid - 1] = 0; // TODO
-		values[Anum_pg_propgraph_edge_pgekey - 1] = PointerGetDatum(key);
-		nulls[Anum_pg_propgraph_edge_pgesrckey - 1] = true; // TODO
-		nulls[Anum_pg_propgraph_edge_pgesrcref - 1] = true; // TODO
-		nulls[Anum_pg_propgraph_edge_pgedestkey - 1] = true; // TODO
-		nulls[Anum_pg_propgraph_edge_pgedestref - 1] = true; // TODO
+		values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
+		values[Anum_pg_propgraph_element_pgesrcvertexid - 1] = 0; // TODO
+		values[Anum_pg_propgraph_element_pgedestvertexid - 1] = 0; // TODO
+		values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(key);
+		nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true; // TODO
+		nulls[Anum_pg_propgraph_element_pgesrcref - 1] = true; // TODO
+		nulls[Anum_pg_propgraph_element_pgedestkey - 1] = true; // TODO
+		nulls[Anum_pg_propgraph_element_pgedestref - 1] = true; // TODO
 
-		tup = heap_form_tuple(RelationGetDescr(edgerel), values, nulls);
-		CatalogTupleInsert(edgerel, tup);
+		tup = heap_form_tuple(RelationGetDescr(elrel), values, nulls);
+		CatalogTupleInsert(elrel, tup);
 		heap_freetuple(tup);
 
-		ObjectAddressSet(myself, PropgraphEdgeRelationId, peoid);
+		ObjectAddressSet(myself, PropgraphElementRelationId, peoid);
 
 		/* Add dependency on the property graph */
 		recordDependencyOn(&myself, &pgaddress, DEPENDENCY_INTERNAL);
@@ -375,48 +377,29 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 #if 0
 		/* Add dependencies on vertices */
-		ObjectAddressSet(referenced, PropgraphVertexRelationId, XXX);
+		ObjectAddressSet(referenced, PropgraphElementRelationId, XXX);
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
-		ObjectAddressSet(referenced, PropgraphVertexRelationId, YYY);
+		ObjectAddressSet(referenced, PropgraphElementRelationId, YYY);
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 #endif
 	}
 
-	table_close(edgerel, RowExclusiveLock);
-	table_close(vertexrel, RowExclusiveLock);
+	table_close(elrel, RowExclusiveLock);
 
 	return pgaddress;
 }
 
 void
-RemovePropgraphEdgeById(Oid peid)
+RemovePropgraphElementById(Oid peid)
 {
 	HeapTuple	tup;
 	Relation	rel;
 
-	rel = table_open(PropgraphEdgeRelationId, RowExclusiveLock);
+	rel = table_open(PropgraphElementRelationId, RowExclusiveLock);
 
-	tup = SearchSysCache1(PROPGRAPHEDGEOID, ObjectIdGetDatum(peid));
+	tup = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(peid));
 	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for property graph edge %u", peid);
-
-	CatalogTupleDelete(rel, &tup->t_self);
-	ReleaseSysCache(tup);
-
-	table_close(rel, RowExclusiveLock);
-}
-
-void
-RemovePropgraphVertexById(Oid pvid)
-{
-	HeapTuple	tup;
-	Relation	rel;
-
-	rel = table_open(PropgraphVertexRelationId, RowExclusiveLock);
-
-	tup = SearchSysCache1(PROPGRAPHVERTEXOID, ObjectIdGetDatum(pvid));
-	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for property graph vertex %u", pvid);
+		elog(ERROR, "cache lookup failed for property graph element %u", peid);
 
 	CatalogTupleDelete(rel, &tup->t_self);
 	ReleaseSysCache(tup);

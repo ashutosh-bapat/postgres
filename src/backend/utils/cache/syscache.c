@@ -50,8 +50,7 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_propgraph_edge.h"
-#include "catalog/pg_propgraph_vertex.h"
+#include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -438,16 +437,10 @@ static const struct cachedesc cacheinfo[] = {
 		KEY(Anum_pg_proc_oid),
 		128
 	},
-	[PROPGRAPHEDGEOID] = {
-		PropgraphEdgeRelationId,
-		PropgraphEdgeObjectIndexId,
-		KEY(Anum_pg_propgraph_edge_oid),
-		128
-	},
-	[PROPGRAPHVERTEXOID] = {
-		PropgraphVertexRelationId,
-		PropgraphVertexObjectIndexId,
-		KEY(Anum_pg_propgraph_vertex_oid),
+	[PROPGRAPHELOID] = {
+		PropgraphElementRelationId,
+		PropgraphElementObjectIndexId,
+		KEY(Anum_pg_propgraph_element_oid),
 		128
 	},
 	[PUBLICATIONNAME] = {
