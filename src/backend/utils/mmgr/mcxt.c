@@ -734,9 +734,9 @@ MemoryContextStatsDetail(MemoryContext context, int max_children,
 		 *
 		 * We don't buffer the information about all memory contexts in a
 		 * backend into StringInfo and log it as one message.  That would
-		 * require the buffer to be enlarged, risking an OOM as there could
-		 * be a large number of memory contexts in a backend.  Instead, we
-		 * log one message per memory context.
+		 * require the buffer to be enlarged, risking an OOM as there could be
+		 * a large number of memory contexts in a backend.  Instead, we log
+		 * one message per memory context.
 		 */
 		ereport(LOG_SERVER_ONLY,
 				(errhidestmt(true),
@@ -1382,7 +1382,7 @@ MemoryContextAllocAligned(MemoryContext context,
 	alloc_size = size + PallocAlignedExtraBytes(alignto);
 
 #ifdef MEMORY_CONTEXT_CHECKING
-	/* ensure there's space for a sentinal byte */
+	/* ensure there's space for a sentinel byte */
 	alloc_size += 1;
 #endif
 

@@ -3951,7 +3951,7 @@ psql_completion(const char *text, int start, int end)
 	else if (TailMatches("GRANT|REVOKE", MatchAny) ||
 			 TailMatches("REVOKE", "GRANT", "OPTION", "FOR", MatchAny))
 	{
-		if (TailMatches("SELECT|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER|CREATE|CONNECT|TEMPORARY|TEMP|EXECUTE|USAGE|ALL"))
+		if (TailMatches("SELECT|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER|CREATE|CONNECT|TEMPORARY|TEMP|EXECUTE|USAGE|MAINTAIN|ALL"))
 			COMPLETE_WITH("ON");
 		else if (TailMatches("GRANT", MatchAny))
 			COMPLETE_WITH("TO");
@@ -4566,10 +4566,6 @@ psql_completion(const char *text, int start, int end)
 			}
 		}
 	}
-	/* Complete ALTER DATABASE|ROLE|USER ... SET ... TO ... USER SET */
-	else if (HeadMatches("ALTER", "DATABASE|ROLE|USER") &&
-			 TailMatches("SET", MatchAny, "TO|=", MatchAny))
-		COMPLETE_WITH("USER SET");
 
 /* START TRANSACTION */
 	else if (Matches("START"))

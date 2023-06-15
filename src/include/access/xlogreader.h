@@ -332,6 +332,7 @@ extern XLogReaderState *XLogReaderAllocate(int wal_segment_size,
 										   const char *waldir,
 										   XLogReaderRoutine *routine,
 										   void *private_data);
+
 /* Free an XLogReader */
 extern void XLogReaderFree(XLogReaderState *state);
 
@@ -423,6 +424,8 @@ extern bool DecodeXLogRecord(XLogReaderState *state,
 	((decoder)->record->blocks[block_id].has_image)
 #define XLogRecBlockImageApply(decoder, block_id)		\
 	((decoder)->record->blocks[block_id].apply_image)
+#define XLogRecHasBlockData(decoder, block_id)		\
+	((decoder)->record->blocks[block_id].has_data)
 
 #ifndef FRONTEND
 extern FullTransactionId XLogRecGetFullXid(XLogReaderState *record);

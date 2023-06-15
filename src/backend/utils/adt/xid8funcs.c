@@ -519,7 +519,7 @@ pg_snapshot_recv(PG_FUNCTION_ARGS)
 	for (i = 0; i < nxip; i++)
 	{
 		FullTransactionId cur =
-		FullTransactionIdFromU64((uint64) pq_getmsgint64(buf));
+			FullTransactionIdFromU64((uint64) pq_getmsgint64(buf));
 
 		if (FullTransactionIdPrecedes(cur, last) ||
 			FullTransactionIdPrecedes(cur, xmin) ||
@@ -678,7 +678,7 @@ pg_xact_status(PG_FUNCTION_ARGS)
 		Assert(TransactionIdIsValid(xid));
 
 		/*
-		 * Like when doing visiblity checks on a row, check whether the
+		 * Like when doing visibility checks on a row, check whether the
 		 * transaction is still in progress before looking into the CLOG.
 		 * Otherwise we would incorrectly return "committed" for a transaction
 		 * that is committing and has already updated the CLOG, but hasn't

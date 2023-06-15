@@ -887,8 +887,8 @@ pgoutput_row_filter_init(PGOutputData *data, List *publications,
 	 * are multiple lists (one for each operation) to which row filters will
 	 * be appended.
 	 *
-	 * FOR ALL TABLES and FOR TABLES IN SCHEMA implies "don't use row
-	 * filter expression" so it takes precedence.
+	 * FOR ALL TABLES and FOR TABLES IN SCHEMA implies "don't use row filter
+	 * expression" so it takes precedence.
 	 */
 	foreach(lc, publications)
 	{
@@ -1771,7 +1771,7 @@ static void
 pgoutput_stream_stop(struct LogicalDecodingContext *ctx,
 					 ReorderBufferTXN *txn)
 {
-	/* we should be streaming a trasanction */
+	/* we should be streaming a transaction */
 	Assert(in_streaming);
 
 	OutputPluginPrepareWrite(ctx, true);

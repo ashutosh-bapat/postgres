@@ -3,7 +3,7 @@
  * basebackup_copy.c
  *	  send basebackup archives using COPY OUT
  *
- * We send a result set with information about the tabelspaces to be included
+ * We send a result set with information about the tablespaces to be included
  * in the backup before starting COPY OUT. Then, we start a single COPY OUT
  * operation and transmits all the archives and the manifest if present during
  * the course of that single COPY OUT. Each CopyData message begins with a
@@ -350,6 +350,7 @@ SendXlogRecPtrResult(XLogRecPtr ptr, TimeLineID tli)
 
 	tupdesc = CreateTemplateTupleDesc(2);
 	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 1, "recptr", TEXTOID, -1, 0);
+
 	/*
 	 * int8 may seem like a surprising data type for this, but in theory int4
 	 * would not be wide enough for this, as TimeLineID is unsigned.
@@ -360,7 +361,7 @@ SendXlogRecPtrResult(XLogRecPtr ptr, TimeLineID tli)
 	tstate = begin_tup_output_tupdesc(dest, tupdesc, &TTSOpsVirtual);
 
 	/* Data row */
-	values[0]= CStringGetTextDatum(psprintf("%X/%X", LSN_FORMAT_ARGS(ptr)));
+	values[0] = CStringGetTextDatum(psprintf("%X/%X", LSN_FORMAT_ARGS(ptr)));
 	values[1] = Int64GetDatum(tli);
 	do_tup_output(tstate, values, nulls);
 

@@ -6,7 +6,7 @@
 #	Perl script that tries to add PGDLLIMPORT markings to PostgreSQL
 #	header files.
 #
-# This relies on a few idiosyncracies of the PostgreSQL coding style,
+# This relies on a few idiosyncrasies of the PostgreSQL coding style,
 # such as the fact that we always use "extern" in function
 # declarations, and that we don't use // comments. It's not very
 # smart and may not catch all cases.
@@ -28,7 +28,7 @@ use warnings;
 for my $include_file (@ARGV)
 {
 	open(my $rfh, '<', $include_file) || die "$include_file: $!";
-	my $buffer                = '';
+	my $buffer = '';
 	my $num_pgdllimport_added = 0;
 
 	while (my $raw_line = <$rfh>)

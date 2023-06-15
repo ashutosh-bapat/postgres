@@ -71,7 +71,7 @@ $node->issues_sql_like(
 	'vacuumdb --no-process-main');
 $node->command_fails(
 	[ 'vacuumdb', '--analyze-only', '--no-process-main', 'postgres' ],
-	'--analyze-only and --no-process_main specified together');
+	'--analyze-only and --no-process-main specified together');
 $node->issues_sql_like(
 	[ 'vacuumdb', '--no-process-toast', 'postgres' ],
 	qr/statement: VACUUM \(PROCESS_TOAST FALSE, SKIP_DATABASE_STATS\).*;/,
@@ -117,7 +117,7 @@ $node->command_ok([qw|vacuumdb -Z --table="need""q(uot"(")x") postgres|],
 	'column list');
 $node->command_fails(
 	[qw|vacuumdb -Zt funcidx postgres|],
-	'unqualifed name via functional index');
+	'unqualified name via functional index');
 
 $node->command_fails(
 	[ 'vacuumdb', '--analyze', '--table', 'vactable(c)', 'postgres' ],
@@ -146,7 +146,7 @@ $node->command_fails(
 	'vacuumdb --min-xid-age with incorrect value');
 $node->issues_sql_like(
 	[
-		'vacuumdb',   '--table', 'vactable', '--min-mxid-age',
+		'vacuumdb', '--table', 'vactable', '--min-mxid-age',
 		'2147483000', 'postgres'
 	],
 	qr/GREATEST.*relminmxid.*2147483000/,

@@ -343,7 +343,7 @@ contains_multiexpr_param(Node *node, void *context)
  * the RTEs in 'src_rtable' to now point to the perminfos' indexes in
  * *dst_perminfos.
  *
- * Note that this changes both 'dst_rtable' and 'dst_perminfo' destructively,
+ * Note that this changes both 'dst_rtable' and 'dst_perminfos' destructively,
  * so the caller should have better passed safe-to-modify copies.
  */
 void
@@ -719,11 +719,16 @@ ChangeVarNodes(Node *node, int rt_index, int new_index, int sublevels_up)
 
 /*
  * Substitute newrelid for oldrelid in a Relid set
+ *
+ * Note: some extensions may pass a special varno such as INDEX_VAR for
+ * oldrelid.  bms_is_member won't like that, but we should tolerate it.
+ * (Perhaps newrelid could also be a special varno, but there had better
+ * not be a reason to inject that into a nullingrels or phrels set.)
  */
 static Relids
 adjust_relid_set(Relids relids, int oldrelid, int newrelid)
 {
-	if (bms_is_member(oldrelid, relids))
+	if (!IS_SPECIAL_VARNO(oldrelid) && bms_is_member(oldrelid, relids))
 	{
 		/* Ensure we have a modifiable copy */
 		relids = bms_copy(relids);

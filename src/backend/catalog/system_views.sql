@@ -980,7 +980,7 @@ CREATE VIEW pg_stat_gssapi AS
             S.gss_auth AS gss_authenticated,
             S.gss_princ AS principal,
             S.gss_enc AS encrypted,
-            S.gss_deleg AS credentials_delegated
+            S.gss_delegation AS credentials_delegated
     FROM pg_stat_get_activity(NULL) AS S
     WHERE S.client_port IS NOT NULL;
 
@@ -1125,12 +1125,14 @@ CREATE VIEW pg_stat_bgwriter AS
 CREATE VIEW pg_stat_io AS
 SELECT
        b.backend_type,
-       b.io_object,
-       b.io_context,
+       b.object,
+       b.context,
        b.reads,
        b.read_time,
        b.writes,
        b.write_time,
+       b.writebacks,
+       b.writeback_time,
        b.extends,
        b.extend_time,
        b.op_bytes,

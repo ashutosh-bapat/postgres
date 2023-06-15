@@ -38,7 +38,6 @@
 #include "utils/timestamp.h"
 
 /* User-settable GUC parameters */
-int			vacuum_defer_cleanup_age;
 int			max_standby_archive_delay = 30 * 1000;
 int			max_standby_streaming_delay = 30 * 1000;
 bool		log_recovery_conflict_waits = false;
@@ -1194,6 +1193,15 @@ standby_redo(XLogReaderState *record)
 		running.xids = xlrec->xids;
 
 		ProcArrayApplyRecoveryInfo(&running);
+
+		/*
+		 * The startup process currently has no convenient way to schedule
+		 * stats to be reported. XLOG_RUNNING_XACTS records issued at a
+		 * regular cadence, making this a convenient location to report
+		 * stats. While these records aren't generated with wal_level=minimal,
+		 * stats also cannot be accessed during WAL replay.
+		 */
+		pgstat_report_stat(true);
 	}
 	else if (info == XLOG_INVALIDATIONS)
 	{

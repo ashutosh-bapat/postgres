@@ -897,8 +897,8 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 	 *
 	 * XLogReader machinery is only able to handle records up to a certain
 	 * size (ignoring machine resource limitations), so make sure that we will
-	 * not emit records larger than the sizes advertised to be supported.
-	 * This cap is based on DecodeXLogRecordRequiredSpace().
+	 * not emit records larger than the sizes advertised to be supported. This
+	 * cap is based on DecodeXLogRecordRequiredSpace().
 	 */
 	if (total_len >= XLogRecordMaxSize)
 		ereport(ERROR,
@@ -1303,6 +1303,10 @@ log_newpage_range(Relation rel, ForkNumber forknum,
 				UnlockReleaseBuffer(buf);
 			blkno++;
 		}
+
+		/* Nothing more to do if all remaining blocks were empty. */
+		if (nbufs == 0)
+			break;
 
 		/* Write WAL record for this batch. */
 		XLogBeginInsert();

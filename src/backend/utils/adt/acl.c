@@ -189,7 +189,7 @@ getid(const char *s, char *n, Node *escontext)
 /*
  * Write a role name at *p, adding double quotes if needed.
  * There must be at least (2*NAMEDATALEN)+2 bytes available at *p.
- * This needs to be kept in sync with copyAclUserName in pg_dump/dumputils.c
+ * This needs to be kept in sync with dequoteAclUserName in pg_dump/dumputils.c
  */
 static void
 putid(char *p, const char *s)
@@ -4717,8 +4717,8 @@ pg_has_role_id_id(PG_FUNCTION_ARGS)
  *		Convert text string to AclMode value.
  *
  * We use USAGE to denote whether the privileges of the role are accessible
- * (has_privs), MEMBER to denote is_member, and MEMBER WITH GRANT OPTION
- * (or ADMIN OPTION) to denote is_admin.  There is no ACL bit corresponding
+ * (has_privs_of_role), MEMBER to denote is_member, and MEMBER WITH GRANT
+ * (or ADMIN) OPTION to denote is_admin.  There is no ACL bit corresponding
  * to MEMBER so we cheat and use ACL_CREATE for that.  This convention
  * is shared only with pg_role_aclcheck, below.
  */
@@ -4825,7 +4825,7 @@ RoleMembershipCacheCallback(Datum arg, int cacheid, uint32 hashvalue)
  * Get a list of roles that the specified roleid is a member of
  *
  * Type ROLERECURSE_MEMBERS recurses through all grants; ROLERECURSE_PRIVS
- * recurses only through inheritable grants; and ROLERECURSE_SETROLe recurses
+ * recurses only through inheritable grants; and ROLERECURSE_SETROLE recurses
  * only through grants with set_option.
  *
  * Since indirect membership testing is relatively expensive, we cache
@@ -5020,7 +5020,7 @@ member_can_set_role(Oid member, Oid role)
 }
 
 /*
- * Permission violation eror unless able to SET ROLE to target role.
+ * Permission violation error unless able to SET ROLE to target role.
  */
 void
 check_can_set_role(Oid member, Oid role)

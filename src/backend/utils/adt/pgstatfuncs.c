@@ -600,7 +600,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				values[25] = BoolGetDatum(beentry->st_gssstatus->gss_auth); /* gss_auth */
 				values[26] = CStringGetTextDatum(beentry->st_gssstatus->gss_princ);
 				values[27] = BoolGetDatum(beentry->st_gssstatus->gss_enc);	/* GSS Encryption in use */
-				values[28] = BoolGetDatum(beentry->st_gssstatus->gss_deleg);	/* GSS credentials
+				values[28] = BoolGetDatum(beentry->st_gssstatus->gss_delegation);	/* GSS credentials
 																				 * delegated */
 			}
 			else
@@ -1262,12 +1262,14 @@ typedef enum io_stat_col
 {
 	IO_COL_INVALID = -1,
 	IO_COL_BACKEND_TYPE,
-	IO_COL_IO_OBJECT,
-	IO_COL_IO_CONTEXT,
+	IO_COL_OBJECT,
+	IO_COL_CONTEXT,
 	IO_COL_READS,
 	IO_COL_READ_TIME,
 	IO_COL_WRITES,
 	IO_COL_WRITE_TIME,
+	IO_COL_WRITEBACKS,
+	IO_COL_WRITEBACK_TIME,
 	IO_COL_EXTENDS,
 	IO_COL_EXTEND_TIME,
 	IO_COL_CONVERSION,
@@ -1303,6 +1305,8 @@ pgstat_get_io_op_index(IOOp io_op)
 			return IO_COL_REUSES;
 		case IOOP_WRITE:
 			return IO_COL_WRITES;
+		case IOOP_WRITEBACK:
+			return IO_COL_WRITEBACKS;
 	}
 
 	elog(ERROR, "unrecognized IOOp value: %d", io_op);
@@ -1322,6 +1326,7 @@ pgstat_get_io_time_index(IOOp io_op)
 	{
 		case IOOP_READ:
 		case IOOP_WRITE:
+		case IOOP_WRITEBACK:
 		case IOOP_EXTEND:
 		case IOOP_FSYNC:
 			return pgstat_get_io_op_index(io_op) + 1;
@@ -1394,8 +1399,8 @@ pg_stat_get_io(PG_FUNCTION_ARGS)
 					continue;
 
 				values[IO_COL_BACKEND_TYPE] = bktype_desc;
-				values[IO_COL_IO_CONTEXT] = CStringGetTextDatum(context_name);
-				values[IO_COL_IO_OBJECT] = CStringGetTextDatum(obj_name);
+				values[IO_COL_CONTEXT] = CStringGetTextDatum(context_name);
+				values[IO_COL_OBJECT] = CStringGetTextDatum(obj_name);
 				values[IO_COL_RESET_TIME] = TimestampTzGetDatum(reset_time);
 
 				/*

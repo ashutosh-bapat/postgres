@@ -52,12 +52,12 @@ typedef struct vacuumingOptions
 /* object filter options */
 typedef enum
 {
-	OBJFILTER_NONE = 0,					/* no filter used */
-	OBJFILTER_ALL_DBS = (1 << 0),		/* -a | --all */
-	OBJFILTER_DATABASE = (1 << 1),		/* -d | --dbname */
-	OBJFILTER_TABLE = (1 << 2),			/* -t | --table */
-	OBJFILTER_SCHEMA = (1 << 3),		/* -n | --schema */
-	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4)	/* -N | --exclude-schema */
+	OBJFILTER_NONE = 0,			/* no filter used */
+	OBJFILTER_ALL_DBS = (1 << 0),	/* -a | --all */
+	OBJFILTER_DATABASE = (1 << 1),	/* -d | --dbname */
+	OBJFILTER_TABLE = (1 << 2), /* -t | --table */
+	OBJFILTER_SCHEMA = (1 << 3),	/* -n | --schema */
+	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4) /* -N | --exclude-schema */
 } VacObjFilter;
 
 VacObjFilter objfilter = OBJFILTER_NONE;
@@ -83,7 +83,7 @@ static void run_vacuum_command(PGconn *conn, const char *sql, bool echo,
 
 static void help(const char *progname);
 
-void check_objfilter(void);
+void		check_objfilter(void);
 
 /* For analyze-in-stages mode */
 #define ANALYZE_NO_STAGE	-1
@@ -1128,6 +1128,7 @@ help(const char *progname)
 	printf(_("  %s [OPTION]... [DBNAME]\n"), progname);
 	printf(_("\nOptions:\n"));
 	printf(_("  -a, --all                       vacuum all databases\n"));
+	printf(_("      --buffer-usage-limit=SIZE   size of ring buffer used for vacuum\n"));
 	printf(_("  -d, --dbname=DBNAME             database to vacuum\n"));
 	printf(_("      --disable-page-skipping     disable all page-skipping behavior\n"));
 	printf(_("  -e, --echo                      show the commands being sent to the server\n"));
@@ -1136,7 +1137,6 @@ help(const char *progname)
 	printf(_("      --force-index-cleanup       always remove index entries that point to dead tuples\n"));
 	printf(_("  -j, --jobs=NUM                  use this many concurrent connections to vacuum\n"));
 	printf(_("      --min-mxid-age=MXID_AGE     minimum multixact ID age of tables to vacuum\n"));
-	printf(_("      --buffer-usage-limit=BUFSIZE size of ring buffer used for vacuum\n"));
 	printf(_("      --min-xid-age=XID_AGE       minimum transaction ID age of tables to vacuum\n"));
 	printf(_("      --no-index-cleanup          don't remove index entries that point to dead tuples\n"));
 	printf(_("      --no-process-main           skip the main relation\n"));

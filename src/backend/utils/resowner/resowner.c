@@ -521,7 +521,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 	{
 		/*
 		 * Abort failed buffer IO. AbortBufferIO()->TerminateBufferIO() calls
-		 * ResourceOwnerForgetBufferIOs(), so we just have to iterate till
+		 * ResourceOwnerForgetBufferIO(), so we just have to iterate till
 		 * there are none.
 		 *
 		 * Needs to be before we release buffer pins.
@@ -587,7 +587,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 		while (ResourceArrayGetAny(&(owner->cryptohasharr), &foundres))
 		{
 			pg_cryptohash_ctx *context =
-			(pg_cryptohash_ctx *) DatumGetPointer(foundres);
+				(pg_cryptohash_ctx *) DatumGetPointer(foundres);
 
 			if (isCommit)
 				PrintCryptoHashLeakWarning(foundres);

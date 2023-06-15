@@ -1717,7 +1717,7 @@ allocateReloptStruct(Size base, relopt_value *options, int numoptions)
 			if (optstr->fill_cb)
 			{
 				const char *val = optval->isset ? optval->values.string_val :
-				optstr->default_isnull ? NULL : optstr->default_val;
+					optstr->default_isnull ? NULL : optstr->default_val;
 
 				size += optstr->fill_cb(val, NULL);
 			}
@@ -1796,8 +1796,8 @@ fillRelOptions(void *rdopts, Size basesize,
 						if (optstring->fill_cb)
 						{
 							Size		size =
-							optstring->fill_cb(string_val,
-											   (char *) rdopts + offset);
+								optstring->fill_cb(string_val,
+												   (char *) rdopts + offset);
 
 							if (size)
 							{
@@ -1969,8 +1969,9 @@ build_local_reloptions(local_relopts *relopts, Datum options, bool validate)
 	fillRelOptions(opts, relopts->relopt_struct_size, vals, noptions, validate,
 				   elems, noptions);
 
-	foreach(lc, relopts->validators)
-		((relopts_validator) lfirst(lc)) (opts, vals, noptions);
+	if (validate)
+		foreach(lc, relopts->validators)
+			((relopts_validator) lfirst(lc)) (opts, vals, noptions);
 
 	if (elems)
 		pfree(elems);

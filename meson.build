@@ -8,7 +8,7 @@
 
 project('postgresql',
   ['c'],
-  version: '16devel',
+  version: '16beta1',
   license: 'PostgreSQL',
 
   # We want < 0.56 for python 3.5 compatibility on old platforms. EPEL for
@@ -634,14 +634,14 @@ if not gssapiopt.disabled()
   endif
 
   if not have_gssapi
-  elif cc.has_function('gss_init_sec_context', dependencies: gssapi,
+  elif cc.has_function('gss_store_cred_into', dependencies: gssapi,
       args: test_c_args, include_directories: postgres_inc)
     cdata.set('ENABLE_GSS', 1)
 
     krb_srvtab = 'FILE:/@0@/krb5.keytab)'.format(get_option('sysconfdir'))
     cdata.set_quoted('PG_KRB_SRVTAB', krb_srvtab)
   elif gssapiopt.enabled()
-    error('''could not find function 'gss_init_sec_context' required for GSSAPI''')
+    error('''could not find function 'gss_store_cred_into' required for GSSAPI''')
   else
     have_gssapi = false
   endif
@@ -2682,6 +2682,20 @@ gen_export_kwargs = {
 
 
 ###
+### Helpers for custom targets used across the tree
+###
+
+catalog_pm = files('src/backend/catalog/Catalog.pm')
+perfect_hash_pm = files('src/tools/PerfectHash.pm')
+gen_kwlist_deps = [perfect_hash_pm]
+gen_kwlist_cmd = [
+  perl, '-I', '@SOURCE_ROOT@/src/tools',
+  files('src/tools/gen_keywordlist.pl'),
+  '--output', '@OUTDIR@', '@INPUT@']
+
+
+
+###
 ### windows resources related stuff
 ###
 
@@ -2963,7 +2977,7 @@ endif
 # generation happens during install, so that's not a real issue.
 nls_mo_targets = []
 if libintl.found() and meson.version().version_compare('>=0.60')
-  # use range() to avoid the flattening of the list that forech() would do
+  # use range() to avoid the flattening of the list that foreach() would do
   foreach off : range(0, nls_targets.length())
     # i18n.gettext() list containing 1) list of built .mo files 2) maintainer
     # -pot target 3) maintainer -pot target

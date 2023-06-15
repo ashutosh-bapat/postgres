@@ -368,7 +368,8 @@ advance_windowaggregate(WindowAggState *winstate,
 	 * free the prior transValue.  But if transfn returned a pointer to its
 	 * first input, we don't need to do anything.  Also, if transfn returned a
 	 * pointer to a R/W expanded object that is already a child of the
-	 * aggcontext, assume we can adopt that value without copying it.
+	 * aggcontext, assume we can adopt that value without copying it.  (See
+	 * comments for ExecAggCopyTransValue, which this code duplicates.)
 	 */
 	if (!peraggstate->transtypeByVal &&
 		DatumGetPointer(newVal) != DatumGetPointer(peraggstate->transValue))
@@ -533,7 +534,8 @@ advance_windowaggregate_base(WindowAggState *winstate,
 	 * free the prior transValue.  But if invtransfn returned a pointer to its
 	 * first input, we don't need to do anything.  Also, if invtransfn
 	 * returned a pointer to a R/W expanded object that is already a child of
-	 * the aggcontext, assume we can adopt that value without copying it.
+	 * the aggcontext, assume we can adopt that value without copying it. (See
+	 * comments for ExecAggCopyTransValue, which this code duplicates.)
 	 *
 	 * Note: the checks for null values here will never fire, but it seems
 	 * best to have this stanza look just like advance_windowaggregate.
@@ -623,10 +625,15 @@ finalize_windowaggregate(WindowAggState *winstate,
 		}
 		else
 		{
+			Datum		res;
+
 			winstate->curaggcontext = peraggstate->aggcontext;
-			*result = FunctionCallInvoke(fcinfo);
+			res = FunctionCallInvoke(fcinfo);
 			winstate->curaggcontext = NULL;
 			*isnull = fcinfo->isnull;
+			*result = MakeExpandedObjectReadOnly(res,
+												 fcinfo->isnull,
+												 peraggstate->resulttypeLen);
 		}
 	}
 	else
@@ -2575,7 +2582,7 @@ ExecInitWindowAgg(WindowAgg *node, EState *estate, int eflags)
 
 		/* Check permission to call window function */
 		aclresult = object_aclcheck(ProcedureRelationId, wfunc->winfnoid, GetUserId(),
-									 ACL_EXECUTE);
+									ACL_EXECUTE);
 		if (aclresult != ACLCHECK_OK)
 			aclcheck_error(aclresult, OBJECT_FUNCTION,
 						   get_func_name(wfunc->winfnoid));
@@ -2814,7 +2821,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 	if (!OidIsValid(aggform->aggminvtransfn))
 		use_ma_code = false;	/* sine qua non */
 	else if (aggform->aggmfinalmodify == AGGMODIFY_READ_ONLY &&
-		aggform->aggfinalmodify != AGGMODIFY_READ_ONLY)
+			 aggform->aggfinalmodify != AGGMODIFY_READ_ONLY)
 		use_ma_code = true;		/* decision forced by safety */
 	else if (winstate->frameOptions & FRAMEOPTION_START_UNBOUNDED_PRECEDING)
 		use_ma_code = false;	/* non-moving frame head */
@@ -2864,7 +2871,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 		ReleaseSysCache(procTuple);
 
 		aclresult = object_aclcheck(ProcedureRelationId, transfn_oid, aggOwner,
-									 ACL_EXECUTE);
+									ACL_EXECUTE);
 		if (aclresult != ACLCHECK_OK)
 			aclcheck_error(aclresult, OBJECT_FUNCTION,
 						   get_func_name(transfn_oid));
@@ -2873,7 +2880,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 		if (OidIsValid(invtransfn_oid))
 		{
 			aclresult = object_aclcheck(ProcedureRelationId, invtransfn_oid, aggOwner,
-										 ACL_EXECUTE);
+										ACL_EXECUTE);
 			if (aclresult != ACLCHECK_OK)
 				aclcheck_error(aclresult, OBJECT_FUNCTION,
 							   get_func_name(invtransfn_oid));
@@ -2883,7 +2890,7 @@ initialize_peragg(WindowAggState *winstate, WindowFunc *wfunc,
 		if (OidIsValid(finalfn_oid))
 		{
 			aclresult = object_aclcheck(ProcedureRelationId, finalfn_oid, aggOwner,
-										 ACL_EXECUTE);
+										ACL_EXECUTE);
 			if (aclresult != ACLCHECK_OK)
 				aclcheck_error(aclresult, OBJECT_FUNCTION,
 							   get_func_name(finalfn_oid));

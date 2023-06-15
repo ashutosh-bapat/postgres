@@ -123,7 +123,6 @@ CreateExecutorState(void)
 	estate->es_rowmarks = NULL;
 	estate->es_rteperminfos = NIL;
 	estate->es_plannedstmt = NULL;
-	estate->es_part_prune_infos = NIL;
 
 	estate->es_junkFilter = NULL;
 
@@ -1346,12 +1345,26 @@ ExecGetExtraUpdatedCols(ResultRelInfo *relinfo, EState *estate)
 	return relinfo->ri_extraUpdatedCols;
 }
 
-/* Return columns being updated, including generated columns */
+/*
+ * Return columns being updated, including generated columns
+ *
+ * The bitmap is allocated in per-tuple memory context. It's up to the caller to
+ * copy it into a different context with the appropriate lifespan, if needed.
+ */
 Bitmapset *
 ExecGetAllUpdatedCols(ResultRelInfo *relinfo, EState *estate)
 {
-	return bms_union(ExecGetUpdatedCols(relinfo, estate),
-					 ExecGetExtraUpdatedCols(relinfo, estate));
+	Bitmapset	   *ret;
+	MemoryContext	oldcxt;
+
+	oldcxt = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
+
+	ret = bms_union(ExecGetUpdatedCols(relinfo, estate),
+					ExecGetExtraUpdatedCols(relinfo, estate));
+
+	MemoryContextSwitchTo(oldcxt);
+
+	return ret;
 }
 
 /*
@@ -1403,7 +1416,7 @@ GetResultRTEPermissionInfo(ResultRelInfo *relinfo, EState *estate)
 }
 
 /*
- * GetResultRelCheckAsUser
+ * ExecGetResultRelCheckAsUser
  *		Returns the user to modify passed-in result relation as
  *
  * The user is chosen by looking up the relation's or, if a child table, its

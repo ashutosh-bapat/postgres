@@ -341,18 +341,18 @@ tablespace_list_append(const char *arg)
 
 	/*
 	 * All tablespaces are created with absolute directories, so specifying a
-	 * non-absolute path here would just never match, possibly confusing users.
-	 * Since we don't know whether the remote side is Windows or not, and it
-	 * might be different than the local side, permit any path that could be
-	 * absolute under either set of rules.
+	 * non-absolute path here would just never match, possibly confusing
+	 * users. Since we don't know whether the remote side is Windows or not,
+	 * and it might be different than the local side, permit any path that
+	 * could be absolute under either set of rules.
 	 *
 	 * (There is little practical risk of confusion here, because someone
 	 * running entirely on Linux isn't likely to have a relative path that
 	 * begins with a backslash or something that looks like a drive
-	 * specification. If they do, and they also incorrectly believe that
-	 * a relative path is acceptable here, we'll silently fail to warn them
-	 * of their mistake, and the -T option will just not get applied, same
-	 * as if they'd specified -T for a nonexistent tablespace.)
+	 * specification. If they do, and they also incorrectly believe that a
+	 * relative path is acceptable here, we'll silently fail to warn them of
+	 * their mistake, and the -T option will just not get applied, same as if
+	 * they'd specified -T for a nonexistent tablespace.)
 	 */
 	if (!is_nonwindows_absolute_path(cell->old_dir) &&
 		!is_windows_absolute_path(cell->old_dir))
@@ -1122,9 +1122,17 @@ CreateBackupStreamer(char *archive_name, char *spclocation,
 		 * other tablespaces will be written to the directory where they're
 		 * located on the server, after applying any user-specified tablespace
 		 * mappings.
+		 *
+		 * In the case of an in-place tablespace, spclocation will be a
+		 * relative path. We just convert it to an absolute path by prepending
+		 * basedir.
 		 */
-		directory = spclocation == NULL ? basedir
-			: get_tablespace_mapping(spclocation);
+		if (spclocation == NULL)
+			directory = basedir;
+		else if (!is_absolute_path(spclocation))
+			directory = psprintf("%s/%s", basedir, spclocation);
+		else
+			directory = get_tablespace_mapping(spclocation);
 		streamer = bbstreamer_extractor_new(directory,
 											get_tablespace_mapping,
 											progress_update_filename);
@@ -1955,7 +1963,15 @@ BaseBackup(char *compression_algorithm, char *compression_detail,
 		 */
 		if (backup_target == NULL && format == 'p' && !PQgetisnull(res, i, 1))
 		{
-			char	   *path = unconstify(char *, get_tablespace_mapping(PQgetvalue(res, i, 1)));
+			char	   *path = PQgetvalue(res, i, 1);
+
+			if (is_absolute_path(path))
+				path = unconstify(char *, get_tablespace_mapping(path));
+			else
+			{
+				/* This is an in-place tablespace, so prepend basedir. */
+				path = psprintf("%s/%s", basedir, path);
+			}
 
 			verify_dir_is_empty_or_create(path, &made_tablespace_dirs, &found_tablespace_dirs);
 		}

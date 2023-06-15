@@ -68,7 +68,7 @@ use Test::More;
 
 =over
 
-=item PostgreSQL::Test::BackroundPsql->new(interactive, @params)
+=item PostgreSQL::Test::BackgroundPsql->new(interactive, @params)
 
 Builds a new object of class C<PostgreSQL::Test::BackgroundPsql> for either
 an interactive or background session and starts it. If C<interactive> is
@@ -82,20 +82,28 @@ sub new
 {
 	my $class = shift;
 	my ($interactive, $psql_params) = @_;
-	my $psql = {'stdin' => '', 'stdout' => '', 'stderr' => '', 'query_timer_restart' => undef};
+	my $psql = {
+		'stdin' => '',
+		'stdout' => '',
+		'stderr' => '',
+		'query_timer_restart' => undef
+	};
 	my $run;
 
 	# This constructor should only be called from PostgreSQL::Test::Cluster
-    my ($package, $file, $line) = caller;
-    die "Forbidden caller of constructor: package: $package, file: $file:$line"
+	my ($package, $file, $line) = caller;
+	die
+	  "Forbidden caller of constructor: package: $package, file: $file:$line"
 	  unless $package->isa('PostgreSQL::Test::Cluster');
 
-	$psql->{timeout} = IPC::Run::timeout($PostgreSQL::Test::Utils::timeout_default);
+	$psql->{timeout} =
+	  IPC::Run::timeout($PostgreSQL::Test::Utils::timeout_default);
 
 	if ($interactive)
 	{
 		$run = IPC::Run::start $psql_params,
-		  '<pty<', \$psql->{stdin}, '>pty>', \$psql->{stdout}, '2>', \$psql->{stderr},
+		  '<pty<', \$psql->{stdin}, '>pty>', \$psql->{stdout}, '2>',
+		  \$psql->{stderr},
 		  $psql->{timeout};
 	}
 	else
@@ -126,8 +134,9 @@ sub _wait_connect
 	# errors anyway, but that might be added later.)
 	my $banner = "background_psql: ready";
 	$self->{stdin} .= "\\echo $banner\n";
-	$self->{run}->pump() until $self->{stdout} =~ /$banner/ || $self->{timeout}->is_expired;
-	$self->{stdout} = ''; # clear out banner
+	$self->{run}->pump()
+	  until $self->{stdout} =~ /$banner/ || $self->{timeout}->is_expired;
+	$self->{stdout} = '';    # clear out banner
 
 	die "psql startup timed out" if $self->{timeout}->is_expired;
 }
@@ -173,10 +182,10 @@ sub reconnect_and_clear
 
 	# restart
 	$self->{run}->run();
-	$self->{stdin}  = '';
+	$self->{stdin} = '';
 	$self->{stdout} = '';
 
-	$self->_wait_connect()
+	$self->_wait_connect();
 }
 
 =pod
@@ -201,7 +210,7 @@ sub query
 	$self->{timeout}->start() if (defined($self->{query_timer_restart}));
 
 	# Feed the query to psql's stdin, followed by \n (so psql processes the
-	# line), by a ; (so that psql issues the query, if it doesnt't include a ;
+	# line), by a ; (so that psql issues the query, if it doesn't include a ;
 	# itself), and a separator echoed with \echo, that we can wait on.
 	my $banner = "background_psql: QUERY_SEPARATOR";
 	$self->{stdin} .= "$query\n;\n\\echo $banner\n";
@@ -219,7 +228,7 @@ sub query
 
 	$ret = $self->{stderr} eq "" ? 0 : 1;
 
-	return wantarray ? ( $output, $ret ) : $output;
+	return wantarray ? ($output, $ret) : $output;
 }
 
 =pod

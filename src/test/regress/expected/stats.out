@@ -985,6 +985,65 @@ SELECT pg_stat_get_snapshot_timestamp();
 
 COMMIT;
 ----
+-- Changing stats_fetch_consistency in a transaction.
+----
+BEGIN;
+-- Stats filled under the cache mode
+SET LOCAL stats_fetch_consistency = cache;
+SELECT pg_stat_get_function_calls(0);
+ pg_stat_get_function_calls 
+----------------------------
+                           
+(1 row)
+
+SELECT pg_stat_get_snapshot_timestamp() IS NOT NULL AS snapshot_ok;
+ snapshot_ok 
+-------------
+ f
+(1 row)
+
+-- Success in accessing pre-existing snapshot data.
+SET LOCAL stats_fetch_consistency = snapshot;
+SELECT pg_stat_get_snapshot_timestamp() IS NOT NULL AS snapshot_ok;
+ snapshot_ok 
+-------------
+ f
+(1 row)
+
+SELECT pg_stat_get_function_calls(0);
+ pg_stat_get_function_calls 
+----------------------------
+                           
+(1 row)
+
+SELECT pg_stat_get_snapshot_timestamp() IS NOT NULL AS snapshot_ok;
+ snapshot_ok 
+-------------
+ t
+(1 row)
+
+-- Snapshot cleared.
+SET LOCAL stats_fetch_consistency = none;
+SELECT pg_stat_get_snapshot_timestamp() IS NOT NULL AS snapshot_ok;
+ snapshot_ok 
+-------------
+ f
+(1 row)
+
+SELECT pg_stat_get_function_calls(0);
+ pg_stat_get_function_calls 
+----------------------------
+                           
+(1 row)
+
+SELECT pg_stat_get_snapshot_timestamp() IS NOT NULL AS snapshot_ok;
+ snapshot_ok 
+-------------
+ f
+(1 row)
+
+ROLLBACK;
+----
 -- pg_stat_have_stats behavior
 ----
 -- fixed-numbered stats exist
@@ -1137,10 +1196,10 @@ SELECT pg_stat_get_subscription_stats(NULL);
 -- Create a regular table and insert some data to generate IOCONTEXT_NORMAL
 -- extends.
 SELECT sum(extends) AS io_sum_shared_before_extends
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'relation' \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
 SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
   FROM pg_stat_io
-  WHERE io_object = 'relation' \gset io_sum_shared_before_
+  WHERE object = 'relation' \gset io_sum_shared_before_
 CREATE TABLE test_io_shared(a int);
 INSERT INTO test_io_shared SELECT i FROM generate_series(1,100)i;
 SELECT pg_stat_force_next_flush();
@@ -1150,7 +1209,7 @@ SELECT pg_stat_force_next_flush();
 (1 row)
 
 SELECT sum(extends) AS io_sum_shared_after_extends
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'relation' \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
 SELECT :io_sum_shared_after_extends > :io_sum_shared_before_extends;
  ?column? 
 ----------
@@ -1164,7 +1223,7 @@ CHECKPOINT;
 CHECKPOINT;
 SELECT sum(writes) AS writes, sum(fsyncs) AS fsyncs
   FROM pg_stat_io
-  WHERE io_object = 'relation' \gset io_sum_shared_after_
+  WHERE object = 'relation' \gset io_sum_shared_after_
 SELECT :io_sum_shared_after_writes > :io_sum_shared_before_writes;
  ?column? 
 ----------
@@ -1181,13 +1240,13 @@ SELECT current_setting('fsync') = 'off'
 -- Change the tablespace so that the table is rewritten directly, then SELECT
 -- from it to cause it to be read back into shared buffers.
 SELECT sum(reads) AS io_sum_shared_before_reads
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'relation' \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
 -- Do this in a transaction to prevent spurious failures due to concurrent accesses to our newly
 -- rewritten table, e.g. by autovacuum.
 BEGIN;
 ALTER TABLE test_io_shared SET TABLESPACE regress_tblspace;
 -- SELECT from the table so that the data is read into shared buffers and
--- io_context 'normal', io_object 'relation' reads are counted.
+-- context 'normal', object 'relation' reads are counted.
 SELECT COUNT(*) FROM test_io_shared;
  count 
 -------
@@ -1202,7 +1261,7 @@ SELECT pg_stat_force_next_flush();
 (1 row)
 
 SELECT sum(reads) AS io_sum_shared_after_reads
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'relation'  \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'relation'  \gset
 SELECT :io_sum_shared_after_reads > :io_sum_shared_before_reads;
  ?column? 
 ----------
@@ -1210,7 +1269,7 @@ SELECT :io_sum_shared_after_reads > :io_sum_shared_before_reads;
 (1 row)
 
 SELECT sum(hits) AS io_sum_shared_before_hits
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'relation' \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
 -- Select from the table again to count hits.
 -- Ensure we generate hits by forcing a nested loop self-join with no
 -- materialize node. The outer side's buffer will stay pinned, preventing its
@@ -1243,7 +1302,7 @@ SELECT pg_stat_force_next_flush();
 (1 row)
 
 SELECT sum(hits) AS io_sum_shared_after_hits
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'relation' \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'relation' \gset
 SELECT :io_sum_shared_after_hits > :io_sum_shared_before_hits;
  ?column? 
 ----------
@@ -1264,7 +1323,7 @@ SET temp_buffers TO 100;
 CREATE TEMPORARY TABLE test_io_local(a int, b TEXT);
 SELECT sum(extends) AS extends, sum(evictions) AS evictions, sum(writes) AS writes
   FROM pg_stat_io
-  WHERE io_context = 'normal' AND io_object = 'temp relation' \gset io_sum_local_before_
+  WHERE context = 'normal' AND object = 'temp relation' \gset io_sum_local_before_
 -- Insert tuples into the temporary table, generating extends in the stats.
 -- Insert enough values that we need to reuse and write out dirty local
 -- buffers, generating evictions and writes.
@@ -1277,7 +1336,7 @@ SELECT pg_relation_size('test_io_local') / current_setting('block_size')::int8 >
 (1 row)
 
 SELECT sum(reads) AS io_sum_local_before_reads
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'temp relation' \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'temp relation' \gset
 -- Read in evicted buffers, generating reads.
 SELECT COUNT(*) FROM test_io_local;
  count 
@@ -1296,7 +1355,7 @@ SELECT sum(evictions) AS evictions,
        sum(writes) AS writes,
        sum(extends) AS extends
   FROM pg_stat_io
-  WHERE io_context = 'normal' AND io_object = 'temp relation'  \gset io_sum_local_after_
+  WHERE context = 'normal' AND object = 'temp relation'  \gset io_sum_local_after_
 SELECT :io_sum_local_after_evictions > :io_sum_local_before_evictions,
        :io_sum_local_after_reads > :io_sum_local_before_reads,
        :io_sum_local_after_writes > :io_sum_local_before_writes,
@@ -1317,7 +1376,7 @@ SELECT pg_stat_force_next_flush();
 (1 row)
 
 SELECT sum(writes) AS io_sum_local_new_tblspc_writes
-  FROM pg_stat_io WHERE io_context = 'normal' AND io_object = 'temp relation'  \gset
+  FROM pg_stat_io WHERE context = 'normal' AND object = 'temp relation'  \gset
 SELECT :io_sum_local_new_tblspc_writes > :io_sum_local_after_writes;
  ?column? 
 ----------
@@ -1335,13 +1394,15 @@ RESET temp_buffers;
 -- reads.
 SET wal_skip_threshold = '1 kB';
 SELECT sum(reuses) AS reuses, sum(reads) AS reads
-  FROM pg_stat_io WHERE io_context = 'vacuum' \gset io_sum_vac_strategy_before_
+  FROM pg_stat_io WHERE context = 'vacuum' \gset io_sum_vac_strategy_before_
 CREATE TABLE test_io_vac_strategy(a int, b int) WITH (autovacuum_enabled = 'false');
-INSERT INTO test_io_vac_strategy SELECT i, i from generate_series(1, 8000)i;
+INSERT INTO test_io_vac_strategy SELECT i, i from generate_series(1, 4500)i;
 -- Ensure that the next VACUUM will need to perform IO by rewriting the table
 -- first with VACUUM (FULL).
 VACUUM (FULL) test_io_vac_strategy;
-VACUUM (PARALLEL 0) test_io_vac_strategy;
+-- Use the minimum BUFFER_USAGE_LIMIT to cause reuses with the smallest table
+-- possible.
+VACUUM (PARALLEL 0, BUFFER_USAGE_LIMIT 128) test_io_vac_strategy;
 SELECT pg_stat_force_next_flush();
  pg_stat_force_next_flush 
 --------------------------
@@ -1349,7 +1410,7 @@ SELECT pg_stat_force_next_flush();
 (1 row)
 
 SELECT sum(reuses) AS reuses, sum(reads) AS reads
-  FROM pg_stat_io WHERE io_context = 'vacuum' \gset io_sum_vac_strategy_after_
+  FROM pg_stat_io WHERE context = 'vacuum' \gset io_sum_vac_strategy_after_
 SELECT :io_sum_vac_strategy_after_reads > :io_sum_vac_strategy_before_reads,
        :io_sum_vac_strategy_after_reuses > :io_sum_vac_strategy_before_reuses;
  ?column? | ?column? 
@@ -1361,7 +1422,7 @@ RESET wal_skip_threshold;
 -- Test that extends done by a CTAS, which uses a BAS_BULKWRITE
 -- BufferAccessStrategy, are tracked in pg_stat_io.
 SELECT sum(extends) AS io_sum_bulkwrite_strategy_extends_before
-  FROM pg_stat_io WHERE io_context = 'bulkwrite' \gset
+  FROM pg_stat_io WHERE context = 'bulkwrite' \gset
 CREATE TABLE test_io_bulkwrite_strategy AS SELECT i FROM generate_series(1,100)i;
 SELECT pg_stat_force_next_flush();
  pg_stat_force_next_flush 
@@ -1370,7 +1431,7 @@ SELECT pg_stat_force_next_flush();
 (1 row)
 
 SELECT sum(extends) AS io_sum_bulkwrite_strategy_extends_after
-  FROM pg_stat_io WHERE io_context = 'bulkwrite' \gset
+  FROM pg_stat_io WHERE context = 'bulkwrite' \gset
 SELECT :io_sum_bulkwrite_strategy_extends_after > :io_sum_bulkwrite_strategy_extends_before;
  ?column? 
 ----------
@@ -1384,7 +1445,7 @@ SELECT pg_stat_have_stats('io', 0, 0);
  t
 (1 row)
 
-SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(hits) AS io_stats_pre_reset
+SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_pre_reset
   FROM pg_stat_io \gset
 SELECT pg_stat_reset_shared('io');
  pg_stat_reset_shared 
@@ -1392,7 +1453,7 @@ SELECT pg_stat_reset_shared('io');
  
 (1 row)
 
-SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(hits) AS io_stats_post_reset
+SELECT sum(evictions) + sum(reuses) + sum(extends) + sum(fsyncs) + sum(reads) + sum(writes) + sum(writebacks) + sum(hits) AS io_stats_post_reset
   FROM pg_stat_io \gset
 SELECT :io_stats_post_reset < :io_stats_pre_reset;
  ?column? 

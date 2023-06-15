@@ -457,9 +457,9 @@ XLogPrefetcherComputeStats(XLogPrefetcher *prefetcher)
  * *lsn, and the I/O will be considered to have completed once that LSN is
  * replayed.
  *
- * Returns LRQ_NO_IO if we examined the next block reference and found that it
- * was already in the buffer pool, or we decided for various reasons not to
- * prefetch.
+ * Returns LRQ_NEXT_NO_IO if we examined the next block reference and found
+ * that it was already in the buffer pool, or we decided for various reasons
+ * not to prefetch.
  */
 static LsnReadQueueNextStatus
 XLogPrefetcherNextBlock(uintptr_t pgsr_private, XLogRecPtr *lsn)
@@ -569,7 +569,7 @@ XLogPrefetcherNextBlock(uintptr_t pgsr_private, XLogRecPtr *lsn)
 				if (record_type == XLOG_DBASE_CREATE_FILE_COPY)
 				{
 					xl_dbase_create_file_copy_rec *xlrec =
-					(xl_dbase_create_file_copy_rec *) record->main_data;
+						(xl_dbase_create_file_copy_rec *) record->main_data;
 					RelFileLocator rlocator =
 					{InvalidOid, xlrec->db_id, InvalidRelFileNumber};
 
@@ -596,7 +596,7 @@ XLogPrefetcherNextBlock(uintptr_t pgsr_private, XLogRecPtr *lsn)
 				if (record_type == XLOG_SMGR_CREATE)
 				{
 					xl_smgr_create *xlrec = (xl_smgr_create *)
-					record->main_data;
+						record->main_data;
 
 					if (xlrec->forkNum == MAIN_FORKNUM)
 					{
@@ -624,7 +624,7 @@ XLogPrefetcherNextBlock(uintptr_t pgsr_private, XLogRecPtr *lsn)
 				else if (record_type == XLOG_SMGR_TRUNCATE)
 				{
 					xl_smgr_truncate *xlrec = (xl_smgr_truncate *)
-					record->main_data;
+						record->main_data;
 
 					/*
 					 * Don't consider prefetching anything in the truncated

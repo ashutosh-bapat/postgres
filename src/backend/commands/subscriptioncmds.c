@@ -604,14 +604,16 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 		PreventInTransactionBlock(isTopLevel, "CREATE SUBSCRIPTION ... WITH (create_slot = true)");
 
 	/*
-	 * We don't want to allow unprivileged users to be able to trigger attempts
-	 * to access arbitrary network destinations, so require the user to have
-	 * been specifically authorized to create subscriptions.
+	 * We don't want to allow unprivileged users to be able to trigger
+	 * attempts to access arbitrary network destinations, so require the user
+	 * to have been specifically authorized to create subscriptions.
 	 */
 	if (!has_privs_of_role(owner, ROLE_PG_CREATE_SUBSCRIPTION))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must have privileges of pg_create_subscription to create subscriptions")));
+				 errmsg("permission denied to create subscription"),
+				 errdetail("Only roles with privileges of the \"%s\" role may create subscriptions.",
+						   "pg_create_subscription")));
 
 	/*
 	 * Since a subscription is a database object, we also check for CREATE
@@ -629,10 +631,10 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 	 * exempt a subscription from this requirement.
 	 */
 	if (!opts.passwordrequired && !superuser_arg(owner))
-			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("password_required=false is superuser-only"),
-					 errhint("Subscriptions with the password_required option set to false may only be created or modified by the superuser.")));
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("password_required=false is superuser-only"),
+				 errhint("Subscriptions with the password_required option set to false may only be created or modified by the superuser.")));
 
 	/*
 	 * If built with appropriate switch, whine when regression-testing
@@ -974,8 +976,8 @@ AlterSubscription_refresh(Subscription *sub, bool copy_data,
 				 *
 				 * Even if new worker for this particular rel is restarted it
 				 * won't be able to make any progress as we hold exclusive
-				 * lock on subscription_rel till the transaction end. It will
-				 * simply exit as there is no corresponding rel entry.
+				 * lock on pg_subscription_rel till the transaction end. It
+				 * will simply exit as there is no corresponding rel entry.
 				 *
 				 * This locking also ensures that the state of rels won't
 				 * change till we are done with this refresh operation.
@@ -1111,8 +1113,8 @@ AlterSubscription(ParseState *pstate, AlterSubscriptionStmt *stmt,
 	if (!sub->passwordrequired && !superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						 errmsg("password_required=false is superuser-only"),
-						 errhint("Subscriptions with the password_required option set to false may only be created or modified by the superuser.")));
+				 errmsg("password_required=false is superuser-only"),
+				 errhint("Subscriptions with the password_required option set to false may only be created or modified by the superuser.")));
 
 	/* Lock the subscription so nobody else can do anything with it. */
 	LockSharedObject(SubscriptionRelationId, subid, 0, AccessExclusiveLock);
@@ -1825,8 +1827,8 @@ AlterSubscriptionOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 	if (!form->subpasswordrequired && !superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						 errmsg("password_required=false is superuser-only"),
-						 errhint("Subscriptions with the password_required option set to false may only be created or modified by the superuser.")));
+				 errmsg("password_required=false is superuser-only"),
+				 errhint("Subscriptions with the password_required option set to false may only be created or modified by the superuser.")));
 
 	/* Must be able to become new owner */
 	check_can_set_role(GetUserId(), newOwnerId);
@@ -1835,8 +1837,8 @@ AlterSubscriptionOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 	 * current owner must have CREATE on database
 	 *
 	 * This is consistent with how ALTER SCHEMA ... OWNER TO works, but some
-	 * other object types behave differently (e.g. you can't give a table to
-	 * a user who lacks CREATE privileges on a schema).
+	 * other object types behave differently (e.g. you can't give a table to a
+	 * user who lacks CREATE privileges on a schema).
 	 */
 	aclresult = object_aclcheck(DatabaseRelationId, MyDatabaseId,
 								GetUserId(), ACL_CREATE);
@@ -1955,9 +1957,9 @@ check_publications_origin(WalReceiverConn *wrconn, List *publications,
 	appendStringInfoString(&cmd,
 						   "SELECT DISTINCT P.pubname AS pubname\n"
 						   "FROM pg_publication P,\n"
-						   "	 LATERAL pg_get_publication_tables(P.pubname) GPT\n"
-						   "	 JOIN pg_subscription_rel PS ON (GPT.relid = PS.srrelid),\n"
-						   "	 pg_class C JOIN pg_namespace N ON (N.oid = C.relnamespace)\n"
+						   "     LATERAL pg_get_publication_tables(P.pubname) GPT\n"
+						   "     JOIN pg_subscription_rel PS ON (GPT.relid = PS.srrelid),\n"
+						   "     pg_class C JOIN pg_namespace N ON (N.oid = C.relnamespace)\n"
 						   "WHERE C.oid = GPT.relid AND P.pubname IN (");
 	get_publications_str(publications, &cmd, true);
 	appendStringInfoString(&cmd, ")\n");
