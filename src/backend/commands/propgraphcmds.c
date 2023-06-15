@@ -41,6 +41,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	List	   *edge_relids = NIL;
 	List	   *edge_aliases = NIL;
 	List	   *edge_keys = NIL;
+	List	   *element_aliases = NIL;
 	Relation	elrel;
 
 	if (stmt->pgname->relpersistence == RELPERSISTENCE_UNLOGGED)
@@ -81,10 +82,10 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		else
 			aliasname = vertex->vtable->relname;
 
-		if (list_member(vertex_aliases, makeString(aliasname)))
+		if (list_member(element_aliases, makeString(aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("alias \"%s\" used more than once as vertex table", aliasname),
+					 errmsg("alias \"%s\" used more than once as element table", aliasname),
 					 parser_errposition(pstate, vertex->location)));
 
 		if (vertex->vkey == NIL)
@@ -150,6 +151,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		vertex_relids = lappend_oid(vertex_relids, relid);
 		vertex_aliases = lappend(vertex_aliases, makeString(aliasname));
 		vertex_keys = lappend(vertex_keys, iv);
+		element_aliases = lappend(element_aliases, makeString(aliasname));
 	}
 
 	foreach (lc, stmt->edge_tables)
@@ -181,13 +183,11 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		else
 			aliasname = edge->etable->relname;
 
-		if (list_member(edge_aliases, makeString(aliasname)))
+		if (list_member(element_aliases, makeString(aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("alias \"%s\" used more than once as edge table", aliasname),
+					 errmsg("alias \"%s\" used more than once as element table", aliasname),
 					 parser_errposition(pstate, edge->location)));
-
-		// XXX: also check that it's not already a vertex table?
 
 		if (edge->ekey == NIL)
 		{
@@ -268,6 +268,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		edge_relids = lappend_oid(edge_relids, relid);
 		edge_aliases = lappend(edge_aliases, makeString(aliasname));
 		edge_keys = lappend(edge_keys, iv);
+		element_aliases = lappend(element_aliases, makeString(aliasname));
 	}
 
 	cstmt->relation = stmt->pgname;

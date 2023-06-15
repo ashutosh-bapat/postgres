@@ -19,7 +19,7 @@ CREATE PROPERTY GRAPH g2
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));
-ERROR:  alias "t1" used more than once as vertex table
+ERROR:  alias "t1" used more than once as element table
 LINE 1: ...Y GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a)...
                                                              ^
 CREATE PROPERTY GRAPH gx
