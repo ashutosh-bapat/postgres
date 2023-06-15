@@ -48,6 +48,36 @@ SELECT * FROM information_schema.property_graphs;
  regression             | create_property_graph_tests | g2
 (2 rows)
 
+SELECT * FROM information_schema.pg_element_tables;
+ property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | element_table_kind | table_catalog |        table_schema         | table_name | element_table_definition 
+------------------------+-----------------------------+---------------------+---------------------+--------------------+---------------+-----------------------------+------------+--------------------------
+ regression             | create_property_graph_tests | g2                  | t1                  | VERTEX             | regression    | create_property_graph_tests | t1         | 
+ regression             | create_property_graph_tests | g2                  | t2                  | VERTEX             | regression    | create_property_graph_tests | t2         | 
+ regression             | create_property_graph_tests | g2                  | t3                  | VERTEX             | regression    | create_property_graph_tests | t3         | 
+ regression             | create_property_graph_tests | g2                  | e1                  | EDGE               | regression    | create_property_graph_tests | e1         | 
+ regression             | create_property_graph_tests | g2                  | e2                  | EDGE               | regression    | create_property_graph_tests | e2         | 
+(5 rows)
+
+SELECT * FROM information_schema.pg_element_table_labels;
+ property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | label_name 
+------------------------+-----------------------------+---------------------+---------------------+------------
+ regression             | create_property_graph_tests | g2                  | t1                  | t1
+ regression             | create_property_graph_tests | g2                  | t2                  | t2
+ regression             | create_property_graph_tests | g2                  | t3                  | t3
+ regression             | create_property_graph_tests | g2                  | e1                  | e1
+ regression             | create_property_graph_tests | g2                  | e2                  | e2
+(5 rows)
+
+SELECT * FROM information_schema.pg_labels;
+ property_graph_catalog |    property_graph_schema    | property_graph_name | label_name 
+------------------------+-----------------------------+---------------------+------------
+ regression             | create_property_graph_tests | g2                  | t1
+ regression             | create_property_graph_tests | g2                  | t2
+ regression             | create_property_graph_tests | g2                  | t3
+ regression             | create_property_graph_tests | g2                  | e1
+ regression             | create_property_graph_tests | g2                  | e2
+(5 rows)
+
 --\dG
 -- TODO
 \d g1

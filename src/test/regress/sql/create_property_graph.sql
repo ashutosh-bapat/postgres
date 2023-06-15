@@ -40,6 +40,9 @@ COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 -- information schema
 
 SELECT * FROM information_schema.property_graphs;
+SELECT * FROM information_schema.pg_element_tables;
+SELECT * FROM information_schema.pg_element_table_labels;
+SELECT * FROM information_schema.pg_labels;
 
 
 --\dG

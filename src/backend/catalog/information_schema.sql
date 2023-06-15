@@ -3092,7 +3092,21 @@ GRANT SELECT ON user_mappings TO PUBLIC;
  * PG_ELEMENT_TABLE_LABELS view
  */
 
--- TODO
+CREATE VIEW pg_element_table_labels AS
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(e.pgealias AS sql_identifier) AS element_table_alias,
+           CAST(e.pgealias AS sql_identifier) AS label_name  -- label defaults to alias
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e
+    WHERE pg.relnamespace = npg.oid
+          AND e.pgepgid = pg.oid
+          AND pg.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(npg.oid))
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_element_table_labels TO PUBLIC;
 
 
 /*
@@ -3108,7 +3122,27 @@ GRANT SELECT ON user_mappings TO PUBLIC;
  * PG_ELEMENT_TABLES view
  */
 
--- TODO
+CREATE VIEW pg_element_tables AS
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(e.pgealias AS sql_identifier) AS element_table_alias,
+           CAST(CASE e.pgekind WHEN 'e' THEN 'EDGE' WHEN 'v' THEN 'VERTEX' END AS character_data) AS element_table_kind,
+           CAST(current_database() AS sql_identifier) AS table_catalog,
+           CAST(nt.nspname AS sql_identifier) AS table_schema,
+           CAST(t.relname AS sql_identifier) AS table_name,
+           CAST(NULL AS character_data) AS element_table_definition
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_class t, pg_namespace nt
+    WHERE pg.relnamespace = npg.oid
+          AND e.pgepgid = pg.oid
+          AND e.pgerelid = t.oid
+          AND t.relnamespace = nt.oid
+          AND pg.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(npg.oid))
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_element_tables TO PUBLIC;
 
 
 /*
@@ -3124,7 +3158,20 @@ GRANT SELECT ON user_mappings TO PUBLIC;
  * PG_LABELS view
  */
 
--- TODO
+CREATE VIEW pg_labels AS
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(e.pgealias AS sql_identifier) AS label_name  -- label defaults to alias
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e
+    WHERE pg.relnamespace = npg.oid
+          AND e.pgepgid = pg.oid
+          AND pg.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(npg.oid))
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_labels TO PUBLIC;
 
 
 /*

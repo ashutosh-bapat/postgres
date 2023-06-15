@@ -420,7 +420,7 @@ G811	IS BOUND predicate: AS option			NO	XXX
 G820	BINDING_COUNT			NO	XXX
 G830	Colon in ‘is label’ expression			NO	XXX
 G840	Path-ordered aggregates			NO	XXX
-G850	SQL/PGQ Information Schema views			NO	XXX
+G850	SQL/PGQ Information Schema views			YES	
 G860	GET DIAGNOSTICS enhancements for SQL-property graphs			NO	XXX
 G900	GRAPH_TABLE			NO	XXX
 G901	GRAPH_TABLE: ONE ROW PER VERTEX			NO	XXX
