@@ -912,6 +912,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_OPCLASS:
 		case OBJECT_OPFAMILY:
 		case OBJECT_PROCEDURE:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_ROUTINE:
 		case OBJECT_STATISTIC_EXT:
 		case OBJECT_TABLESPACE:
@@ -923,12 +924,23 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 				Oid			classId;
 				ObjectAddress address;
 
-				address = get_object_address(stmt->objectType,
-											 stmt->object,
-											 &relation,
-											 AccessExclusiveLock,
-											 false);
-				Assert(relation == NULL);
+				// XXX
+				if (stmt->relation)
+					address = get_object_address_rv(stmt->objectType,
+													stmt->relation,
+													NIL,
+													&relation,
+													AccessExclusiveLock,
+													false);
+				else
+				{
+					address = get_object_address(stmt->objectType,
+												 stmt->object,
+												 &relation,
+												 AccessExclusiveLock,
+												 false);
+					Assert(relation == NULL);
+				}
 				classId = address.classId;
 
 				/*
@@ -943,6 +955,9 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 				AlterObjectOwner_internal(catalog, address.objectId, newowner);
 				table_close(catalog, RowExclusiveLock);
+
+				if (relation)
+					relation_close(relation, NoLock);
 
 				return address;
 			}

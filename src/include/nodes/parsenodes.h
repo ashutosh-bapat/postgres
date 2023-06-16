@@ -3882,6 +3882,16 @@ typedef struct PropGraphEdge
 } PropGraphEdge;
 
 /* ----------------------
+ *	ALTER PROPERTY GRAPH Statement
+ * ----------------------
+ */
+typedef struct AlterPropGraphStmt
+{
+	NodeTag		type;
+	RangeVar   *pgname;
+} AlterPropGraphStmt;
+
+/* ----------------------
  *	CREATE TRANSFORM Statement
  * ----------------------
  */

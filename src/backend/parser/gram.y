@@ -296,7 +296,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		CreateOpFamilyStmt AlterOpFamilyStmt CreatePLangStmt
 		CreateSchemaStmt CreateSeqStmt CreateStmt CreateStatsStmt CreateTableSpaceStmt
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
-		CreateAssertionStmt CreatePropGraphStmt
+		CreateAssertionStmt CreatePropGraphStmt AlterPropGraphStmt
 		CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt CreatePolicyStmt
 		CreatedbStmt DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
@@ -645,7 +645,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <partboundspec> PartitionBoundSpec
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
-%type <list>	opt_vertex_tables_clause opt_edge_tables_clause
+%type <list>	vertex_tables_clause edge_tables_clause
+				opt_vertex_tables_clause opt_edge_tables_clause
 				vertex_table_list
 				opt_graph_table_key_clause
 				edge_table_list
@@ -995,6 +996,7 @@ stmt:
 			| AlterOperatorStmt
 			| AlterTypeStmt
 			| AlterPolicyStmt
+			| AlterPropGraphStmt
 			| AlterSeqStmt
 			| AlterSystemStmt
 			| AlterTableStmt
@@ -2175,24 +2177,6 @@ AlterTableStmt:
 					n->new_tablespacename = $12;
 					n->nowait = $13;
 					$$ = (Node *) n;
-				}
-		|	ALTER PROPERTY GRAPH qualified_name alter_table_cmds
-				{
-					AlterTableStmt *n = makeNode(AlterTableStmt);
-					n->relation = $4;
-					n->cmds = $5;
-					n->objtype = OBJECT_PROPGRAPH;
-					n->missing_ok = false;
-					$$ = (Node *)n;
-				}
-		|	ALTER PROPERTY GRAPH IF_P EXISTS qualified_name alter_table_cmds
-				{
-					AlterTableStmt *n = makeNode(AlterTableStmt);
-					n->relation = $6;
-					n->cmds = $7;
-					n->objtype = OBJECT_PROPGRAPH;
-					n->missing_ok = true;
-					$$ = (Node *)n;
 				}
 		|	ALTER SEQUENCE qualified_name alter_table_cmds
 				{
@@ -9011,6 +8995,7 @@ opt_if_exists: IF_P EXISTS						{ $$ = true; }
 /*****************************************************************************
  *
  *		CREATE PROPERTY GRAPH
+ *		ALTER PROPERTY GRAPH
  *
  *****************************************************************************/
 
@@ -9028,8 +9013,12 @@ CreatePropGraphStmt: CREATE OptTemp PROPERTY GRAPH qualified_name opt_vertex_tab
 		;
 
 opt_vertex_tables_clause:
-			vertex_synonym TABLES '(' vertex_table_list ')'	{ $$ = $4; }
+			vertex_tables_clause				{ $$ = $1; }
 			| /*EMPTY*/							{ $$ = NIL; }
+		;
+
+vertex_tables_clause:
+			vertex_synonym TABLES '(' vertex_table_list ')'	{ $$ = $4; }
 		;
 
 vertex_synonym: NODE | VERTEX
@@ -9067,8 +9056,12 @@ opt_graph_table_key_clause:
 		;
 
 opt_edge_tables_clause:
-			edge_synonym TABLES '(' edge_table_list	')'			{ $$ = $4; }
+			edge_tables_clause					{ $$ = $1; }
 			| /*EMPTY*/							{ $$ = NIL; }
+		;
+
+edge_tables_clause:
+			edge_synonym TABLES '(' edge_table_list	')'			{ $$ = $4; }
 		;
 
 edge_synonym: EDGE | RELATIONSHIP
@@ -9115,6 +9108,49 @@ destination_vertex_table: DESTINATION ColId
 				| DESTINATION KEY '(' columnList ')' REFERENCES ColId '(' columnList ')'
 				{
 					$$ = list_make3($4, $7, $9);
+				}
+		;
+
+AlterPropGraphStmt:
+			ALTER PROPERTY GRAPH qualified_name ADD_P vertex_tables_clause
+				{
+					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
+
+					n->pgname = $4;
+					// TODO
+					$$ = (Node *) n;
+				}
+			| ALTER PROPERTY GRAPH qualified_name ADD_P vertex_tables_clause ADD_P edge_tables_clause
+				{
+					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
+
+					n->pgname = $4;
+					// TODO
+					$$ = (Node *) n;
+				}
+			| ALTER PROPERTY GRAPH qualified_name ADD_P edge_tables_clause
+				{
+					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
+
+					n->pgname = $4;
+					// TODO
+					$$ = (Node *) n;
+				}
+			| ALTER PROPERTY GRAPH qualified_name DROP vertex_synonym TABLES '(' name_list ')' opt_drop_behavior
+				{
+					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
+
+					n->pgname = $4;
+					// TODO
+					$$ = (Node *) n;
+				}
+			| ALTER PROPERTY GRAPH qualified_name DROP edge_synonym TABLES '(' name_list ')' opt_drop_behavior
+				{
+					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
+
+					n->pgname = $4;
+					// TODO
+					$$ = (Node *) n;
 				}
 		;
 
@@ -10419,6 +10455,15 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 					n->objectType = OBJECT_PROCEDURE;
 					n->object = (Node *) $3;
 					n->newowner = $6;
+					$$ = (Node *) n;
+				}
+			| ALTER PROPERTY GRAPH qualified_name OWNER TO RoleSpec
+				{
+					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
+
+					n->objectType = OBJECT_PROPGRAPH;
+					n->relation = $4;
+					n->newowner = $7;
 					$$ = (Node *) n;
 				}
 			| ALTER ROUTINE function_with_argtypes OWNER TO RoleSpec
