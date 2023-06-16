@@ -58,6 +58,18 @@ SELECT * FROM information_schema.pg_element_tables;
  regression             | create_property_graph_tests | g2                  | e2                  | EDGE               | regression    | create_property_graph_tests | e2         | 
 (5 rows)
 
+SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_graph_name, element_table_alias, ordinal_position;
+ property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | column_name | ordinal_position 
+------------------------+-----------------------------+---------------------+---------------------+-------------+------------------
+ regression             | create_property_graph_tests | g2                  | e1                  | a           |                1
+ regression             | create_property_graph_tests | g2                  | e1                  | i           |                2
+ regression             | create_property_graph_tests | g2                  | e2                  | a           |                1
+ regression             | create_property_graph_tests | g2                  | e2                  | x           |                2
+ regression             | create_property_graph_tests | g2                  | t1                  | a           |                1
+ regression             | create_property_graph_tests | g2                  | t2                  | i           |                1
+ regression             | create_property_graph_tests | g2                  | t3                  | x           |                1
+(7 rows)
+
 SELECT * FROM information_schema.pg_element_table_labels;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | label_name 
 ------------------------+-----------------------------+---------------------+---------------------+------------

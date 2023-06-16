@@ -3084,7 +3084,31 @@ GRANT SELECT ON user_mappings TO PUBLIC;
  * PG_ELEMENT_TABLE_KEY_COLUMNS view
  */
 
--- TODO
+CREATE VIEW pg_element_table_key_columns AS
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg_nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg_relname AS sql_identifier) AS property_graph_name,
+           CAST(pgealias AS sql_identifier) AS element_table_alias,
+           CAST(a.attname AS sql_identifier) AS column_name,
+           CAST((ss.x).n AS cardinal_number) AS ordinal_position
+    FROM pg_attribute a,
+         (SELECT pg.oid AS pg_oid, pg.relname AS pg_relname, pg.relowner AS pg_relowner, npg.nspname AS npg_nspname, e.pgealias,
+                 t.oid AS t_oid,
+                 _pg_expandarray(e.pgekey) AS x
+          FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_class t, pg_namespace nt
+          WHERE pg.relnamespace = npg.oid
+                AND e.pgepgid = pg.oid
+                AND e.pgerelid = t.oid
+                AND t.relnamespace = nt.oid
+                AND pg.relkind = 'g'
+                AND (NOT pg_is_other_temp_schema(npg.oid))) AS ss
+    WHERE ss.t_oid = a.attrelid
+          AND a.attnum = (ss.x).x
+          AND NOT a.attisdropped
+          AND (pg_has_role(pg_relowner, 'USAGE')
+               OR has_table_privilege(pg_oid, 'SELECT'));
+
+GRANT SELECT ON pg_element_table_key_columns TO PUBLIC;
 
 
 /*
@@ -3187,7 +3211,41 @@ GRANT SELECT ON pg_labels TO PUBLIC;
  * PG_PROPERTY_GRAPH_PRIVILEGES view
  */
 
--- TODO
+CREATE VIEW pg_property_graph_privileges AS
+    SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+           CAST(grantee.rolname AS sql_identifier) AS grantee,
+           CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(nc.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(c.relname AS sql_identifier) AS property_graph_name,
+           CAST(c.prtype AS character_data) AS privilege_type,
+           CAST(
+             CASE WHEN
+                  -- object owner always has grant options
+                  pg_has_role(grantee.oid, c.relowner, 'USAGE')
+                  OR c.grantable
+                  THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+    FROM (
+            SELECT oid, relname, relnamespace, relkind, relowner, (aclexplode(coalesce(relacl, acldefault('r', relowner)))).* FROM pg_class
+         ) AS c (oid, relname, relnamespace, relkind, relowner, grantor, grantee, prtype, grantable),
+         pg_namespace nc,
+         pg_authid u_grantor,
+         (
+           SELECT oid, rolname FROM pg_authid
+           UNION ALL
+           SELECT 0::oid, 'PUBLIC'
+         ) AS grantee (oid, rolname)
+
+    WHERE c.relnamespace = nc.oid
+          AND c.relkind IN ('g')
+          AND c.grantee = grantee.oid
+          AND c.grantor = u_grantor.oid
+          AND c.prtype IN ('SELECT')
+          AND (pg_has_role(u_grantor.oid, 'USAGE')
+               OR pg_has_role(grantee.oid, 'USAGE')
+               OR grantee.rolname = 'PUBLIC');
+
+GRANT SELECT ON pg_property_graph_privileges TO PUBLIC;
 
 
 /*
