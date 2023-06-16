@@ -41,21 +41,21 @@ LINE 4:         e1 SOURCE t1 DESTINATION tx
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
 -- information schema
-SELECT * FROM information_schema.property_graphs;
+SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name 
 ------------------------+-----------------------------+---------------------
  regression             | create_property_graph_tests | g1
  regression             | create_property_graph_tests | g2
 (2 rows)
 
-SELECT * FROM information_schema.pg_element_tables;
+SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name, element_table_alias;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | element_table_kind | table_catalog |        table_schema         | table_name | element_table_definition 
 ------------------------+-----------------------------+---------------------+---------------------+--------------------+---------------+-----------------------------+------------+--------------------------
+ regression             | create_property_graph_tests | g2                  | e1                  | EDGE               | regression    | create_property_graph_tests | e1         | 
+ regression             | create_property_graph_tests | g2                  | e2                  | EDGE               | regression    | create_property_graph_tests | e2         | 
  regression             | create_property_graph_tests | g2                  | t1                  | VERTEX             | regression    | create_property_graph_tests | t1         | 
  regression             | create_property_graph_tests | g2                  | t2                  | VERTEX             | regression    | create_property_graph_tests | t2         | 
  regression             | create_property_graph_tests | g2                  | t3                  | VERTEX             | regression    | create_property_graph_tests | t3         | 
- regression             | create_property_graph_tests | g2                  | e1                  | EDGE               | regression    | create_property_graph_tests | e1         | 
- regression             | create_property_graph_tests | g2                  | e2                  | EDGE               | regression    | create_property_graph_tests | e2         | 
 (5 rows)
 
 SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_graph_name, element_table_alias, ordinal_position;
@@ -70,24 +70,24 @@ SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_
  regression             | create_property_graph_tests | g2                  | t3                  | x           |                1
 (7 rows)
 
-SELECT * FROM information_schema.pg_element_table_labels;
+SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph_name, element_table_alias, label_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | label_name 
 ------------------------+-----------------------------+---------------------+---------------------+------------
+ regression             | create_property_graph_tests | g2                  | e1                  | e1
+ regression             | create_property_graph_tests | g2                  | e2                  | e2
  regression             | create_property_graph_tests | g2                  | t1                  | t1
  regression             | create_property_graph_tests | g2                  | t2                  | t2
  regression             | create_property_graph_tests | g2                  | t3                  | t3
- regression             | create_property_graph_tests | g2                  | e1                  | e1
- regression             | create_property_graph_tests | g2                  | e2                  | e2
 (5 rows)
 
-SELECT * FROM information_schema.pg_labels;
+SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | label_name 
 ------------------------+-----------------------------+---------------------+------------
+ regression             | create_property_graph_tests | g2                  | e1
+ regression             | create_property_graph_tests | g2                  | e2
  regression             | create_property_graph_tests | g2                  | t1
  regression             | create_property_graph_tests | g2                  | t2
  regression             | create_property_graph_tests | g2                  | t3
- regression             | create_property_graph_tests | g2                  | e1
- regression             | create_property_graph_tests | g2                  | e2
 (5 rows)
 
 --\dG
