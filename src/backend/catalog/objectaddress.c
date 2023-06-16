@@ -4696,6 +4696,9 @@ getRelationTypeDescription(StringInfo buffer, Oid relid, int32 objectSubId,
 		case RELKIND_FOREIGN_TABLE:
 			appendStringInfoString(buffer, "foreign table");
 			break;
+		case RELKIND_PROPGRAPH:
+			appendStringInfoString(buffer, "property graph");
+			break;
 		default:
 			/* shouldn't get here */
 			appendStringInfoString(buffer, "relation");
@@ -6167,6 +6170,8 @@ get_relkind_objtype(char relkind)
 			return OBJECT_MATVIEW;
 		case RELKIND_FOREIGN_TABLE:
 			return OBJECT_FOREIGN_TABLE;
+		case RELKIND_PROPGRAPH:
+			return OBJECT_PROPGRAPH;
 		case RELKIND_TOASTVALUE:
 			return OBJECT_TABLE;
 		default:

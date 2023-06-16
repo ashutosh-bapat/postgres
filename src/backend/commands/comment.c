@@ -96,7 +96,6 @@ CommentObject(CommentStmt *stmt)
 				relation->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
 				relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&
 				relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
-				// FIXME
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("cannot set comment on relation \"%s\"",

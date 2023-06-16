@@ -540,14 +540,14 @@ ERROR:  relation "alt_graph2" already exists in schema "alt_nsp2"
 SET SESSION AUTHORIZATION regress_alter_generic_user2;
 CREATE PROPERTY GRAPH alt_graph5;
 ALTER PROPERTY GRAPH alt_graph3 RENAME TO alt_graph5;  -- failed (not owner)
-ERROR:  must be owner of table alt_graph3
+ERROR:  must be owner of property graph alt_graph3
 ALTER PROPERTY GRAPH alt_graph5 RENAME TO alt_graph6;  -- OK
 ALTER PROPERTY GRAPH alt_graph3 OWNER TO regress_alter_generic_user2;  -- failed (not owner)
-ERROR:  must be owner of table alt_graph3
+ERROR:  must be owner of property graph alt_graph3
 ALTER PROPERTY GRAPH alt_graph6 OWNER TO regress_alter_generic_user3;  -- failed (no role membership)
 ERROR:  must be able to SET ROLE "regress_alter_generic_user3"
 ALTER PROPERTY GRAPH alt_graph3 SET SCHEMA alt_nsp2;  -- failed (not owner)
-ERROR:  must be owner of table alt_graph3
+ERROR:  must be owner of property graph alt_graph3
 RESET SESSION AUTHORIZATION;
 SELECT nspname, relname, rolname
   FROM pg_class c, pg_namespace n, pg_authid a
