@@ -150,7 +150,7 @@ MemoryContext CurTransactionContext = NULL;
 MemoryContext PortalContext = NULL;
 
 static void MemoryContextCallResetCallbacks(MemoryContext context);
-static void MemoryContextStatsInternal(MemoryContext context, int level,
+void MemoryContextStatsInternal(MemoryContext context, int level,
 									   bool print, int max_children,
 									   MemoryContextCounters *totals,
 									   bool print_to_stderr);
@@ -754,7 +754,7 @@ MemoryContextStatsDetail(MemoryContext context, int max_children,
  * Print this context if print is true, but in any case accumulate counts into
  * *totals (if given).
  */
-static void
+void
 MemoryContextStatsInternal(MemoryContext context, int level,
 						   bool print, int max_children,
 						   MemoryContextCounters *totals,
@@ -836,6 +836,75 @@ MemoryContextStatsInternal(MemoryContext context, int level,
 			totals->freespace += local_totals.freespace;
 		}
 	}
+}
+
+HTAB *mem_cons_ht = NULL;
+typedef struct
+{
+	char	label[NAMEDATALEN];
+	Size	consumed_mem;
+} MemConsEntry;
+
+void
+MemoryContextFuncStatsStart(MemoryContext context,
+							MemoryContextCounters *start_counts,
+							const char *label)
+{
+	if (!mem_cons_ht)
+	{
+		HASHCTL ctl;
+
+		ctl.keysize = NAMEDATALEN;
+		ctl.entrysize = sizeof(MemConsEntry);
+
+		mem_cons_ht = hash_create("planner memory consumption", 10, &ctl, HASH_ELEM | HASH_STRINGS);
+	}
+
+	memset(start_counts, 0, sizeof(*start_counts));
+	MemoryContextStatsInternal(context, 0, false, 100, start_counts, false);
+}
+
+void
+MemoryContextFuncStatsEnd(MemoryContext context,
+						  MemoryContextCounters *start_counts,
+						  const char *label)
+{
+	MemoryContextCounters end_counts;
+	Size	start_used_space = start_counts->totalspace - start_counts->freespace;
+	Size	end_used_space;
+	bool	found;
+	MemConsEntry   *entry;
+
+	memset(&end_counts, 0, sizeof(end_counts));
+	MemoryContextStatsInternal(context, 0, false, 100, &end_counts, false);
+	end_used_space = end_counts.totalspace - end_counts.freespace;
+
+/*
+	elog(NOTICE, "%s,%s,%zu,%zu,%ld", label, context->name,
+		 start_used_space, end_used_space, end_used_space - start_used_space);
+*/
+	entry = hash_search(mem_cons_ht, label, HASH_ENTER, &found);
+	if (!found)
+	{
+		strncpy(entry->label, label, NAMEDATALEN);
+		entry->consumed_mem = 0;
+	}
+	Assert(strncmp(entry->label, label, NAMEDATALEN) == 0);
+	entry->consumed_mem = entry->consumed_mem + (end_used_space - start_used_space);
+}
+
+void
+MemoryContextFuncStatsReport(void)
+{
+	HASH_SEQ_STATUS status;
+	MemConsEntry   *entry;
+
+	/* Walk through the hash table printing memory consumed by the label. */
+	hash_seq_init(&status, mem_cons_ht);
+	while ((entry = (MemConsEntry *) hash_seq_search(&status)) != NULL)
+		elog(NOTICE, "%s, %ld", entry->label, entry->consumed_mem);
+	hash_destroy(mem_cons_ht);
+	mem_cons_ht = NULL;
 }
 
 /*

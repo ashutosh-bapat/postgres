@@ -67,6 +67,8 @@
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
 #include "utils/syscache.h"
+#include "utils/memutils.h"
+#include "nodes/memnodes.h"
 
 /* GUC parameters */
 double		cursor_tuple_fraction = DEFAULT_CURSOR_TUPLE_FRACTION;
@@ -295,6 +297,9 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 	Plan	   *top_plan;
 	ListCell   *lp,
 			   *lr;
+	MemoryContextCounters mem_start;
+
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &mem_start, __FUNCTION__);
 
 	/*
 	 * Set up global state for this planner invocation.  This data is needed
@@ -564,6 +569,10 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 
 	if (glob->partition_directory != NULL)
 		DestroyPartitionDirectory(glob->partition_directory);
+
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &mem_start, __FUNCTION__);
+
+	MemoryContextFuncStatsReport();
 
 	return result;
 }

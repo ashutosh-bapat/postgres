@@ -32,6 +32,8 @@
 #include "parser/parse_relation.h"
 #include "utils/hsearch.h"
 #include "utils/lsyscache.h"
+#include "nodes/memnodes.h"
+#include "utils/memutils.h"
 
 
 typedef struct JoinHashEntry
@@ -861,16 +863,22 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 					 RelOptInfo *inner_rel, RelOptInfo *parent_joinrel,
 					 List *restrictlist, SpecialJoinInfo *sjinfo)
 {
-	RelOptInfo *joinrel = makeNode(RelOptInfo);
+	RelOptInfo *joinrel;
 	AppendRelInfo **appinfos;
 	int			nappinfos;
+
+	MemoryContextCounters mem_start;
+	MemoryContextCounters tlist_mem;
+	MemoryContextCounters jlist_mem;
+
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &mem_start, __FUNCTION__);
 
 	/* Only joins between "other" relations land here. */
 	Assert(IS_OTHER_REL(outer_rel) && IS_OTHER_REL(inner_rel));
 
 	/* The parent joinrel should have consider_partitionwise_join set. */
 	Assert(parent_joinrel->consider_partitionwise_join);
-
+	joinrel = makeNode(RelOptInfo);
 	joinrel->reloptkind = RELOPT_OTHER_JOINREL;
 	joinrel->relids = bms_union(outer_rel->relids, inner_rel->relids);
 	joinrel->relids = add_outer_joins_to_relids(root, joinrel->relids, sjinfo,
@@ -939,14 +947,18 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 	appinfos = find_appinfos_by_relids(root, joinrel->relids, &nappinfos);
 
 	/* Set up reltarget struct */
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &tlist_mem, "targetlist");
 	build_child_join_reltarget(root, parent_joinrel, joinrel,
 							   nappinfos, appinfos);
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &tlist_mem, "targetlist");
 
 	/* Construct joininfo list. */
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &jlist_mem, "joininfo");
 	joinrel->joininfo = (List *) adjust_appendrel_attrs(root,
 														(Node *) parent_joinrel->joininfo,
 														nappinfos,
 														appinfos);
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &jlist_mem, "joininfo");
 
 	/*
 	 * Lateral relids referred in child join will be same as that referred in
@@ -990,6 +1002,8 @@ build_child_join_rel(PlannerInfo *root, RelOptInfo *outer_rel,
 										parent_joinrel, joinrel);
 
 	pfree(appinfos);
+
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &mem_start, __FUNCTION__);
 
 	return joinrel;
 }
