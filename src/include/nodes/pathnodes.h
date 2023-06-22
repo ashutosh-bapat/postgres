@@ -338,6 +338,7 @@ struct PlannerInfo
 
 	/* counter for assigning RestrictInfo serial numbers */
 	int			last_rinfo_serial;
+	struct HTAB *child_rinfo_hash pg_node_attr(read_write_ignore);
 
 	/*
 	 * all_result_relids is empty for SELECT, otherwise it contains at least
@@ -2523,7 +2524,8 @@ typedef struct LimitPath
  * comm_rinfo and vice versa. Both the RestrictInfos are commuted versions of
  * each other. is_commuted flag is false for the first one to appear and is
  * true in the other. The order doesn't matter. The flag just differentiate
- * between the commuted version.
+ * between the commuted version. The child RestrictInfos inherit this flag from
+ * their respective parent RestrictInfo.
  */
 
 typedef struct RestrictInfo

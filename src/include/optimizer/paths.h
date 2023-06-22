@@ -114,6 +114,8 @@ extern bool have_dangerous_phv(PlannerInfo *root,
 extern void mark_dummy_rel(RelOptInfo *rel);
 extern void make_dummy_sjinfo(SpecialJoinInfo *sjinfo, RelOptInfo *rel1,
 							  RelOptInfo *rel2);
+extern List *build_child_clauses(PlannerInfo *root, List *parent_clauselist,
+								 int nappinfos, AppendRelInfo **appinfos);
 
 /*
  * equivclass.c
