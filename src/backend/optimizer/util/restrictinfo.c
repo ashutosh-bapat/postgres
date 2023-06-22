@@ -246,6 +246,8 @@ make_restrictinfo_internal(PlannerInfo *root,
 
 	restrictinfo->left_hasheqoperator = InvalidOid;
 	restrictinfo->right_hasheqoperator = InvalidOid;
+	restrictinfo->child_rinfos = NIL;
+	restrictinfo->parent_rinfo = NULL;
 
 	return restrictinfo;
 }
