@@ -13538,11 +13538,11 @@ table_ref:	relation_expr opt_alias_clause
 					$2->alias = $4;
 					$$ = (Node *) $2;
 				}
-			| qualified_name GRAPH_TABLE '(' MATCH path_pattern_list where_clause COLUMNS '(' xml_attribute_list ')' ')' alias_clause
+			| GRAPH_TABLE '(' qualified_name MATCH path_pattern_list where_clause COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
 				{
 					RangeGraphTable *n = makeNode(RangeGraphTable);
 					n->alias = $12;
-					n->location = @2;
+					n->location = @1;
 					$$ = (Node *) n;
 				}
 		;

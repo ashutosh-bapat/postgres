@@ -1,7 +1,7 @@
 CREATE PROPERTY GRAPH g1;
 SELECT gt.creation_date, gt.content
-FROM g1 GRAPH_TABLE (
-  MATCH
+FROM GRAPH_TABLE (
+  g1 MATCH
     (creator IS person WHERE creator.email = 'foo@example.com')
       -[ IS created ]->
     (m IS message)
@@ -11,5 +11,5 @@ FROM g1 GRAPH_TABLE (
     COLUMNS (m.creation_date, m.content)
 ) AS gt;
 ERROR:  GRAPH_TABLE is not implemented
-LINE 2: FROM g1 GRAPH_TABLE (
-                ^
+LINE 2: FROM GRAPH_TABLE (
+             ^

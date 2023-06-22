@@ -1,8 +1,8 @@
 CREATE PROPERTY GRAPH g1;
 
 SELECT gt.creation_date, gt.content
-FROM g1 GRAPH_TABLE (
-  MATCH
+FROM GRAPH_TABLE (
+  g1 MATCH
     (creator IS person WHERE creator.email = 'foo@example.com')
       -[ IS created ]->
     (m IS message)
