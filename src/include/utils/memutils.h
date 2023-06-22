@@ -92,6 +92,13 @@ extern void MemoryContextStatsDetail(MemoryContext context, int max_children,
 									 bool print_to_stderr);
 extern void MemoryContextAllowInCriticalSection(MemoryContext context,
 												bool allow);
+extern void MemoryContextFuncStatsStart(MemoryContext context,
+										MemoryContextCounters *start_counts,
+										const char *func_label);
+extern void MemoryContextFuncStatsEnd(MemoryContext context,
+									  MemoryContextCounters *start_counts,
+									  const char *func_label);
+extern void MemoryContextFuncStatsReport(void);
 
 #ifdef MEMORY_CONTEXT_CHECKING
 extern void MemoryContextCheck(MemoryContext context);

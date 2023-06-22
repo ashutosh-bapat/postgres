@@ -50,6 +50,8 @@
 #include "port/pg_bitutils.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
+#include "nodes/memnodes.h"
 
 
 /* Bitmask flags for pushdown_safety_info.unsafeFlags */
@@ -4302,6 +4304,10 @@ generate_partitionwise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 	int			num_parts;
 	RelOptInfo **part_rels;
 
+	MemoryContextCounters mem_start;
+ 
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &mem_start, __FUNCTION__);
+
 	/* Handle only join relations here. */
 	if (!IS_JOIN_REL(rel))
 		return;
@@ -4366,6 +4372,8 @@ generate_partitionwise_join_paths(PlannerInfo *root, RelOptInfo *rel)
 	/* Build additional paths for this rel from child-join paths. */
 	add_paths_to_append_rel(root, rel, live_children);
 	list_free(live_children);
+
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &mem_start, __FUNCTION__);
 }
 
 

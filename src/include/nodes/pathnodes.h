@@ -2655,6 +2655,13 @@ typedef struct RestrictInfo
 	/* hash equality operators used for memoize nodes, else InvalidOid */
 	Oid			left_hasheqoperator pg_node_attr(equal_ignore);
 	Oid			right_hasheqoperator pg_node_attr(equal_ignore);
+
+	/* Only one of these two can be set. */
+	List	   *child_rinfos pg_node_attr(equal_ignore, copy_as(NIL)); /* RestrictInfos derived for children. */
+	struct RestrictInfo *parent_rinfo pg_node_attr(equal_ignore, copy_as(NULL));		/* Parent restrictinfo this
+											 * RestrictInf is derived from.
+											 */
+
 } RestrictInfo;
 
 /*

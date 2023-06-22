@@ -21,6 +21,7 @@
 #include "optimizer/paths.h"
 #include "partitioning/partbounds.h"
 #include "utils/memutils.h"
+#include "nodes/memnodes.h"
 
 
 static void make_rels_by_clause_joins(PlannerInfo *root,
@@ -895,6 +896,13 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 							RelOptInfo *rel2, RelOptInfo *joinrel,
 							SpecialJoinInfo *sjinfo, List *restrictlist)
 {
+	MemoryContextCounters mem_start;
+	char *label;
+
+	label = joinrel->reloptkind == RELOPT_OTHER_JOINREL ? "child_join_path_creation" : "parent_join_path_creation";
+
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &mem_start, label);
+
 	/*
 	 * Consider paths using each rel as both outer and inner.  Depending on
 	 * the join type, a provably empty outer or inner rel might mean the join
@@ -1045,6 +1053,8 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 
 	/* Apply partitionwise join technique, if possible. */
 	try_partitionwise_join(root, rel1, rel2, joinrel, sjinfo, restrictlist);
+
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &mem_start, label);
 }
 
 
@@ -1487,6 +1497,10 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	ListCell   *lcr1 = NULL;
 	ListCell   *lcr2 = NULL;
 	int			cnt_parts;
+	MemoryContextCounters start_mem;
+
+	/* Start measuring memory */
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &start_mem, __FUNCTION__);
 
 	/* Guard against stack overflow due to overly deep partition hierarchy. */
 	check_stack_depth();
@@ -1546,6 +1560,7 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		Relids		child_joinrelids;
 		AppendRelInfo **appinfos;
 		int			nappinfos;
+		MemoryContextCounters restrict_mem;
 
 		if (joinrel->partbounds_merged)
 		{
@@ -1648,6 +1663,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		/* Find the AppendRelInfo structures */
 		appinfos = find_appinfos_by_relids(root, child_joinrelids, &nappinfos);
 
+		MemoryContextFuncStatsStart(CurrentMemoryContext, &restrict_mem, "restrictlist translation");
+
 		/*
 		 * Construct restrictions applicable to the child join from those
 		 * applicable to the parent join.
@@ -1656,6 +1673,9 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 			(List *) adjust_appendrel_attrs(root,
 											(Node *) parent_restrictlist,
 											nappinfos, appinfos);
+
+		MemoryContextFuncStatsEnd(CurrentMemoryContext, &restrict_mem, "restrictlist translation");
+
 		pfree(appinfos);
 
 		child_joinrel = joinrel->part_rels[cnt_parts];
@@ -1676,6 +1696,10 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 									child_joinrel, child_sjinfo,
 									child_restrictlist);
 	}
+
+
+	/* Stop measuring memory and print the stats. */
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &start_mem, __FUNCTION__);
 }
 
 /*
@@ -1687,12 +1711,15 @@ static SpecialJoinInfo *
 build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
 						Relids left_relids, Relids right_relids)
 {
-	SpecialJoinInfo *sjinfo = makeNode(SpecialJoinInfo);
 	AppendRelInfo **left_appinfos;
 	int			left_nappinfos;
 	AppendRelInfo **right_appinfos;
 	int			right_nappinfos;
+	MemoryContextCounters mem_start;
+	SpecialJoinInfo *sjinfo;
 
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &mem_start, __FUNCTION__);
+	sjinfo = makeNode(SpecialJoinInfo);
 	memcpy(sjinfo, parent_sjinfo, sizeof(SpecialJoinInfo));
 	left_appinfos = find_appinfos_by_relids(root, left_relids,
 											&left_nappinfos);
@@ -1717,6 +1744,8 @@ build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
 
 	pfree(left_appinfos);
 	pfree(right_appinfos);
+
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &mem_start, __FUNCTION__);
 
 	return sjinfo;
 }

@@ -217,6 +217,7 @@ adjust_appendrel_attrs_mutator(Node *node,
 {
 	AppendRelInfo **appinfos = context->appinfos;
 	int			nappinfos = context->nappinfos;
+	PlannerInfo	   *root = context->root;
 	int			cnt;
 
 	if (node == NULL)
@@ -445,7 +446,46 @@ adjust_appendrel_attrs_mutator(Node *node,
 	if (IsA(node, RestrictInfo))
 	{
 		RestrictInfo *oldinfo = (RestrictInfo *) node;
-		RestrictInfo *newinfo = makeNode(RestrictInfo);
+		Relids child_required_relids = adjust_child_relids(oldinfo->required_relids,
+															nappinfos, appinfos);
+		RestrictInfo   *parent_rinfo;
+		ListCell   *lc;
+		RestrictInfo *newinfo;
+		MemoryContext	old_context;
+		
+		/*
+		 * If the adjusted RestrictInfo already exists, use it otherwise create
+		 * a new one. This avoids translating the same RestrictInfo again and
+		 * again wasting memory especially in partitionwise joins.
+		 */
+
+		if (bms_equal(child_required_relids, oldinfo->required_relids))
+		{
+			/* If the clause does not need any translation. */
+			bms_free(child_required_relids);
+			return (Node *) oldinfo;
+		}
+
+		/*
+		 * Check if we already have the RestrictInfo for the given child in the
+		 * topmost parent's RestrictInfo.
+		 */
+		parent_rinfo = oldinfo->parent_rinfo ? oldinfo->parent_rinfo : oldinfo;
+		foreach (lc, parent_rinfo->child_rinfos)
+		{
+			newinfo = lfirst(lc);
+
+			if (bms_equal(newinfo->required_relids, child_required_relids))
+			{
+				bms_free(child_required_relids);
+				return (Node *) newinfo;
+			}
+		}
+		bms_free(child_required_relids);
+
+		/* Translate in a long lasting memory context. */
+		old_context = MemoryContextSwitchTo(root->planner_cxt);
+		newinfo = makeNode(RestrictInfo);
 
 		/* Copy all flat-copiable fields, notably including rinfo_serial */
 		memcpy(newinfo, oldinfo, sizeof(RestrictInfo));
@@ -491,6 +531,11 @@ adjust_appendrel_attrs_mutator(Node *node,
 		newinfo->right_bucketsize = -1;
 		newinfo->left_mcvfreq = -1;
 		newinfo->right_mcvfreq = -1;
+		newinfo->parent_rinfo = parent_rinfo;
+		parent_rinfo->child_rinfos = lappend(parent_rinfo->child_rinfos,
+											 newinfo);
+
+		MemoryContextSwitchTo(old_context);
 
 		return (Node *) newinfo;
 	}

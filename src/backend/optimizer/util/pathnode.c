@@ -4063,6 +4063,9 @@ do { \
 	ParamPathInfo *new_ppi;
 	ParamPathInfo *old_ppi;
 	Relids		required_outer;
+	MemoryContextCounters	mem_start;
+
+	MemoryContextFuncStatsStart(CurrentMemoryContext, &mem_start, __FUNCTION__);
 
 	/*
 	 * If the path is not parameterized by parent of the given relation, it
@@ -4310,6 +4313,8 @@ do { \
 		new_path->pathtarget = copy_pathtarget(new_path->pathtarget);
 		ADJUST_CHILD_ATTRS(new_path->pathtarget->exprs);
 	}
+
+	MemoryContextFuncStatsEnd(CurrentMemoryContext, &mem_start, __FUNCTION__);
 
 	return new_path;
 }
