@@ -29,6 +29,7 @@
 
 
 static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
+static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 
 
 struct element_info
@@ -38,7 +39,11 @@ struct element_info
 	char   *aliasname;
 	int2vector *key;
 	Oid		srcrelid;
+	int2vector *srckey;
+	int2vector *srcref;
 	Oid		destrelid;
+	int2vector *destkey;
+	int2vector *destref;
 };
 
 
@@ -122,6 +127,12 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		ListCell   *lc2;
 		Oid			srcrelid;
 		Oid			destrelid;
+		Relation	srcrel;
+		Relation	destrel;
+		int2vector *srckeyiv;
+		int2vector *srcrefiv;
+		int2vector *destkeyiv;
+		int2vector *destrefiv;
 		struct element_info *einfo;
 
 		relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
@@ -184,7 +195,35 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 							edge->edestvertex, aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		// TODO: check for appropriate foreign keys
+		if (!edge->esrckey || !edge->esrcvertexcols || !edge->edestkey || !edge->edestvertexcols)
+			elog(ERROR, "TODO foreign key support");
+
+		srcrel = table_open(srcrelid, NoLock);
+		destrel = table_open(destrelid, NoLock);
+
+		if (list_length(edge->esrckey) != list_length(edge->esrcvertexcols))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("mismatching number of columns in source vertex definition of edge \"%s\"",
+							aliasname),
+					 parser_errposition(pstate, edge->location)));
+
+		if (list_length(edge->edestkey) != list_length(edge->edestvertexcols))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("mismatching number of columns in destination vertex definition of edge \"%s\"",
+							aliasname),
+					 parser_errposition(pstate, edge->location)));
+
+		srckeyiv = int2vector_from_column_list(pstate, edge->esrckey, edge->location, rel);
+		srcrefiv = int2vector_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
+		destkeyiv = int2vector_from_column_list(pstate, edge->edestkey, edge->location, rel);
+		destrefiv = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+
+		// TODO: various consistency checks
+
+		table_close(destrel, NoLock);
+		table_close(srcrel, NoLock);
 
 		table_close(rel, NoLock);
 
@@ -194,7 +233,11 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		einfo->aliasname = aliasname;
 		einfo->key = iv;
 		einfo->srcrelid = srcrelid;
+		einfo->srckey = srckeyiv;
+		einfo->srcref = srcrefiv;
 		einfo->destrelid = destrelid;
+		einfo->destkey = destkeyiv;
+		einfo->destref = destrefiv;
 		element_infos = lappend(element_infos, einfo);
 
 		element_aliases = lappend(element_aliases, makeString(aliasname));
@@ -242,10 +285,22 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		values[Anum_pg_propgraph_element_pgedestvertexid - 1] = ObjectIdGetDatum(einfo->destrelid);
 		values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(einfo->key);
 
-		nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true; // TODO
-		nulls[Anum_pg_propgraph_element_pgesrcref - 1] = true; // TODO
-		nulls[Anum_pg_propgraph_element_pgedestkey - 1] = true; // TODO
-		nulls[Anum_pg_propgraph_element_pgedestref - 1] = true; // TODO
+		if (einfo->srckey)
+			values[Anum_pg_propgraph_element_pgesrckey - 1] = PointerGetDatum(einfo->srckey);
+		else
+			nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true;
+		if (einfo->srcref)
+			values[Anum_pg_propgraph_element_pgesrcref - 1] = PointerGetDatum(einfo->srcref);
+		else
+			nulls[Anum_pg_propgraph_element_pgesrcref - 1] = true;
+		if (einfo->destkey)
+			values[Anum_pg_propgraph_element_pgedestkey - 1] = PointerGetDatum(einfo->destkey);
+		else
+			nulls[Anum_pg_propgraph_element_pgedestkey - 1] = true;
+		if (einfo->destref)
+			values[Anum_pg_propgraph_element_pgedestref - 1] = PointerGetDatum(einfo->destref);
+		else
+			nulls[Anum_pg_propgraph_element_pgedestref - 1] = true;
 
 		tup = heap_form_tuple(RelationGetDescr(elrel), values, nulls);
 		CatalogTupleInsert(elrel, tup);
@@ -261,6 +316,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 
 		/* Add dependencies on vertices */
+		// TODO: columns
 		if (einfo->srcrelid)
 		{
 			ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->srcrelid);
@@ -303,47 +359,53 @@ propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Re
 	}
 	else
 	{
-		int			numattrs;
-		int16	   *attnums;
-		int			i;
-		ListCell   *lc;
-
-		numattrs = list_length(key_clause);
-		attnums = palloc(numattrs * sizeof(int16));
-
-		i = 0;
-		foreach(lc, key_clause)
-		{
-			char	   *colname = strVal(lfirst(lc));
-			Oid			relid = RelationGetRelid(element_rel);
-			AttrNumber	attnum;
-
-			attnum = get_attnum(relid, colname);
-			if (!attnum)
-				ereport(ERROR,
-						(errcode(ERRCODE_UNDEFINED_COLUMN),
-						 errmsg("column \"%s\" of relation \"%s\" does not exist",
-								colname, get_rel_name(relid)),
-						 parser_errposition(pstate, location)));
-			attnums[i++] = attnum;
-		}
-
-		for (int j = 0; j < numattrs; j++)
-		{
-			for (int k = j + 1; k < numattrs; k++)
-			{
-				if (attnums[j] == attnums[k])
-					ereport(ERROR,
-							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-							 errmsg("graph key columns list must not contain duplicates"),
-							 parser_errposition(pstate, location)));
-			}
-		}
-
-		iv = buildint2vector(attnums, numattrs);
+		iv = int2vector_from_column_list(pstate, key_clause, location, element_rel);
 	}
 
 	return iv;
+}
+
+static int2vector *
+int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel)
+{
+	int			numattrs;
+	int16	   *attnums;
+	int			i;
+	ListCell   *lc;
+
+	numattrs = list_length(colnames);
+	attnums = palloc(numattrs * sizeof(int16));
+
+	i = 0;
+	foreach(lc, colnames)
+	{
+		char	   *colname = strVal(lfirst(lc));
+		Oid			relid = RelationGetRelid(element_rel);
+		AttrNumber	attnum;
+
+		attnum = get_attnum(relid, colname);
+		if (!attnum)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("column \"%s\" of relation \"%s\" does not exist",
+							colname, get_rel_name(relid)),
+					 parser_errposition(pstate, location)));
+		attnums[i++] = attnum;
+	}
+
+	for (int j = 0; j < numattrs; j++)
+	{
+		for (int k = j + 1; k < numattrs; k++)
+		{
+			if (attnums[j] == attnums[k])
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("graph key columns list must not contain duplicates"),
+						 parser_errposition(pstate, location)));
+		}
+	}
+
+	return buildint2vector(attnums, numattrs);
 }
 
 void

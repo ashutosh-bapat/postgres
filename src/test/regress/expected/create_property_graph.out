@@ -12,8 +12,12 @@ CREATE TABLE e2 (a int, x int, t text);
 CREATE PROPERTY GRAPH g2
     VERTEX TABLES (t1 KEY (a), t2, t3 KEY (x))
     EDGE TABLES (
-        e1 SOURCE t1 DESTINATION t2,
-        e2 KEY (a, x) SOURCE t1 DESTINATION t3
+        e1
+            SOURCE KEY (a) REFERENCES t1 (a)
+            DESTINATION KEY (i) REFERENCES t2 (i),
+        e2 KEY (a, x)
+            SOURCE KEY (a) REFERENCES t1 (a)
+            DESTINATION KEY (x, t) REFERENCES t3 (x, y)
     );
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
