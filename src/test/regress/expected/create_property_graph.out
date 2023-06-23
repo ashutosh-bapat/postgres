@@ -74,6 +74,16 @@ SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_
  regression             | create_property_graph_tests | g2                  | t3                  | x           |                1
 (7 rows)
 
+SELECT * FROM information_schema.pg_edge_table_components ORDER BY property_graph_name, edge_table_alias, edge_end DESC, ordinal_position;
+ property_graph_catalog |    property_graph_schema    | property_graph_name | edge_table_alias | vertex_table_alias |  edge_end   | edge_table_column_name | vertex_table_column_name | ordinal_position 
+------------------------+-----------------------------+---------------------+------------------+--------------------+-------------+------------------------+--------------------------+------------------
+ regression             | create_property_graph_tests | g2                  | e1               | t1                 | SOURCE      | a                      | a                        |                1
+ regression             | create_property_graph_tests | g2                  | e1               | t2                 | DESTINATION | i                      | i                        |                1
+ regression             | create_property_graph_tests | g2                  | e2               | t1                 | SOURCE      | a                      | a                        |                1
+ regression             | create_property_graph_tests | g2                  | e2               | t3                 | DESTINATION | x                      | x                        |                1
+ regression             | create_property_graph_tests | g2                  | e2               | t3                 | DESTINATION | t                      | y                        |                2
+(5 rows)
+
 SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph_name, element_table_alias, label_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | label_name 
 ------------------------+-----------------------------+---------------------+---------------------+------------

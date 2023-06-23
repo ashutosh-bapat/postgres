@@ -266,3 +266,7 @@ NOTICE:  checking pg_subscription {subdbid} => pg_database {oid}
 NOTICE:  checking pg_subscription {subowner} => pg_authid {oid}
 NOTICE:  checking pg_subscription_rel {srsubid} => pg_subscription {oid}
 NOTICE:  checking pg_subscription_rel {srrelid} => pg_class {oid}
+NOTICE:  checking pg_propgraph_element {pgepgid} => pg_class {oid}
+NOTICE:  checking pg_propgraph_element {pgerelid} => pg_class {oid}
+NOTICE:  checking pg_propgraph_element {pgesrcvertexid} => pg_propgraph_element {oid}
+NOTICE:  checking pg_propgraph_element {pgedestvertexid} => pg_propgraph_element {oid}

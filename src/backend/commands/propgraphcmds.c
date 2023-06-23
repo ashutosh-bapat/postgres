@@ -28,23 +28,29 @@
 #include "utils/syscache.h"
 
 
-static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
-static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
-
-
 struct element_info
 {
+	Oid		elementid;
 	char	kind;
 	Oid		relid;
 	char   *aliasname;
 	int2vector *key;
-	Oid		srcrelid;
+
+	char   *srcvertex;
+	Oid		srcvertexid;
 	int2vector *srckey;
 	int2vector *srcref;
-	Oid		destrelid;
+
+	char   *destvertex;
+	Oid		destvertexid;
 	int2vector *destkey;
 	int2vector *destref;
 };
+
+
+static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
+static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
+static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 
 
 ObjectAddress
@@ -54,9 +60,9 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	char		components_persistence;
 	ListCell   *lc;
 	ObjectAddress pgaddress;
-	List	   *element_infos = NIL;
+	List	   *vertex_infos = NIL;
+	List	   *edge_infos = NIL;
 	List	   *element_aliases = NIL;
-	Relation	elrel;
 
 	if (stmt->pgname->relpersistence == RELPERSISTENCE_UNLOGGED)
 		ereport(ERROR,
@@ -65,8 +71,6 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	components_persistence = RELPERSISTENCE_PERMANENT;
 
-	elrel = table_open(PropgraphElementRelationId, RowExclusiveLock);
-
 	foreach (lc, stmt->vertex_tables)
 	{
 		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
@@ -74,7 +78,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		Relation	rel;
 		char	   *aliasname;
 		int2vector *iv;
-		struct element_info *einfo;
+		struct element_info *vinfo;
 
 		relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
 
@@ -107,12 +111,12 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 		table_close(rel, NoLock);
 
-		einfo = palloc0_object(struct element_info);
-		einfo->kind = PGEKIND_VERTEX;
-		einfo->relid = relid;
-		einfo->aliasname = aliasname;
-		einfo->key = iv;
-		element_infos = lappend(element_infos, einfo);
+		vinfo = palloc0_object(struct element_info);
+		vinfo->kind = PGEKIND_VERTEX;
+		vinfo->relid = relid;
+		vinfo->aliasname = aliasname;
+		vinfo->key = iv;
+		vertex_infos = lappend(vertex_infos, vinfo);
 
 		element_aliases = lappend(element_aliases, makeString(aliasname));
 	}
@@ -166,21 +170,18 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 		srcrelid = 0;
 		destrelid = 0;
-		foreach (lc2, element_infos)
+		foreach (lc2, vertex_infos)
 		{
-			struct element_info *einfo = lfirst(lc2);
+			struct element_info *vinfo = lfirst(lc2);
 
-			if (einfo->kind == PGEKIND_VERTEX)
-			{
-				if (strcmp(einfo->aliasname, edge->esrcvertex) == 0)
-					srcrelid = einfo->relid;
+			if (strcmp(vinfo->aliasname, edge->esrcvertex) == 0)
+				srcrelid = vinfo->relid;
 
-				if (strcmp(einfo->aliasname, edge->edestvertex) == 0)
-					destrelid = einfo->relid;
+			if (strcmp(vinfo->aliasname, edge->edestvertex) == 0)
+				destrelid = vinfo->relid;
 
-				if (srcrelid && destrelid)
-					break;
-			}
+			if (srcrelid && destrelid)
+				break;
 		}
 		if (!srcrelid)
 			ereport(ERROR,
@@ -232,13 +233,16 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		einfo->relid = relid;
 		einfo->aliasname = aliasname;
 		einfo->key = iv;
-		einfo->srcrelid = srcrelid;
+
+		einfo->srcvertex = edge->esrcvertex;
 		einfo->srckey = srckeyiv;
 		einfo->srcref = srcrefiv;
-		einfo->destrelid = destrelid;
+
+		einfo->destvertex = edge->edestvertex;
 		einfo->destkey = destkeyiv;
 		einfo->destref = destrefiv;
-		element_infos = lappend(element_infos, einfo);
+
+		edge_infos = lappend(edge_infos, einfo);
 
 		element_aliases = lappend(element_aliases, makeString(aliasname));
 	}
@@ -262,74 +266,37 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 	pgaddress = DefineRelation(cstmt, RELKIND_PROPGRAPH, InvalidOid, NULL, NULL);
 
-	foreach(lc, element_infos)
+	foreach(lc, vertex_infos)
 	{
-		struct element_info *einfo = lfirst(lc);
-		NameData	aliasname;
-		Oid			peoid;
-		Datum		values[Natts_pg_propgraph_element] = {0};
-		bool		nulls[Natts_pg_propgraph_element] = {0};
-		HeapTuple	tup;
-		ObjectAddress myself;
-		ObjectAddress referenced;
+		struct element_info *vinfo = lfirst(lc);
 
-		peoid = GetNewOidWithIndex(elrel, PropgraphElementObjectIndexId,
-								   Anum_pg_propgraph_element_oid);
-		values[Anum_pg_propgraph_element_oid - 1] = ObjectIdGetDatum(peoid);
-		values[Anum_pg_propgraph_element_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
-		values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(einfo->relid);
-		namestrcpy(&aliasname, einfo->aliasname);
-		values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
-		values[Anum_pg_propgraph_element_pgekind - 1] = CharGetDatum(einfo->kind);
-		values[Anum_pg_propgraph_element_pgesrcvertexid - 1] = ObjectIdGetDatum(einfo->srcrelid);
-		values[Anum_pg_propgraph_element_pgedestvertexid - 1] = ObjectIdGetDatum(einfo->destrelid);
-		values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(einfo->key);
-
-		if (einfo->srckey)
-			values[Anum_pg_propgraph_element_pgesrckey - 1] = PointerGetDatum(einfo->srckey);
-		else
-			nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true;
-		if (einfo->srcref)
-			values[Anum_pg_propgraph_element_pgesrcref - 1] = PointerGetDatum(einfo->srcref);
-		else
-			nulls[Anum_pg_propgraph_element_pgesrcref - 1] = true;
-		if (einfo->destkey)
-			values[Anum_pg_propgraph_element_pgedestkey - 1] = PointerGetDatum(einfo->destkey);
-		else
-			nulls[Anum_pg_propgraph_element_pgedestkey - 1] = true;
-		if (einfo->destref)
-			values[Anum_pg_propgraph_element_pgedestref - 1] = PointerGetDatum(einfo->destref);
-		else
-			nulls[Anum_pg_propgraph_element_pgedestref - 1] = true;
-
-		tup = heap_form_tuple(RelationGetDescr(elrel), values, nulls);
-		CatalogTupleInsert(elrel, tup);
-		heap_freetuple(tup);
-
-		ObjectAddressSet(myself, PropgraphElementRelationId, peoid);
-
-		/* Add dependency on the property graph */
-		recordDependencyOn(&myself, &pgaddress, DEPENDENCY_INTERNAL);
-
-		/* Add dependency on the relation */
-		ObjectAddressSet(referenced, RelationRelationId, einfo->relid);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
-
-		/* Add dependencies on vertices */
-		// TODO: columns
-		if (einfo->srcrelid)
-		{
-			ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->srcrelid);
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
-		}
-		if (einfo->destrelid)
-		{
-			ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->destrelid);
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
-		}
+		insert_element_record(pgaddress, vinfo);
 	}
 
-	table_close(elrel, RowExclusiveLock);
+	foreach(lc, edge_infos)
+	{
+		struct element_info *einfo = lfirst(lc);
+		ListCell *lc2;
+
+		/*
+		 * Look up the vertices again.  Now the vertices have OIDs assigned,
+		 * which we need.
+		 */
+		foreach (lc2, vertex_infos)
+		{
+			struct element_info *vinfo = lfirst(lc2);
+
+			if (strcmp(vinfo->aliasname, einfo->srcvertex) == 0)
+				einfo->srcvertexid = vinfo->elementid;
+			if (strcmp(vinfo->aliasname, einfo->destvertex) == 0)
+				einfo->destvertexid = vinfo->elementid;
+			if (einfo->srcvertexid && einfo->destvertexid)
+				break;
+		}
+		Assert(einfo->srcvertexid);
+		Assert(einfo->destvertexid);
+		insert_element_record(pgaddress, einfo);
+	}
 
 	return pgaddress;
 }
@@ -406,6 +373,78 @@ int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Re
 	}
 
 	return buildint2vector(attnums, numattrs);
+}
+
+static void
+insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
+{
+	Relation	rel;
+	NameData	aliasname;
+	Oid			peoid;
+	Datum		values[Natts_pg_propgraph_element] = {0};
+	bool		nulls[Natts_pg_propgraph_element] = {0};
+	HeapTuple	tup;
+	ObjectAddress myself;
+	ObjectAddress referenced;
+
+	rel = table_open(PropgraphElementRelationId, RowExclusiveLock);
+
+	peoid = GetNewOidWithIndex(rel, PropgraphElementObjectIndexId, Anum_pg_propgraph_element_oid);
+	einfo->elementid = peoid;
+	values[Anum_pg_propgraph_element_oid - 1] = ObjectIdGetDatum(peoid);
+	values[Anum_pg_propgraph_element_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
+	values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(einfo->relid);
+	namestrcpy(&aliasname, einfo->aliasname);
+	values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
+	values[Anum_pg_propgraph_element_pgekind - 1] = CharGetDatum(einfo->kind);
+	values[Anum_pg_propgraph_element_pgesrcvertexid - 1] = ObjectIdGetDatum(einfo->srcvertexid);
+	values[Anum_pg_propgraph_element_pgedestvertexid - 1] = ObjectIdGetDatum(einfo->destvertexid);
+	values[Anum_pg_propgraph_element_pgekey - 1] = PointerGetDatum(einfo->key);
+
+	if (einfo->srckey)
+		values[Anum_pg_propgraph_element_pgesrckey - 1] = PointerGetDatum(einfo->srckey);
+	else
+		nulls[Anum_pg_propgraph_element_pgesrckey - 1] = true;
+	if (einfo->srcref)
+		values[Anum_pg_propgraph_element_pgesrcref - 1] = PointerGetDatum(einfo->srcref);
+	else
+		nulls[Anum_pg_propgraph_element_pgesrcref - 1] = true;
+	if (einfo->destkey)
+		values[Anum_pg_propgraph_element_pgedestkey - 1] = PointerGetDatum(einfo->destkey);
+	else
+		nulls[Anum_pg_propgraph_element_pgedestkey - 1] = true;
+	if (einfo->destref)
+		values[Anum_pg_propgraph_element_pgedestref - 1] = PointerGetDatum(einfo->destref);
+	else
+		nulls[Anum_pg_propgraph_element_pgedestref - 1] = true;
+
+	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+	CatalogTupleInsert(rel, tup);
+	heap_freetuple(tup);
+
+	ObjectAddressSet(myself, PropgraphElementRelationId, peoid);
+
+	/* Add dependency on the property graph */
+	recordDependencyOn(&myself, &pgaddress, DEPENDENCY_INTERNAL);
+
+	/* Add dependency on the relation */
+	ObjectAddressSet(referenced, RelationRelationId, einfo->relid);
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+
+	/* Add dependencies on vertices */
+	// TODO: columns
+	if (einfo->srcvertexid)
+	{
+		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->srcvertexid);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+	}
+	if (einfo->destvertexid)
+	{
+		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->destvertexid);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+	}
+
+	table_close(rel, NoLock);
 }
 
 void

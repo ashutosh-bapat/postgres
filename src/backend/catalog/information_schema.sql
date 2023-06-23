@@ -3068,7 +3068,40 @@ GRANT SELECT ON user_mappings TO PUBLIC;
  * PG_EDGE_TABLE_COMPONENTS view
  */
 
--- TODO
+CREATE VIEW pg_edge_table_components AS
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(eg.pgealias AS sql_identifier) AS edge_table_alias,
+           CAST(v.pgealias AS sql_identifier) AS vertex_table_alias,
+           CAST(CASE eg.end WHEN 'src' THEN 'SOURCE' WHEN 'dest' THEN 'DESTINATION' END AS character_data) AS edge_end,
+           CAST(ae.attname AS sql_identifier) AS edge_table_column_name,
+           CAST(av.attname AS sql_identifier) AS vertex_table_column_name,
+           CAST((eg.egkey).n AS cardinal_number) AS ordinal_position
+    FROM pg_namespace npg
+         JOIN
+         (SELECT * FROM pg_class WHERE relkind = 'g') AS pg
+           ON npg.oid = pg.relnamespace
+         JOIN
+         (SELECT pgepgid, pgealias, pgerelid, 'src' AS end, pgesrcvertexid AS vertexid, _pg_expandarray(pgesrckey) AS egkey, _pg_expandarray(pgesrcref) AS egref FROM pg_propgraph_element WHERE pgekind = 'e'
+          UNION ALL
+          SELECT pgepgid, pgealias, pgerelid, 'dest' AS end, pgedestvertexid AS vertexid, _pg_expandarray(pgedestkey) AS egkey, _pg_expandarray(pgedestref) AS egref FROM pg_propgraph_element WHERE pgekind = 'e'
+         ) AS eg
+           ON pg.oid = eg.pgepgid
+         JOIN
+         (SELECT * FROM pg_propgraph_element WHERE pgekind = 'v') AS v
+           ON eg.vertexid = v.oid
+         JOIN
+         (SELECT * FROM pg_attribute WHERE NOT attisdropped) AS ae
+           ON eg.pgerelid = ae.attrelid AND (eg.egkey).x = ae.attnum
+         JOIN
+         (SELECT * FROM pg_attribute WHERE NOT attisdropped) AS av
+           ON v.pgerelid = av.attrelid AND (eg.egref).x = av.attnum
+    WHERE NOT pg_is_other_temp_schema(npg.oid)
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_edge_table_components TO PUBLIC;
 
 
 /*

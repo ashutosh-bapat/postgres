@@ -28,18 +28,50 @@
 CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 {
 	Oid			oid;
-	Oid			pgepgid;		/* OID of the property graph */
-	Oid			pgerelid;		/* OID of the underlying relation */
-	NameData	pgealias;		/* element alias */
-	char		pgekind;		/* see PGEKIND_* below */
-	Oid			pgesrcvertexid;	/* source vertex */
-	Oid			pgedestvertexid;/* destination vertex */
+
+	/* OID of the property graph relation */
+	Oid			pgepgid BKI_LOOKUP(pg_class);
+
+	/* OID of the element table */
+	Oid			pgerelid BKI_LOOKUP(pg_class);
+
+	/* element alias */
+	NameData	pgealias;
+
+	/* vertex or edge? -- see PGEKIND_* below */
+	char		pgekind;
+
+	/* for edges: source vertex */
+	Oid			pgesrcvertexid BKI_LOOKUP_OPT(pg_propgraph_element);
+
+	/* for edges: destination vertex */
+	Oid			pgedestvertexid BKI_LOOKUP_OPT(pg_propgraph_element);
+
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
-	int2vector	pgekey;			/* column numbers in pgerelid relation */
-	int2vector	pgesrckey;		/* column numbers in pgerelid relation */
-	int2vector	pgesrcref;		/* column numbers in pgesrcvertexid relation */
-	int2vector	pgedestkey;		/* column numbers in pgerelid relation */
-	int2vector	pgedestref;		/* column numbers in pgedestvertexid relation */
+	/* element key (column numbers in pgerelid relation) */
+	int2vector	pgekey;
+
+	/*
+	 * for edges: source vertex key (column numbers in pgerelid relation)
+	 */
+	int2vector	pgesrckey;
+
+	/*
+	 * for edges: source vertex table referenced columns (column numbers in
+	 * relation reached via pgesrcvertexid)
+	 */
+	int2vector	pgesrcref;
+
+	/*
+	 * for edges: destination vertex key (column numbers in pgerelid relation)
+	 */
+	int2vector	pgedestkey;
+
+	/*
+	 * for edges: destination vertex table referenced columns (column numbers
+	 * in relation reached via pgedestvertexid)
+	 */
+	int2vector	pgedestref;
 #endif
 } FormData_pg_propgraph_element;
 

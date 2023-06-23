@@ -46,6 +46,7 @@ COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
 SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name, element_table_alias;
 SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_graph_name, element_table_alias, ordinal_position;
+SELECT * FROM information_schema.pg_edge_table_components ORDER BY property_graph_name, edge_table_alias, edge_end DESC, ordinal_position;
 SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph_name, element_table_alias, label_name;
 SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
 
