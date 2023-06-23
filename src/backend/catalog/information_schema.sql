@@ -3086,27 +3086,24 @@ GRANT SELECT ON user_mappings TO PUBLIC;
 
 CREATE VIEW pg_element_table_key_columns AS
     SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
-           CAST(npg_nspname AS sql_identifier) AS property_graph_schema,
-           CAST(pg_relname AS sql_identifier) AS property_graph_name,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
            CAST(pgealias AS sql_identifier) AS element_table_alias,
            CAST(a.attname AS sql_identifier) AS column_name,
-           CAST((ss.x).n AS cardinal_number) AS ordinal_position
-    FROM pg_attribute a,
-         (SELECT pg.oid AS pg_oid, pg.relname AS pg_relname, pg.relowner AS pg_relowner, npg.nspname AS npg_nspname, e.pgealias,
-                 t.oid AS t_oid,
-                 _pg_expandarray(e.pgekey) AS x
-          FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_class t, pg_namespace nt
-          WHERE pg.relnamespace = npg.oid
-                AND e.pgepgid = pg.oid
-                AND e.pgerelid = t.oid
-                AND t.relnamespace = nt.oid
-                AND pg.relkind = 'g'
-                AND (NOT pg_is_other_temp_schema(npg.oid))) AS ss
-    WHERE ss.t_oid = a.attrelid
-          AND a.attnum = (ss.x).x
-          AND NOT a.attisdropped
-          AND (pg_has_role(pg_relowner, 'USAGE')
-               OR has_table_privilege(pg_oid, 'SELECT'));
+           CAST((el.ekey).n AS cardinal_number) AS ordinal_position
+    FROM pg_namespace npg
+         JOIN
+         (SELECT * FROM pg_class WHERE relkind = 'g') AS pg
+           ON npg.oid = pg.relnamespace
+         JOIN
+         (SELECT pgepgid, pgealias, pgerelid, _pg_expandarray(pgekey) AS ekey FROM pg_propgraph_element) AS el
+           ON pg.oid = el.pgepgid
+         JOIN
+         (SELECT * FROM pg_attribute WHERE NOT attisdropped) AS a
+           ON el.pgerelid = a.attrelid AND (el.ekey).x = a.attnum
+    WHERE NOT pg_is_other_temp_schema(npg.oid)
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
 
 GRANT SELECT ON pg_element_table_key_columns TO PUBLIC;
 
