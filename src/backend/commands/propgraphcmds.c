@@ -28,6 +28,9 @@
 #include "utils/syscache.h"
 
 
+static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
+
+
 ObjectAddress
 CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 {
@@ -88,63 +91,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					 errmsg("alias \"%s\" used more than once as element table", aliasname),
 					 parser_errposition(pstate, vertex->location)));
 
-		if (vertex->vkey == NIL)
-		{
-			Oid			pkidx = RelationGetPrimaryKeyIndex(rel);
-
-			if (!pkidx)
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("vertex table key must be specified for table without primary key"),
-						 parser_errposition(pstate, vertex->location)));
-			else
-			{
-				Relation	indexDesc;
-
-				indexDesc = index_open(pkidx, AccessShareLock);
-				iv = buildint2vector(indexDesc->rd_index->indkey.values, indexDesc->rd_index->indkey.dim1);
-				index_close(indexDesc, NoLock);
-			}
-		}
-		else
-		{
-			int			numattrs;
-			int16	   *attnums;
-			int			i;
-
-			numattrs = list_length(vertex->vkey);
-			attnums = palloc(numattrs * sizeof(int16));
-
-			i = 0;
-			foreach(lc2, vertex->vkey)
-			{
-				char	   *colname = strVal(lfirst(lc2));
-				AttrNumber	attnum;
-
-				attnum = get_attnum(relid, colname);
-				if (!attnum)
-					ereport(ERROR,
-							(errcode(ERRCODE_UNDEFINED_COLUMN),
-							 errmsg("column \"%s\" of relation \"%s\" does not exist",
-									colname, get_rel_name(relid)),
-							 parser_errposition(pstate, vertex->location)));
-				attnums[i++] = attnum;
-			}
-
-			for (int j = 0; j < numattrs; j++)
-			{
-				for (int k = j + 1; k < numattrs; k++)
-				{
-					if (attnums[j] == attnums[k])
-						ereport(ERROR,
-								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-								 errmsg("graph key columns list must not contain duplicates"),
-								 parser_errposition(pstate, vertex->location)));
-				}
-			}
-
-			iv = buildint2vector(attnums, numattrs);
-		}
+		iv = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
 
 		table_close(rel, NoLock);
 
@@ -189,63 +136,7 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					 errmsg("alias \"%s\" used more than once as element table", aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		if (edge->ekey == NIL)
-		{
-			Oid			pkidx = RelationGetPrimaryKeyIndex(rel);
-
-			if (!pkidx)
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-						 errmsg("edge table key must be specified for table without primary key"),
-						 parser_errposition(pstate, edge->location)));
-			else
-			{
-				Relation	indexDesc;
-
-				indexDesc = index_open(pkidx, AccessShareLock);
-				iv = buildint2vector(indexDesc->rd_index->indkey.values, indexDesc->rd_index->indkey.dim1);
-				index_close(indexDesc, NoLock);
-			}
-		}
-		else
-		{
-			int			numattrs;
-			int16	   *attnums;
-			int			i;
-
-			numattrs = list_length(edge->ekey);
-			attnums = palloc(numattrs * sizeof(int16));
-
-			i = 0;
-			foreach(lc2, edge->ekey)
-			{
-				char	   *colname = strVal(lfirst(lc2));
-				AttrNumber	attnum;
-
-				attnum = get_attnum(relid, colname);
-				if (!attnum)
-					ereport(ERROR,
-							(errcode(ERRCODE_UNDEFINED_COLUMN),
-							 errmsg("column \"%s\" of relation \"%s\" does not exist",
-									colname, get_rel_name(relid)),
-							 parser_errposition(pstate, edge->location)));
-				attnums[i++] = attnum;
-			}
-
-			for (int j = 0; j < numattrs; j++)
-			{
-				for (int k = j + 1; k < numattrs; k++)
-				{
-					if (attnums[j] == attnums[k])
-						ereport(ERROR,
-								(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-								 errmsg("graph key columns list must not contain duplicates"),
-								 parser_errposition(pstate, edge->location)));
-				}
-			}
-
-			iv = buildint2vector(attnums, numattrs);
-		}
+		iv = propgraph_element_get_key(pstate, edge->ekey, edge->location, rel);
 
 		if (!list_member(vertex_aliases, makeString(edge->esrcvertex)))
 			ereport(ERROR,
@@ -390,6 +281,74 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	table_close(elrel, RowExclusiveLock);
 
 	return pgaddress;
+}
+
+static int2vector *
+propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel)
+{
+	int2vector *iv;
+
+	if (key_clause == NIL)
+	{
+		Oid			pkidx = RelationGetPrimaryKeyIndex(element_rel);
+
+		if (!pkidx)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("element table key must be specified for table without primary key"),
+					 parser_errposition(pstate, location)));
+		else
+		{
+			Relation	indexDesc;
+
+			indexDesc = index_open(pkidx, AccessShareLock);
+			iv = buildint2vector(indexDesc->rd_index->indkey.values, indexDesc->rd_index->indkey.dim1);
+			index_close(indexDesc, NoLock);
+		}
+	}
+	else
+	{
+		int			numattrs;
+		int16	   *attnums;
+		int			i;
+		ListCell   *lc;
+
+		numattrs = list_length(key_clause);
+		attnums = palloc(numattrs * sizeof(int16));
+
+		i = 0;
+		foreach(lc, key_clause)
+		{
+			char	   *colname = strVal(lfirst(lc));
+			Oid			relid = RelationGetRelid(element_rel);
+			AttrNumber	attnum;
+
+			attnum = get_attnum(relid, colname);
+			if (!attnum)
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_COLUMN),
+						 errmsg("column \"%s\" of relation \"%s\" does not exist",
+								colname, get_rel_name(relid)),
+						 parser_errposition(pstate, location)));
+			attnums[i++] = attnum;
+		}
+
+		for (int j = 0; j < numattrs; j++)
+		{
+			for (int k = j + 1; k < numattrs; k++)
+			{
+				if (attnums[j] == attnums[k])
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+							 errmsg("graph key columns list must not contain duplicates"),
+							 parser_errposition(pstate, location)));
+			}
+		}
+
+		iv = buildint2vector(attnums, numattrs);
+	}
+
+	return iv;
 }
 
 void
