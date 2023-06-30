@@ -18,6 +18,7 @@
 #include "parser/parse_node.h"
 
 extern ObjectAddress CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt);
+extern ObjectAddress AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt);
 extern void RemovePropgraphElementById(Oid peid);
 
 #endif							/* PROPGRAPHCMDS_H */

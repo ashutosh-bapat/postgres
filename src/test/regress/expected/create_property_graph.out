@@ -19,6 +19,22 @@ CREATE PROPERTY GRAPH g2
             SOURCE KEY (a) REFERENCES t1 (a)
             DESTINATION KEY (x, t) REFERENCES t3 (x, y)
     );
+-- like g3 but assembled with ALTER
+CREATE PROPERTY GRAPH g3;
+ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t1 KEY (a), t2);
+ALTER PROPERTY GRAPH g3
+    ADD VERTEX TABLES (t3 KEY (x))
+    ADD EDGE TABLES (
+        e1 SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (i) REFERENCES t2 (i),
+        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y)
+    );
+ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2);  -- fail (TODO: dubious error message)
+ERROR:  cannot drop element t2 in table t2 because other objects depend on it
+DETAIL:  element e1 in table e1 depends on element t2 in table t2
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2) CASCADE;
+NOTICE:  drop cascades to element e1 in table e1
+ALTER PROPERTY GRAPH g3 DROP EDGE TABLES (e2);
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
@@ -50,7 +66,8 @@ SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
 ------------------------+-----------------------------+---------------------
  regression             | create_property_graph_tests | g1
  regression             | create_property_graph_tests | g2
-(2 rows)
+ regression             | create_property_graph_tests | g3
+(3 rows)
 
 SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name, element_table_alias;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | element_table_kind | table_catalog |        table_schema         | table_name | element_table_definition 
@@ -60,7 +77,9 @@ SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name,
  regression             | create_property_graph_tests | g2                  | t1                  | VERTEX             | regression    | create_property_graph_tests | t1         | 
  regression             | create_property_graph_tests | g2                  | t2                  | VERTEX             | regression    | create_property_graph_tests | t2         | 
  regression             | create_property_graph_tests | g2                  | t3                  | VERTEX             | regression    | create_property_graph_tests | t3         | 
-(5 rows)
+ regression             | create_property_graph_tests | g3                  | t1                  | VERTEX             | regression    | create_property_graph_tests | t1         | 
+ regression             | create_property_graph_tests | g3                  | t3                  | VERTEX             | regression    | create_property_graph_tests | t3         | 
+(7 rows)
 
 SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_graph_name, element_table_alias, ordinal_position;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | column_name | ordinal_position 
@@ -72,7 +91,9 @@ SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_
  regression             | create_property_graph_tests | g2                  | t1                  | a           |                1
  regression             | create_property_graph_tests | g2                  | t2                  | i           |                1
  regression             | create_property_graph_tests | g2                  | t3                  | x           |                1
-(7 rows)
+ regression             | create_property_graph_tests | g3                  | t1                  | a           |                1
+ regression             | create_property_graph_tests | g3                  | t3                  | x           |                1
+(9 rows)
 
 SELECT * FROM information_schema.pg_edge_table_components ORDER BY property_graph_name, edge_table_alias, edge_end DESC, ordinal_position;
  property_graph_catalog |    property_graph_schema    | property_graph_name | edge_table_alias | vertex_table_alias |  edge_end   | edge_table_column_name | vertex_table_column_name | ordinal_position 
@@ -92,7 +113,9 @@ SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph
  regression             | create_property_graph_tests | g2                  | t1                  | t1
  regression             | create_property_graph_tests | g2                  | t2                  | t2
  regression             | create_property_graph_tests | g2                  | t3                  | t3
-(5 rows)
+ regression             | create_property_graph_tests | g3                  | t1                  | t1
+ regression             | create_property_graph_tests | g3                  | t3                  | t3
+(7 rows)
 
 SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | label_name 
@@ -102,7 +125,9 @@ SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_n
  regression             | create_property_graph_tests | g2                  | t1
  regression             | create_property_graph_tests | g2                  | t2
  regression             | create_property_graph_tests | g2                  | t3
-(5 rows)
+ regression             | create_property_graph_tests | g3                  | t1
+ regression             | create_property_graph_tests | g3                  | t3
+(7 rows)
 
 --\dG
 -- TODO
@@ -127,10 +152,11 @@ ERROR:  property graph "g2" does not exist
 DROP PROPERTY GRAPH IF EXISTS g2;
 NOTICE:  property graph "g2" does not exist, skipping
 DROP SCHEMA create_property_graph_tests CASCADE;
-NOTICE:  drop cascades to 6 other objects
+NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to property graph g1
 drop cascades to table t1
 drop cascades to table t2
 drop cascades to table t3
 drop cascades to table e1
 drop cascades to table e2
+drop cascades to property graph g3

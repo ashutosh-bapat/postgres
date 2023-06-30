@@ -9117,7 +9117,7 @@ AlterPropGraphStmt:
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
 					n->pgname = $4;
-					// TODO
+					n->add_vertex_tables = $6;
 					$$ = (Node *) n;
 				}
 			| ALTER PROPERTY GRAPH qualified_name ADD_P vertex_tables_clause ADD_P edge_tables_clause
@@ -9125,7 +9125,8 @@ AlterPropGraphStmt:
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
 					n->pgname = $4;
-					// TODO
+					n->add_vertex_tables = $6;
+					n->add_edge_tables = $8;
 					$$ = (Node *) n;
 				}
 			| ALTER PROPERTY GRAPH qualified_name ADD_P edge_tables_clause
@@ -9133,7 +9134,7 @@ AlterPropGraphStmt:
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
 					n->pgname = $4;
-					// TODO
+					n->add_edge_tables = $6;
 					$$ = (Node *) n;
 				}
 			| ALTER PROPERTY GRAPH qualified_name DROP vertex_synonym TABLES '(' name_list ')' opt_drop_behavior
@@ -9141,7 +9142,8 @@ AlterPropGraphStmt:
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
 					n->pgname = $4;
-					// TODO
+					n->drop_vertex_tables = $9;
+					n->behavior = $11;
 					$$ = (Node *) n;
 				}
 			| ALTER PROPERTY GRAPH qualified_name DROP edge_synonym TABLES '(' name_list ')' opt_drop_behavior
@@ -9149,7 +9151,8 @@ AlterPropGraphStmt:
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
 					n->pgname = $4;
-					// TODO
+					n->drop_edge_tables = $9;
+					n->behavior = $11;
 					$$ = (Node *) n;
 				}
 		;

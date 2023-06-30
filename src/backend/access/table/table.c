@@ -139,7 +139,8 @@ validate_relation_kind(Relation r)
 {
 	if (r->rd_rel->relkind == RELKIND_INDEX ||
 		r->rd_rel->relkind == RELKIND_PARTITIONED_INDEX ||
-		r->rd_rel->relkind == RELKIND_COMPOSITE_TYPE)
+		r->rd_rel->relkind == RELKIND_COMPOSITE_TYPE ||
+		r->rd_rel->relkind == RELKIND_PROPGRAPH)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("cannot open relation \"%s\"",

@@ -21,6 +21,16 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> ADD
+    [ {VERTEX|NODE} TABLES ( <replaceable class="parameter">vertex_table_name</replaceable> [, ...] ) ]
+    [ {EDGE|RELATIONSHIP} TABLES ( { <replaceable class="parameter">edge_table_name</replaceable> SOURCE <replaceable class="parameter">source_table_name</replaceable> DESTINATION <replaceable class="parameter">dest_table_name</replaceable> } [, ...] ) ]
+
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> DROP
+    {VERTEX|NODE} TABLES ( <replaceable class="parameter">vertex_table_alias</replaceable> [, ...] ) [ CASCADE | RESTRICT ]
+
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> DROP
+    {EDGE|RELATIONSHIP} TABLES ( <replaceable class="parameter">edge_table_alias</replaceable> [, ...] ) [ CASCADE | RESTRICT ]
+
 ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replaceable> OWNER TO { <replaceable class="parameter">new_owner</replaceable> | CURRENT_USER | SESSION_USER }
 ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replaceable> RENAME TO <replaceable class="parameter">new_name</replaceable>
 ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replaceable> SET SCHEMA <replaceable class="parameter">new_schema</replaceable>

@@ -15,6 +15,7 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/table.h"
+#include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
@@ -51,6 +52,9 @@ struct element_info
 static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
 static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
+static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
+static Oid get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
+static Oid get_element_relid(Oid peid);
 
 
 ObjectAddress
@@ -74,99 +78,75 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	foreach (lc, stmt->vertex_tables)
 	{
 		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
-		Oid			relid;
-		Relation	rel;
-		char	   *aliasname;
-		int2vector *iv;
 		struct element_info *vinfo;
+		Relation	rel;
 
-		relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
+		vinfo = palloc0_object(struct element_info);
+		vinfo->kind = PGEKIND_VERTEX;
 
-		rel = table_open(relid, NoLock);
+		vinfo->relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
+
+		rel = table_open(vinfo->relid, NoLock);
 
 		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
 			components_persistence = RELPERSISTENCE_TEMP;
 
-		if (!(rel->rd_rel->relkind == RELKIND_RELATION ||
-			  rel->rd_rel->relkind == RELKIND_VIEW ||
-			  rel->rd_rel->relkind == RELKIND_MATVIEW ||
-			  rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE ||
-			  rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("invalid relkind TODO")));
-
 		if (vertex->vtable->alias)
-			aliasname = vertex->vtable->alias->aliasname;
+			vinfo->aliasname = vertex->vtable->alias->aliasname;
 		else
-			aliasname = vertex->vtable->relname;
+			vinfo->aliasname = vertex->vtable->relname;
 
-		if (list_member(element_aliases, makeString(aliasname)))
+		if (list_member(element_aliases, makeString(vinfo->aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("alias \"%s\" used more than once as element table", aliasname),
+					 errmsg("alias \"%s\" used more than once as element table", vinfo->aliasname),
 					 parser_errposition(pstate, vertex->location)));
 
-		iv = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
+		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
 
 		table_close(rel, NoLock);
 
-		vinfo = palloc0_object(struct element_info);
-		vinfo->kind = PGEKIND_VERTEX;
-		vinfo->relid = relid;
-		vinfo->aliasname = aliasname;
-		vinfo->key = iv;
 		vertex_infos = lappend(vertex_infos, vinfo);
 
-		element_aliases = lappend(element_aliases, makeString(aliasname));
+		element_aliases = lappend(element_aliases, makeString(vinfo->aliasname));
 	}
 
 	foreach (lc, stmt->edge_tables)
 	{
 		PropGraphEdge *edge = lfirst_node(PropGraphEdge, lc);
-		Oid			relid;
+		struct element_info *einfo;
 		Relation	rel;
-		char	   *aliasname;
-		int2vector *iv;
 		ListCell   *lc2;
 		Oid			srcrelid;
 		Oid			destrelid;
 		Relation	srcrel;
 		Relation	destrel;
-		int2vector *srckeyiv;
-		int2vector *srcrefiv;
-		int2vector *destkeyiv;
-		int2vector *destrefiv;
-		struct element_info *einfo;
 
-		relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
+		einfo = palloc0_object(struct element_info);
+		einfo->kind = PGEKIND_EDGE;
 
-		rel = table_open(relid, NoLock);
+		einfo->relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
+
+		rel = table_open(einfo->relid, NoLock);
 
 		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
 			components_persistence = RELPERSISTENCE_TEMP;
 
-		if (!(rel->rd_rel->relkind == RELKIND_RELATION ||
-			  rel->rd_rel->relkind == RELKIND_VIEW ||
-			  rel->rd_rel->relkind == RELKIND_MATVIEW ||
-			  rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE ||
-			  rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("invalid relkind TODO")));
-
 		if (edge->etable->alias)
-			aliasname = edge->etable->alias->aliasname;
+			einfo->aliasname = edge->etable->alias->aliasname;
 		else
-			aliasname = edge->etable->relname;
+			einfo->aliasname = edge->etable->relname;
 
-		if (list_member(element_aliases, makeString(aliasname)))
+		if (list_member(element_aliases, makeString(einfo->aliasname)))
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("alias \"%s\" used more than once as element table", aliasname),
+					 errmsg("alias \"%s\" used more than once as element table", einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		iv = propgraph_element_get_key(pstate, edge->ekey, edge->location, rel);
+		einfo->key = propgraph_element_get_key(pstate, edge->ekey, edge->location, rel);
+
+		einfo->srcvertex = edge->esrcvertex;
+		einfo->destvertex = edge->edestvertex;
 
 		srcrelid = 0;
 		destrelid = 0;
@@ -187,13 +167,13 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("source vertex \"%s\" of edge \"%s\" does not exist",
-							edge->esrcvertex, aliasname),
+							edge->esrcvertex, einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 		if (!destrelid)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("destination vertex \"%s\" of edge \"%s\" does not exist",
-							edge->edestvertex, aliasname),
+							edge->edestvertex, einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
 		if (!edge->esrckey || !edge->esrcvertexcols || !edge->edestkey || !edge->edestvertexcols)
@@ -206,20 +186,20 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("mismatching number of columns in source vertex definition of edge \"%s\"",
-							aliasname),
+							einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
 		if (list_length(edge->edestkey) != list_length(edge->edestvertexcols))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 					 errmsg("mismatching number of columns in destination vertex definition of edge \"%s\"",
-							aliasname),
+							einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		srckeyiv = int2vector_from_column_list(pstate, edge->esrckey, edge->location, rel);
-		srcrefiv = int2vector_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
-		destkeyiv = int2vector_from_column_list(pstate, edge->edestkey, edge->location, rel);
-		destrefiv = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+		einfo->srckey = int2vector_from_column_list(pstate, edge->esrckey, edge->location, rel);
+		einfo->srcref = int2vector_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
+		einfo->destkey = int2vector_from_column_list(pstate, edge->edestkey, edge->location, rel);
+		einfo->destref = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
 		// TODO: various consistency checks
 
@@ -228,23 +208,9 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 
 		table_close(rel, NoLock);
 
-		einfo = palloc0_object(struct element_info);
-		einfo->kind = PGEKIND_EDGE;
-		einfo->relid = relid;
-		einfo->aliasname = aliasname;
-		einfo->key = iv;
-
-		einfo->srcvertex = edge->esrcvertex;
-		einfo->srckey = srckeyiv;
-		einfo->srcref = srcrefiv;
-
-		einfo->destvertex = edge->edestvertex;
-		einfo->destkey = destkeyiv;
-		einfo->destref = destrefiv;
-
 		edge_infos = lappend(edge_infos, einfo);
 
-		element_aliases = lappend(element_aliases, makeString(aliasname));
+		element_aliases = lappend(element_aliases, makeString(einfo->aliasname));
 	}
 
 	cstmt->relation = stmt->pgname;
@@ -425,26 +391,244 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	ObjectAddressSet(myself, PropgraphElementRelationId, peoid);
 
 	/* Add dependency on the property graph */
-	recordDependencyOn(&myself, &pgaddress, DEPENDENCY_INTERNAL);
+	recordDependencyOn(&myself, &pgaddress, DEPENDENCY_AUTO);
 
 	/* Add dependency on the relation */
 	ObjectAddressSet(referenced, RelationRelationId, einfo->relid);
-	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
 	/* Add dependencies on vertices */
 	// TODO: columns
 	if (einfo->srcvertexid)
 	{
 		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->srcvertexid);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 	}
 	if (einfo->destvertexid)
 	{
 		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->destvertexid);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 	}
 
 	table_close(rel, NoLock);
+}
+
+ObjectAddress
+AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
+{
+	Oid			pgrelid;
+	ListCell   *lc;
+	ObjectAddress pgaddress;
+
+	pgrelid = RangeVarGetRelidExtended(stmt->pgname,
+									   ShareRowExclusiveLock,
+									   stmt->missing_ok ? RVR_MISSING_OK : 0,
+									   RangeVarCallbackOwnsRelation,
+									   NULL);
+	if (pgrelid == InvalidOid)
+	{
+		ereport(NOTICE,
+				(errmsg("relation \"%s\" does not exist, skipping",
+						stmt->pgname->relname)));
+		return InvalidObjectAddress;
+	}
+
+	ObjectAddressSet(pgaddress, RelationRelationId, pgrelid);
+
+	foreach (lc, stmt->add_vertex_tables)
+	{
+		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
+		struct element_info *vinfo;
+		Relation	rel;
+
+		vinfo = palloc0_object(struct element_info);
+		vinfo->kind = PGEKIND_VERTEX;
+
+		vinfo->relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
+
+		rel = table_open(vinfo->relid, NoLock);
+
+		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
+			elog(ERROR, "TODO");
+
+		if (vertex->vtable->alias)
+			vinfo->aliasname = vertex->vtable->alias->aliasname;
+		else
+			vinfo->aliasname = vertex->vtable->relname;
+
+		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
+
+		table_close(rel, NoLock);
+
+		insert_element_record(pgaddress, vinfo);
+	}
+
+	CommandCounterIncrement();
+
+	foreach (lc, stmt->add_edge_tables)
+	{
+		PropGraphEdge *edge = lfirst_node(PropGraphEdge, lc);
+		struct element_info *einfo;
+		Relation	rel;
+		Oid			srcrelid;
+		Oid			destrelid;
+		Relation	srcrel;
+		Relation	destrel;
+
+		einfo = palloc0_object(struct element_info);
+		einfo->kind = PGEKIND_EDGE;
+
+		einfo->relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
+
+		rel = table_open(einfo->relid, NoLock);
+
+		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
+			elog(ERROR, "TODO");
+
+		if (edge->etable->alias)
+			einfo->aliasname = edge->etable->alias->aliasname;
+		else
+			einfo->aliasname = edge->etable->relname;
+
+		einfo->key = propgraph_element_get_key(pstate, edge->ekey, edge->location, rel);
+
+		einfo->srcvertexid = get_vertex_oid(pstate, pgrelid, edge->esrcvertex, edge->location);
+		einfo->destvertexid = get_vertex_oid(pstate, pgrelid, edge->edestvertex, edge->location);
+
+		if (!edge->esrckey || !edge->esrcvertexcols || !edge->edestkey || !edge->edestvertexcols)
+			elog(ERROR, "TODO foreign key support");
+
+		srcrelid = get_element_relid(einfo->srcvertexid);
+		destrelid = get_element_relid(einfo->destvertexid);
+
+		srcrel = table_open(srcrelid, AccessShareLock);
+		destrel = table_open(destrelid, AccessShareLock);
+
+		if (list_length(edge->esrckey) != list_length(edge->esrcvertexcols))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("mismatching number of columns in source vertex definition of edge \"%s\"",
+							einfo->aliasname),
+					 parser_errposition(pstate, edge->location)));
+
+		if (list_length(edge->edestkey) != list_length(edge->edestvertexcols))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("mismatching number of columns in destination vertex definition of edge \"%s\"",
+							einfo->aliasname),
+					 parser_errposition(pstate, edge->location)));
+
+		einfo->srckey = int2vector_from_column_list(pstate, edge->esrckey, edge->location, rel);
+		einfo->srcref = int2vector_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
+		einfo->destkey = int2vector_from_column_list(pstate, edge->edestkey, edge->location, rel);
+		einfo->destref = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+
+		// TODO: various consistency checks
+
+		table_close(destrel, NoLock);
+		table_close(srcrel, NoLock);
+
+		table_close(rel, NoLock);
+
+		insert_element_record(pgaddress, einfo);
+	}
+
+	foreach (lc, stmt->drop_vertex_tables)
+	{
+		char	   *alias = strVal(lfirst(lc));
+		Oid			peoid;
+		ObjectAddress obj;
+
+		peoid = get_vertex_oid(pstate, pgrelid, alias, -1);
+		ObjectAddressSet(obj, PropgraphElementRelationId, peoid);
+		performDeletion(&obj, stmt->behavior, 0);
+	}
+
+	foreach (lc, stmt->drop_edge_tables)
+	{
+		char	   *alias = strVal(lfirst(lc));
+		Oid			peoid;
+		ObjectAddress obj;
+
+		peoid = get_edge_oid(pstate, pgrelid, alias, -1);
+		ObjectAddressSet(obj, PropgraphElementRelationId, peoid);
+		performDeletion(&obj, stmt->behavior, 0);
+	}
+
+	return pgaddress;
+}
+
+static Oid
+get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location)
+{
+	HeapTuple	tuple;
+	Oid			peoid;
+
+	tuple = SearchSysCache2(PROPGRAPHELALIAS, ObjectIdGetDatum(pgrelid), CStringGetDatum(alias));
+	if (!tuple)
+		ereport(ERROR,
+				errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("property graph \"%s\" has no element with alias \"%s\"",
+					   get_rel_name(pgrelid), alias),
+				parser_errposition(pstate, location));
+
+	if (((Form_pg_propgraph_element) GETSTRUCT(tuple))->pgekind != PGEKIND_VERTEX)
+		ereport(ERROR,
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("element \"%s\" of property graph \"%s\" is not a vertex",
+					   alias, get_rel_name(pgrelid)),
+				parser_errposition(pstate, location));
+
+	peoid = ((Form_pg_propgraph_element) GETSTRUCT(tuple))->oid;
+
+	ReleaseSysCache(tuple);
+
+	return peoid;
+}
+
+static Oid
+get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location)
+{
+	HeapTuple	tuple;
+	Oid			peoid;
+
+	tuple = SearchSysCache2(PROPGRAPHELALIAS, ObjectIdGetDatum(pgrelid), CStringGetDatum(alias));
+	if (!tuple)
+		ereport(ERROR,
+				errcode(ERRCODE_UNDEFINED_OBJECT),
+				errmsg("property graph \"%s\" has no element with alias \"%s\"",
+					   get_rel_name(pgrelid), alias),
+				parser_errposition(pstate, location));
+
+	if (((Form_pg_propgraph_element) GETSTRUCT(tuple))->pgekind != PGEKIND_EDGE)
+		ereport(ERROR,
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("element \"%s\" of property graph \"%s\" is not an edge",
+					   alias, get_rel_name(pgrelid)),
+				parser_errposition(pstate, location));
+
+	peoid = ((Form_pg_propgraph_element) GETSTRUCT(tuple))->oid;
+
+	ReleaseSysCache(tuple);
+
+	return peoid;
+}
+
+static Oid
+get_element_relid(Oid peid)
+{
+	HeapTuple	tuple;
+	Oid			pgerelid;
+
+	tuple = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(peid));
+	if (!tuple)
+		elog(ERROR, "cache lookup failed for property graph element %u", peid);
+
+	pgerelid = ((Form_pg_propgraph_element) GETSTRUCT(tuple))->pgerelid;
+
+	ReleaseSysCache(tuple);
+
+	return pgerelid;
 }
 
 void

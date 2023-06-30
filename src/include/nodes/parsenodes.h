@@ -3889,6 +3889,12 @@ typedef struct AlterPropGraphStmt
 {
 	NodeTag		type;
 	RangeVar   *pgname;
+	bool		missing_ok;
+	List	   *add_vertex_tables;
+	List	   *add_edge_tables;
+	List	   *drop_vertex_tables;
+	List	   *drop_edge_tables;
+	DropBehavior behavior;
 } AlterPropGraphStmt;
 
 /* ----------------------

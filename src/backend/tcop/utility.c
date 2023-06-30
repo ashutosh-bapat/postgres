@@ -156,6 +156,7 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 		case T_AlterOperatorStmt:
 		case T_AlterOwnerStmt:
 		case T_AlterPolicyStmt:
+		case T_AlterPropGraphStmt:
 		case T_AlterPublicationStmt:
 		case T_AlterRoleSetStmt:
 		case T_AlterRoleStmt:
@@ -1745,6 +1746,10 @@ ProcessUtilitySlow(ParseState *pstate,
 				address = CreatePropGraph(pstate, (CreatePropGraphStmt *) parsetree);
 				break;
 
+			case T_AlterPropGraphStmt:
+				address = AlterPropGraph(pstate, (AlterPropGraphStmt *) parsetree);
+				break;
+
 			case T_CreateTransformStmt:
 				address = CreateTransform((CreateTransformStmt *) parsetree);
 				break;
@@ -2958,6 +2963,10 @@ CreateCommandTag(Node *parsetree)
 			tag = CMDTAG_CREATE_PROPERTY_GRAPH;
 			break;
 
+		case T_AlterPropGraphStmt:
+			tag = CMDTAG_ALTER_PROPERTY_GRAPH;
+			break;
+
 		case T_CreateTransformStmt:
 			tag = CMDTAG_CREATE_TRANSFORM;
 			break;
@@ -3656,6 +3665,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreatePropGraphStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterPropGraphStmt:
 			lev = LOGSTMT_DDL;
 			break;
 
