@@ -4022,6 +4022,7 @@ psql_completion(const char *text, int start, int end)
 											"LARGE OBJECT",
 											"PARAMETER",
 											"PROCEDURE",
+											"PROPERTY GRAPH",
 											"ROUTINE",
 											"SCHEMA",
 											"SEQUENCE",

@@ -1,5 +1,6 @@
 CREATE SCHEMA create_property_graph_tests;
 SET search_path = create_property_graph_tests;
+CREATE ROLE regress_graph_user1;
 CREATE PROPERTY GRAPH g1;
 COMMENT ON PROPERTY GRAPH g1 IS 'a graph';
 CREATE PROPERTY GRAPH g1;  -- error: duplicate
@@ -60,6 +61,9 @@ LINE 4:         e1 SOURCE t1 DESTINATION tx
                 ^
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
+GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user1;
+GRANT UPDATE ON PROPERTY GRAPH g1 TO regress_graph_user1;  -- fail
+ERROR:  invalid privilege type UPDATE for property graph
 -- information schema
 SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name 
@@ -129,6 +133,12 @@ SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_n
  regression             | create_property_graph_tests | g3                  | t3
 (7 rows)
 
+SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name;
+ grantor |       grantee       | property_graph_catalog |    property_graph_schema    | property_graph_name | privilege_type | is_grantable 
+---------+---------------------+------------------------+-----------------------------+---------------------+----------------+--------------
+ peter   | regress_graph_user1 | regression             | create_property_graph_tests | g1                  | SELECT         | NO
+(1 row)
+
 --\dG
 -- TODO
 \d g1
@@ -160,3 +170,4 @@ drop cascades to table t3
 drop cascades to table e1
 drop cascades to table e2
 drop cascades to property graph g3
+DROP ROLE regress_graph_user1;

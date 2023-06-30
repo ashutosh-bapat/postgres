@@ -1,6 +1,8 @@
 CREATE SCHEMA create_property_graph_tests;
 SET search_path = create_property_graph_tests;
 
+CREATE ROLE regress_graph_user1;
+
 CREATE PROPERTY GRAPH g1;
 
 COMMENT ON PROPERTY GRAPH g1 IS 'a graph';
@@ -54,6 +56,10 @@ CREATE PROPERTY GRAPH gx
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 
 
+GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user1;
+GRANT UPDATE ON PROPERTY GRAPH g1 TO regress_graph_user1;  -- fail
+
+
 -- information schema
 
 SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
@@ -62,6 +68,7 @@ SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_
 SELECT * FROM information_schema.pg_edge_table_components ORDER BY property_graph_name, edge_table_alias, edge_end DESC, ordinal_position;
 SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph_name, element_table_alias, label_name;
 SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
+SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name;
 
 
 --\dG
@@ -79,3 +86,5 @@ DROP PROPERTY GRAPH g2;  -- error: does not exist
 DROP PROPERTY GRAPH IF EXISTS g2;
 
 DROP SCHEMA create_property_graph_tests CASCADE;
+
+DROP ROLE regress_graph_user1;
