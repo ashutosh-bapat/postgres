@@ -357,6 +357,7 @@ bracket_right_arrow	"]->"
 left_arrow_bracket	"<-["
 minus_left_bracket	"-["
 right_bracket_minus	"]-"
+pipe_plus_pipe		"\|\+\|"
 
 /*
  * These operator-like tokens (unlike the above ones) also match the {operator}
@@ -876,6 +877,11 @@ other			.
 {right_bracket_minus} {
 					SET_YYLLOC();
 					return RIGHT_BRACKET_MINUS;
+				}
+
+{pipe_plus_pipe} {
+					SET_YYLLOC();
+					return PIPE_PLUS_PIPE;
 				}
 
 {equals_greater} {

@@ -654,6 +654,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
 
+%type <list>	graph_pattern_quantifier
+
 
 %type <node>		json_format_clause_opt
 					json_value_expr
@@ -689,6 +691,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
 %token			BRACKET_RIGHT_ARROW LEFT_ARROW_BRACKET MINUS_LEFT_BRACKET RIGHT_BRACKET_MINUS
+%token			PIPE_PLUS_PIPE
 
 /*
  * If you want to make any keyword changes, update the keyword table in
@@ -13566,36 +13569,71 @@ path_pattern_list:
 
 path_pattern:
 			path_pattern_expression
-			| ColId AS path_pattern_expression
 		;
 
 path_pattern_expression:
+			path_pattern_union_or_alternation
+		;
+
+path_pattern_union_or_alternation:
+			path_term
+			| path_pattern_union_or_alternation path_pattern_union_or_alternation_op path_term
+		;
+
+path_pattern_union_or_alternation_op:
+			'|'
+			| PIPE_PLUS_PIPE
+		;
+
+path_term:
+			path_concatenation
+		;
+
+path_concatenation:
+			path_factor
+			| path_concatenation path_factor
+		;
+
+path_factor:
 			path_primary
-			| path_pattern_expression path_primary
+			| quantified_path_primary
+			| questioned_path_primary
 		;
 
-optional_element_pattern_filler:
-			opt_colid opt_is_label_expression where_clause
+quantified_path_primary:
+			path_primary graph_pattern_quantifier
 		;
 
-mandatory_edge_pattern_filler:
-			ColId IS label_expression
-			| ColId ':' label_expression
-			| IS label_expression
-			| ':' label_expression
+questioned_path_primary:
+			path_primary '?'
+		;
+
+graph_pattern_quantifier:
+			'*'								{ $$ = list_make2_int(0, -1); }
+			| '+'							{ $$ = list_make2_int(1, -1); }
+			| '{' Iconst '}'				{ $$ = list_make2_int($2, $2); }
+			| '{' ',' '}'					{ $$ = list_make2_int(-1, -1); }
+			| '{' Iconst ',' '}'			{ $$ = list_make2_int($2, -1); }
+			| '{' ',' Iconst '}'			{ $$ = list_make2_int(-1, $3); }
+			| '{' Iconst ',' Iconst '}'		{ $$ = list_make2_int($2, $4); }
 		;
 
 path_primary:
-			'(' optional_element_pattern_filler ')'
-			| MINUS_LEFT_BRACKET optional_element_pattern_filler BRACKET_RIGHT_ARROW
-			| '-' mandatory_edge_pattern_filler RIGHT_ARROW
-			| LEFT_ARROW_BRACKET optional_element_pattern_filler RIGHT_BRACKET_MINUS
-			| LEFT_ARROW mandatory_edge_pattern_filler '-'
-			| MINUS_LEFT_BRACKET optional_element_pattern_filler RIGHT_BRACKET_MINUS
-			| '-' mandatory_edge_pattern_filler '-'
-			| RIGHT_ARROW
-			| LEFT_ARROW
-			| '-'
+			element_pattern
+			| '(' path_pattern_expression where_clause ')'
+		;
+
+element_pattern:
+			vertex_pattern
+			| edge_pattern
+		;
+
+vertex_pattern:
+			'(' element_pattern_filler ')'
+		;
+
+element_pattern_filler:
+			opt_colid opt_is_label_expression where_clause
 		;
 
 opt_colid:
@@ -13610,7 +13648,49 @@ opt_is_label_expression:
 		;
 
 label_expression:
+			label_term
+			| label_disjunction
+		;
+
+label_disjunction:
+			label_expression '|' label_term
+		;
+
+label_term:
+			label_factor
+			| label_conjunction
+		;
+
+label_conjunction:
+			label_term '&' label_factor
+		;
+
+label_factor:
+			label_primary
+			| label_negation
+		;
+
+label_negation:
+			'!' label_primary
+		;
+
+label_primary:
 			ColId
+			| '%'
+			| '(' label_expression ')'
+		;
+
+edge_pattern:
+			/* full edge pointing left: <-[ xxx ]- */
+			LEFT_ARROW_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
+			/* full edge pointing right: -[ xxx ]-> */
+			| MINUS_LEFT_BRACKET element_pattern_filler BRACKET_RIGHT_ARROW
+			/* full edge any direction: -[ xxx ]- */
+			| MINUS_LEFT_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
+			/* abbreviated edge patterns */
+			| LEFT_ARROW
+			| RIGHT_ARROW
+			| '-'
 		;
 
 
