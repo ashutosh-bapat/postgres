@@ -17374,6 +17374,7 @@ unreserved_keyword:
 			| CLASS
 			| CLOSE
 			| CLUSTER
+			| COLUMNS
 			| COMMENT
 			| COMMENTS
 			| COMMIT
@@ -17788,7 +17789,6 @@ reserved_keyword:
 			| CHECK
 			| COLLATE
 			| COLUMN
-			| COLUMNS
 			| CONSTRAINT
 			| CREATE
 			| CURRENT_CATALOG
