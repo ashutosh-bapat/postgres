@@ -1,7 +1,9 @@
 CREATE SCHEMA create_property_graph_tests;
+GRANT USAGE ON SCHEMA create_property_graph_tests TO PUBLIC;
 SET search_path = create_property_graph_tests;
 
 CREATE ROLE regress_graph_user1;
+CREATE ROLE regress_graph_user2;
 
 CREATE PROPERTY GRAPH g1;
 
@@ -56,8 +58,11 @@ CREATE PROPERTY GRAPH gx
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 
 
-GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user1;
-GRANT UPDATE ON PROPERTY GRAPH g1 TO regress_graph_user1;  -- fail
+ALTER PROPERTY GRAPH g1 OWNER TO regress_graph_user1;
+SET ROLE regress_graph_user1;
+GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user2;
+GRANT UPDATE ON PROPERTY GRAPH g1 TO regress_graph_user2;  -- fail
+RESET ROLE;
 
 
 -- information schema
@@ -87,4 +92,4 @@ DROP PROPERTY GRAPH IF EXISTS g2;
 
 DROP SCHEMA create_property_graph_tests CASCADE;
 
-DROP ROLE regress_graph_user1;
+DROP ROLE regress_graph_user1, regress_graph_user2;

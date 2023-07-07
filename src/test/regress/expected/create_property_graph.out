@@ -1,6 +1,8 @@
 CREATE SCHEMA create_property_graph_tests;
+GRANT USAGE ON SCHEMA create_property_graph_tests TO PUBLIC;
 SET search_path = create_property_graph_tests;
 CREATE ROLE regress_graph_user1;
+CREATE ROLE regress_graph_user2;
 CREATE PROPERTY GRAPH g1;
 COMMENT ON PROPERTY GRAPH g1 IS 'a graph';
 CREATE PROPERTY GRAPH g1;  -- error: duplicate
@@ -61,9 +63,12 @@ LINE 4:         e1 SOURCE t1 DESTINATION tx
                 ^
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
-GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user1;
-GRANT UPDATE ON PROPERTY GRAPH g1 TO regress_graph_user1;  -- fail
+ALTER PROPERTY GRAPH g1 OWNER TO regress_graph_user1;
+SET ROLE regress_graph_user1;
+GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user2;
+GRANT UPDATE ON PROPERTY GRAPH g1 TO regress_graph_user2;  -- fail
 ERROR:  invalid privilege type UPDATE for property graph
+RESET ROLE;
 -- information schema
 SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name 
@@ -134,10 +139,11 @@ SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_n
 (7 rows)
 
 SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name;
- grantor |       grantee       | property_graph_catalog |    property_graph_schema    | property_graph_name | privilege_type | is_grantable 
----------+---------------------+------------------------+-----------------------------+---------------------+----------------+--------------
- peter   | regress_graph_user1 | regression             | create_property_graph_tests | g1                  | SELECT         | NO
-(1 row)
+       grantor       |       grantee       | property_graph_catalog |    property_graph_schema    | property_graph_name | privilege_type | is_grantable 
+---------------------+---------------------+------------------------+-----------------------------+---------------------+----------------+--------------
+ regress_graph_user1 | regress_graph_user1 | regression             | create_property_graph_tests | g1                  | SELECT         | YES
+ regress_graph_user1 | regress_graph_user2 | regression             | create_property_graph_tests | g1                  | SELECT         | NO
+(2 rows)
 
 --\dG
 -- TODO
@@ -170,4 +176,4 @@ drop cascades to table t3
 drop cascades to table e1
 drop cascades to table e2
 drop cascades to property graph g3
-DROP ROLE regress_graph_user1;
+DROP ROLE regress_graph_user1, regress_graph_user2;
