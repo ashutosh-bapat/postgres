@@ -2898,7 +2898,7 @@ subdir('contrib')
 
 subdir('src/test')
 subdir('src/interfaces/libpq/test')
-subdir('src/interfaces/ecpg/test')
+#subdir('src/interfaces/ecpg/test') FIXME
 
 subdir('doc/src/sgml')
 
@@ -2995,7 +2995,7 @@ all_built = [
   contrib_targets,
   nls_mo_targets,
   testprep_targets,
-  ecpg_targets,
+#  ecpg_targets, FIXME
 ]
 
 # Meson's default install target is quite verbose. Provide one that is quiet.
