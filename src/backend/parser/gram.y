@@ -296,8 +296,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		CreateOpFamilyStmt AlterOpFamilyStmt CreatePLangStmt
 		CreateSchemaStmt CreateSeqStmt CreateStmt CreateStatsStmt CreateTableSpaceStmt
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
-		CreateAssertionStmt CreatePropGraphStmt AlterPropGraphStmt
-		CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
+		CreateAssertionStmt CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
+		CreatePropGraphStmt AlterPropGraphStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt CreatePolicyStmt
 		CreatedbStmt DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
 		DropOpClassStmt DropOpFamilyStmt DropStmt
@@ -645,17 +645,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <partboundspec> PartitionBoundSpec
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
-%type <list>	vertex_tables_clause edge_tables_clause
-				opt_vertex_tables_clause opt_edge_tables_clause
-				vertex_table_list
-				opt_graph_table_key_clause
-				edge_table_list
-				source_vertex_table destination_vertex_table
-%type <node>	vertex_table_definition edge_table_definition
-%type <alias>	opt_propgraph_table_alias
-
-%type <list>	graph_pattern_quantifier
-
 
 %type <node>		json_format_clause_opt
 					json_value_expr
@@ -673,6 +662,18 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <boolean>		json_key_uniqueness_constraint_opt
 					json_object_constructor_null_clause_opt
 					json_array_constructor_null_clause_opt
+
+%type <list>	vertex_tables_clause edge_tables_clause
+				opt_vertex_tables_clause opt_edge_tables_clause
+				vertex_table_list
+				opt_graph_table_key_clause
+				edge_table_list
+				source_vertex_table destination_vertex_table
+%type <node>	vertex_table_definition edge_table_definition
+%type <alias>	opt_propgraph_table_alias
+
+%type <list>	graph_pattern_quantifier
+
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -13553,144 +13554,13 @@ table_ref:	relation_expr opt_alias_clause
 					$2->alias = $4;
 					$$ = (Node *) $2;
 				}
-			| GRAPH_TABLE '(' qualified_name MATCH path_pattern_list where_clause COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
+			| GRAPH_TABLE '(' qualified_name MATCH graph_pattern COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
 				{
 					RangeGraphTable *n = makeNode(RangeGraphTable);
-					n->alias = $12;
+					n->alias = $11;
 					n->location = @1;
 					$$ = (Node *) n;
 				}
-		;
-
-path_pattern_list:
-			path_pattern
-			| path_pattern_list ',' path_pattern
-		;
-
-path_pattern:
-			path_pattern_expression
-		;
-
-path_pattern_expression:
-			path_pattern_union_or_alternation
-		;
-
-path_pattern_union_or_alternation:
-			path_term
-			| path_pattern_union_or_alternation path_pattern_union_or_alternation_op path_term
-		;
-
-path_pattern_union_or_alternation_op:
-			'|'
-			| PIPE_PLUS_PIPE
-		;
-
-path_term:
-			path_concatenation
-		;
-
-path_concatenation:
-			path_factor
-			| path_concatenation path_factor
-		;
-
-path_factor:
-			path_primary
-			| quantified_path_primary
-			| questioned_path_primary
-		;
-
-quantified_path_primary:
-			path_primary graph_pattern_quantifier
-		;
-
-questioned_path_primary:
-			path_primary '?'
-		;
-
-graph_pattern_quantifier:
-			'*'								{ $$ = list_make2_int(0, -1); }
-			| '+'							{ $$ = list_make2_int(1, -1); }
-			| '{' Iconst '}'				{ $$ = list_make2_int($2, $2); }
-			| '{' ',' '}'					{ $$ = list_make2_int(-1, -1); }
-			| '{' Iconst ',' '}'			{ $$ = list_make2_int($2, -1); }
-			| '{' ',' Iconst '}'			{ $$ = list_make2_int(-1, $3); }
-			| '{' Iconst ',' Iconst '}'		{ $$ = list_make2_int($2, $4); }
-		;
-
-path_primary:
-			element_pattern
-			| '(' path_pattern_expression where_clause ')'
-		;
-
-element_pattern:
-			vertex_pattern
-			| edge_pattern
-		;
-
-vertex_pattern:
-			'(' element_pattern_filler ')'
-		;
-
-element_pattern_filler:
-			opt_colid opt_is_label_expression where_clause
-		;
-
-opt_colid:
-			ColId
-			| /*EMPTY*/
-		;
-
-opt_is_label_expression:
-			IS label_expression
-			| ':' label_expression
-			| /*EMPTY*/
-		;
-
-label_expression:
-			label_term
-			| label_disjunction
-		;
-
-label_disjunction:
-			label_expression '|' label_term
-		;
-
-label_term:
-			label_factor
-			| label_conjunction
-		;
-
-label_conjunction:
-			label_term '&' label_factor
-		;
-
-label_factor:
-			label_primary
-			| label_negation
-		;
-
-label_negation:
-			'!' label_primary
-		;
-
-label_primary:
-			ColId
-			| '%'
-			| '(' label_expression ')'
-		;
-
-edge_pattern:
-			/* full edge pointing left: <-[ xxx ]- */
-			LEFT_ARROW_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
-			/* full edge pointing right: -[ xxx ]-> */
-			| MINUS_LEFT_BRACKET element_pattern_filler BRACKET_RIGHT_ARROW
-			/* full edge any direction: -[ xxx ]- */
-			| MINUS_LEFT_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
-			/* abbreviated edge patterns */
-			| LEFT_ARROW
-			| RIGHT_ARROW
-			| '-'
 		;
 
 
@@ -16875,6 +16745,149 @@ json_array_aggregate_order_by_clause_opt:
 			ORDER BY sortby_list					{ $$ = $3; }
 			| /* EMPTY */							{ $$ = NIL; }
 		;
+
+
+/*****************************************************************************
+ *
+ *	graph patterns
+ *
+ *****************************************************************************/
+
+graph_pattern:
+			path_pattern_list where_clause
+		;
+
+path_pattern_list:
+			path_pattern
+			| path_pattern_list ',' path_pattern
+		;
+
+path_pattern:
+			path_pattern_expression
+		;
+
+/*
+ * path pattern expression
+ */
+
+path_pattern_expression:
+			path_pattern_union_or_alternation
+		;
+
+path_pattern_union_or_alternation:
+			path_term
+			| path_pattern_union_or_alternation path_pattern_union_or_alternation_op path_term
+		;
+
+path_pattern_union_or_alternation_op:
+			'|'
+			| PIPE_PLUS_PIPE
+		;
+
+path_term:
+			path_factor
+			| path_term path_factor
+		;
+
+path_factor:
+			path_primary
+			| path_primary graph_pattern_quantifier
+			| path_primary '?'
+		;
+
+path_primary:
+			element_pattern
+			| '(' path_pattern_expression where_clause ')'
+		;
+
+element_pattern:
+			vertex_pattern
+			| edge_pattern
+		;
+
+vertex_pattern:
+			'(' element_pattern_filler ')'
+		;
+
+element_pattern_filler:
+			opt_colid opt_is_label_expression where_clause
+		;
+
+opt_colid:
+			ColId
+			| /*EMPTY*/
+		;
+
+opt_is_label_expression:
+			IS label_expression
+			| ':' label_expression
+			| /*EMPTY*/
+		;
+
+edge_pattern:
+			/* full edge pointing left: <-[ xxx ]- */
+			LEFT_ARROW_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
+			/* full edge pointing right: -[ xxx ]-> */
+			| MINUS_LEFT_BRACKET element_pattern_filler BRACKET_RIGHT_ARROW
+			/* full edge any direction: -[ xxx ]- */
+			| MINUS_LEFT_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
+			/* abbreviated edge patterns */
+			| LEFT_ARROW
+			| RIGHT_ARROW
+			| '-'
+		;
+
+/*
+ * graph pattern quantifier
+ */
+
+graph_pattern_quantifier:
+			'*'								{ $$ = list_make2_int(0, -1); }
+			| '+'							{ $$ = list_make2_int(1, -1); }
+			| '{' Iconst '}'				{ $$ = list_make2_int($2, $2); }
+			| '{' ',' '}'					{ $$ = list_make2_int(-1, -1); }
+			| '{' Iconst ',' '}'			{ $$ = list_make2_int($2, -1); }
+			| '{' ',' Iconst '}'			{ $$ = list_make2_int(-1, $3); }
+			| '{' Iconst ',' Iconst '}'		{ $$ = list_make2_int($2, $4); }
+		;
+
+/*
+ * label expression
+ */
+
+label_expression:
+			label_term
+			| label_disjunction
+		;
+
+label_disjunction:
+			label_expression '|' label_term
+		;
+
+label_term:
+			label_factor
+			| label_conjunction
+		;
+
+label_conjunction:
+			label_term '&' label_factor
+		;
+
+label_factor:
+			label_primary
+			| label_negation
+		;
+
+label_negation:
+			'!' label_primary
+		;
+
+label_primary:
+			ColId
+			| '%'
+			| '(' label_expression ')'
+		;
+
 
 /*****************************************************************************
  *
