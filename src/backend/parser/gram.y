@@ -17686,6 +17686,7 @@ col_name_keyword:
 			| EXISTS
 			| EXTRACT
 			| FLOAT_P
+			| GRAPH_TABLE
 			| GREATEST
 			| GROUPING
 			| INOUT
@@ -17811,7 +17812,6 @@ reserved_keyword:
 			| FOREIGN
 			| FROM
 			| GRANT
-			| GRAPH_TABLE
 			| GROUP_P
 			| HAVING
 			| IN_P
