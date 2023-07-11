@@ -788,6 +788,14 @@ other			.
 					ECHO;
 				}
 
+\{				{
+					ECHO;
+				}
+
+\}				{
+					ECHO;
+				}
+
 {operator}		{
 					/*
 					 * Check for embedded slash-star or dash-dash; those

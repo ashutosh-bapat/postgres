@@ -821,6 +821,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token		MODE_PLPGSQL_ASSIGN2
 %token		MODE_PLPGSQL_ASSIGN3
 
+%token		LEFT_BRACE RIGHT_BRACE
 
 /* Precedence: lowest to highest */
 %nonassoc	SET				/* see relation_expr_opt_alias */
@@ -16839,13 +16840,13 @@ edge_pattern:
  */
 
 graph_pattern_quantifier:
-			'*'								{ $$ = list_make2_int(0, -1); }
-			| '+'							{ $$ = list_make2_int(1, -1); }
-			| '{' Iconst '}'				{ $$ = list_make2_int($2, $2); }
-			| '{' ',' '}'					{ $$ = list_make2_int(-1, -1); }
-			| '{' Iconst ',' '}'			{ $$ = list_make2_int($2, -1); }
-			| '{' ',' Iconst '}'			{ $$ = list_make2_int(-1, $3); }
-			| '{' Iconst ',' Iconst '}'		{ $$ = list_make2_int($2, $4); }
+			'*'											{ $$ = list_make2_int(0, -1); }
+			| '+'										{ $$ = list_make2_int(1, -1); }
+			| LEFT_BRACE Iconst RIGHT_BRACE				{ $$ = list_make2_int($2, $2); }
+			| LEFT_BRACE ',' RIGHT_BRACE				{ $$ = list_make2_int(-1, -1); }
+			| LEFT_BRACE Iconst ',' RIGHT_BRACE			{ $$ = list_make2_int($2, -1); }
+			| LEFT_BRACE ',' Iconst RIGHT_BRACE			{ $$ = list_make2_int(-1, $3); }
+			| LEFT_BRACE Iconst ',' Iconst RIGHT_BRACE	{ $$ = list_make2_int($2, $4); }
 		;
 
 /*
