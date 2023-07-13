@@ -669,7 +669,15 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
 
-%type <list>	graph_pattern_quantifier
+%type <list>	graph_pattern
+				graph_pattern_quantifier
+				path_pattern_list
+%type <node>	path_pattern
+				path_pattern_expression
+				path_pattern_union_or_alternation
+				path_term
+				path_factor
+				path_primary
 
 
 /*
@@ -13555,6 +13563,9 @@ table_ref:	relation_expr opt_alias_clause
 			| GRAPH_TABLE '(' qualified_name MATCH graph_pattern COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
 				{
 					RangeGraphTable *n = makeNode(RangeGraphTable);
+					n->graph_name = $3;
+					n->graph_pattern = $5;
+					n->columns = $8;
 					n->alias = $11;
 					n->location = @1;
 					$$ = (Node *) n;
@@ -16752,16 +16763,16 @@ json_array_aggregate_order_by_clause_opt:
  *****************************************************************************/
 
 graph_pattern:
-			path_pattern_list where_clause
+			path_pattern_list where_clause			{ $$ = list_make2($1, $2); }
 		;
 
 path_pattern_list:
-			path_pattern
-			| path_pattern_list ',' path_pattern
+			path_pattern							{ $$ = list_make1($1); }
+			| path_pattern_list ',' path_pattern	{ $$ = lappend($1, $3); }
 		;
 
 path_pattern:
-			path_pattern_expression
+			path_pattern_expression					{ $$ = $1; }
 		;
 
 /*
@@ -16769,7 +16780,7 @@ path_pattern:
  */
 
 path_pattern_expression:
-			path_pattern_union_or_alternation
+			path_pattern_union_or_alternation		{ $$ = $1; }
 		;
 
 path_pattern_union_or_alternation:
@@ -16795,7 +16806,13 @@ path_factor:
 
 path_primary:
 			element_pattern
+				{
+					$$ = NULL;	// TODO
+				}
 			| '(' path_pattern_expression where_clause ')'
+				{
+					$$ = NULL;	// TODO
+				}
 		;
 
 element_pattern:

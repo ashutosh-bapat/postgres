@@ -649,6 +649,9 @@ typedef struct RangeFunction
 typedef struct RangeGraphTable
 {
 	NodeTag		type;
+	RangeVar   *graph_name;
+	List	   *graph_pattern;
+	List	   *columns;
 	Alias	   *alias;			/* table alias & optional column aliases */
 	int			location;		/* token location, or -1 if unknown */
 } RangeGraphTable;
