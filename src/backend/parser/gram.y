@@ -16784,7 +16784,6 @@ path_term:
 path_factor:
 			path_primary
 			| path_primary graph_pattern_quantifier
-			| path_primary '?'
 		;
 
 path_primary:
@@ -16840,12 +16839,8 @@ edge_pattern:
  */
 
 graph_pattern_quantifier:
-			'*'											{ $$ = list_make2_int(0, -1); }
-			| '+'										{ $$ = list_make2_int(1, -1); }
-			| LEFT_BRACE Iconst RIGHT_BRACE				{ $$ = list_make2_int($2, $2); }
-			| LEFT_BRACE ',' RIGHT_BRACE				{ $$ = list_make2_int(-1, -1); }
-			| LEFT_BRACE Iconst ',' RIGHT_BRACE			{ $$ = list_make2_int($2, -1); }
-			| LEFT_BRACE ',' Iconst RIGHT_BRACE			{ $$ = list_make2_int(-1, $3); }
+			LEFT_BRACE Iconst RIGHT_BRACE				{ $$ = list_make2_int($2, $2); }
+			| LEFT_BRACE ',' Iconst RIGHT_BRACE			{ $$ = list_make2_int(0, $3); }
 			| LEFT_BRACE Iconst ',' Iconst RIGHT_BRACE	{ $$ = list_make2_int($2, $4); }
 		;
 

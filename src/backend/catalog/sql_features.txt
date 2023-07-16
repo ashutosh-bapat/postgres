@@ -376,7 +376,7 @@ G033	Path pattern union: variable length path operands			NO
 G034	Path concatenation			YES	WIP REQ
 G035	Quantified paths			YES	WIP
 G036	Quantified edges			YES	WIP
-G037	Questioned paths			YES	WIP
+G037	Questioned paths			NO	
 G038	Parenthesized path pattern expression			YES	WIP
 G039	Simplified path pattern expression: full defaulting			NO	
 G040	Vertex pattern			YES	WIP REQ
