@@ -394,11 +394,11 @@ G051	Parenthesized path pattern: non-local predicates			NO
 G060	Bounded graph pattern quantifiers			YES	WIP
 G061	Unbounded graph pattern quantifiers			NO	
 G070	Label expression: label disjunction			YES	WIP REQ
-G071	Label expression: label conjunction			YES	WIP
-G072	Label expression: label negation			YES	WIP
+G071	Label expression: label conjunction			NO	
+G072	Label expression: label negation			NO	
 G073	Label expression: individual label name			YES	WIP REQ
-G074	Label expression: wildcard label			YES	WIP
-G075	Parenthesized label expression			YES	WIP
+G074	Label expression: wildcard label			NO	
+G075	Parenthesized label expression			NO	
 G080	Simplified path pattern expression: basic defaulting			NO	
 G081	Simplified path pattern expression: full overrides			NO	
 G082	Simplified path pattern expression: basic overrides			NO	

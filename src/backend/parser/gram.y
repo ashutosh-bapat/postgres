@@ -16858,27 +16858,7 @@ label_disjunction:
 		;
 
 label_term:
-			label_factor
-			| label_conjunction
-		;
-
-label_conjunction:
-			label_term '&' label_factor
-		;
-
-label_factor:
-			label_primary
-			| label_negation
-		;
-
-label_negation:
-			'!' label_primary
-		;
-
-label_primary:
 			ColId
-			| '%'
-			| '(' label_expression ')'
 		;
 
 
