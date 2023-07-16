@@ -233,7 +233,6 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
 %token			BRACKET_RIGHT_ARROW LEFT_ARROW_BRACKET MINUS_LEFT_BRACKET RIGHT_BRACKET_MINUS
-%token			PIPE_PLUS_PIPE
 
 /*
  * Other tokens recognized by plpgsql's lexer interface layer (pl_scanner.c).

@@ -674,7 +674,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				path_pattern_list
 %type <node>	path_pattern
 				path_pattern_expression
-				path_pattern_union_or_alternation
 				path_term
 				path_factor
 				path_primary
@@ -697,7 +696,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
 %token			BRACKET_RIGHT_ARROW LEFT_ARROW_BRACKET MINUS_LEFT_BRACKET RIGHT_BRACKET_MINUS
-%token			PIPE_PLUS_PIPE
 
 /*
  * If you want to make any keyword changes, update the keyword table in
@@ -875,7 +873,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  */
 %nonassoc	UNBOUNDED		/* ideally would have same precedence as IDENT */
 %nonassoc	IDENT PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
-%left		Op OPERATOR LEFT_ARROW RIGHT_ARROW PIPE_PLUS_PIPE	/* multi-character ops and user-defined operators */
+%left		Op OPERATOR LEFT_ARROW RIGHT_ARROW	/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
 %left		'^'
@@ -14712,8 +14710,6 @@ a_expr:		c_expr									{ $$ = $1; }
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<-", $1, $3, @2); }
 			| a_expr RIGHT_ARROW a_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "->", $1, $3, @2); }
-			| a_expr PIPE_PLUS_PIPE a_expr
-				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "|+|", $1, $3, @2); }
 
 			| a_expr qual_Op a_expr				%prec Op
 				{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
@@ -15199,8 +15195,6 @@ b_expr:		c_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<-", $1, $3, @2); }
 			| b_expr RIGHT_ARROW b_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "->", $1, $3, @2); }
-			| b_expr PIPE_PLUS_PIPE b_expr
-				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "|+|", $1, $3, @2); }
 			| b_expr qual_Op b_expr				%prec Op
 				{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
 			| qual_Op b_expr					%prec Op
@@ -16278,7 +16272,6 @@ MathOp:		 '+'									{ $$ = "+"; }
 			| NOT_EQUALS							{ $$ = "<>"; }
 			| LEFT_ARROW							{ $$ = "<-"; }
 			| RIGHT_ARROW							{ $$ = "->"; }
-			| PIPE_PLUS_PIPE						{ $$ = "|+|"; }
 		;
 
 qual_Op:	Op
@@ -16780,17 +16773,7 @@ path_pattern:
  */
 
 path_pattern_expression:
-			path_pattern_union_or_alternation		{ $$ = $1; }
-		;
-
-path_pattern_union_or_alternation:
-			path_term
-			| path_pattern_union_or_alternation path_pattern_union_or_alternation_op path_term
-		;
-
-path_pattern_union_or_alternation_op:
-			'|'
-			| PIPE_PLUS_PIPE
+			path_term								{ $$ = $1; }
 		;
 
 path_term:

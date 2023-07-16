@@ -369,9 +369,9 @@ G017	All shortest path search			NO
 G018	Any shortest path search			NO	
 G019	Counted shortest path search			NO	
 G020	Counted shortest group search			NO	
-G030	Path multiset alternation			YES	WIP
+G030	Path multiset alternation			NO	
 G031	Path multiset alternation: variable length path operands			NO	
-G032	Path pattern union			YES	WIP
+G032	Path pattern union			NO	
 G033	Path pattern union: variable length path operands			NO	
 G034	Path concatenation			YES	WIP REQ
 G035	Quantified paths			YES	WIP
