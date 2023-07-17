@@ -969,6 +969,148 @@ add_partial_path_precheck(RelOptInfo *parent_rel, int disabled_nodes,
 	return true;
 }
 
+void
+free_path(Path *path)
+{
+	/*
+	 * If the path is still referenced, freeing it would create a dangling
+	 * pointer.
+	 */
+	/* TODO: it could just be an Assert? */
+	if (path->ref_count != 0)
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errbacktrace(),
+				 errmsg("path node %p of type %d has reference count %d, can not be freed",
+						path, path->pathtype, path->ref_count)));
+		return;
+	}
+
+	/*
+	 * A path referenced in the parent relation's pathlist can't be freed.
+	 * Ideally such a path should have ref_count >= 1. If this happens it
+	 * indicates that the path was not linked somewhere, and yet unlinked
+	 * (usually by free_path()).
+	 */
+	if (list_member_ptr(path->parent->pathlist, path))
+	{
+		ereport(WARNING,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errbacktrace(),
+				 errmsg("path node %p of type %d has reference count %d but is linked in parent's pathlist, can not be freed",
+						path, path->pathtype, path->ref_count)));
+		return;
+	}
+
+	/* Decrement the reference counts of paths referenced by this one. */
+	switch (path->pathtype)
+	{
+		case T_SeqScan:
+		case T_IndexScan:
+		case T_IndexOnlyScan:
+			/* Simple paths reference no other path. */
+			break;
+
+		case T_MergeJoin:
+		case T_HashJoin:
+		case T_NestLoop:
+			{
+				JoinPath   *jpath = (JoinPath *) path;
+
+				unlink_path(&(jpath->outerjoinpath));
+				unlink_path(&(jpath->innerjoinpath));
+			}
+			break;
+
+		case T_Append:
+		case T_MergeAppend:
+			{
+				AppendPath *appath = (AppendPath *) path;
+				ListCell   *lc;
+
+				foreach(lc, appath->subpaths)
+				{
+					Path	   *subpath = lfirst(lc);
+
+					/* TODO use a routine to unlink path from list. */
+					appath->subpaths = foreach_delete_current(appath->subpaths, lc);
+					unlink_path(&subpath);
+				}
+			}
+			break;
+
+		case T_Gather:
+			{
+				GatherPath *gpath = (GatherPath *) path;
+
+				unlink_path(&(gpath->subpath));
+			}
+			break;
+
+		case T_GatherMerge:
+			{
+				GatherMergePath *gmpath = (GatherMergePath *) path;
+
+				unlink_path(&gmpath->subpath);
+			}
+			break;
+
+		case T_BitmapHeapScan:
+			{
+				BitmapHeapPath *bhpath = (BitmapHeapPath *) path;
+
+				unlink_path(&(bhpath->bitmapqual));
+			}
+			break;
+
+		case T_Material:
+			{
+				MaterialPath *mpath = (MaterialPath *) path;
+
+				unlink_path(&(mpath->subpath));
+			}
+			break;
+
+		case T_Memoize:
+			{
+				MemoizePath *mpath = (MemoizePath *) path;
+
+				unlink_path(&mpath->subpath);
+			}
+			break;
+
+		case T_Result:
+			{
+				/*
+				 * All Result paths except ProjectionPath are simple paths
+				 * without any subpath.
+				 */
+				if (IsA(path, ProjectionPath))
+				{
+					ProjectionPath *ppath = (ProjectionPath *) path;
+
+					unlink_path(&ppath->subpath);
+				}
+			}
+			break;
+
+		default:
+			ereport(WARNING,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errbacktrace(),
+					 errmsg("unrecognized path type %d", path->pathtype)));
+			break;
+	}
+
+	/*
+	 * TODO: add_path does not free IndexPaths, but we do that here. Is there
+	 * a hazard?
+	 */
+
+	/* Now reclaim the memory. */
+	pfree(path);
+}
 
 /*****************************************************************************
  *		PATH NODE CREATION ROUTINES

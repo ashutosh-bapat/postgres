@@ -3390,6 +3390,81 @@ make_rel_from_joinlist(PlannerInfo *root, List *joinlist)
 }
 
 /*
+ * TODO: Need similar code to free paths in upper relations.
+ */
+static void
+free_unused_paths_from_rel(RelOptInfo *rel)
+{
+	ListCell   *lc_path;
+	int			cnt_part;
+
+	foreach(lc_path, rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc_path);
+
+		/* Free the path if none references it. */
+		if (path->ref_count == 1)
+		{
+			/* TODO: use routine to unlink path from list */
+			rel->pathlist = foreach_delete_current(rel->pathlist, lc_path);
+			unlink_path(&path);
+		}
+	}
+
+	/* Do the same for partial pathlist. */
+	foreach(lc_path, rel->partial_pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc_path);
+
+		/* Free the path if none references it. */
+		if (path->ref_count == 1)
+		{
+			rel->partial_pathlist = foreach_delete_current(rel->partial_pathlist, lc_path);
+			unlink_path(&path);
+		}
+	}
+
+	/*
+	 * TODO: We can perform this in generate_partitionwise_paths as well since
+	 * by that time all the paths from partitions will be linked if used.
+	 */
+
+	/* Free unused paths from the partition relations */
+	for (cnt_part = 0; cnt_part < rel->nparts; cnt_part++)
+	{
+		free_unused_paths_from_rel(rel->part_rels[cnt_part]);
+	}
+}
+
+/*
+ * Free unused paths from all the relations created while building the join tree.
+ */
+static void
+free_unused_paths(PlannerInfo *root, int levels_needed)
+{
+	int			cnt;
+
+	for (cnt = levels_needed - 1; cnt >= 1; cnt--)
+	{
+		ListCell   *lc;
+
+		foreach(lc, root->join_rel_level[cnt])
+		{
+			free_unused_paths_from_rel(lfirst(lc));
+		}
+	}
+
+	for (cnt = 0; cnt < root->simple_rel_array_size; cnt++)
+	{
+		RelOptInfo *rel = root->simple_rel_array[cnt];
+
+		/* Skip empty slots */
+		if (rel != NULL)
+			free_unused_paths_from_rel(rel);
+	}
+}
+
+/*
  * standard_join_search
  *	  Find possible joinpaths for a query by successively finding ways
  *	  to join component relations into join relations.
@@ -3490,6 +3565,8 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 #endif
 		}
 	}
+
+	free_unused_paths(root, levels_needed);
 
 	/*
 	 * We should have a single rel at the final level.

@@ -16,6 +16,7 @@
 
 #include "nodes/bitmapset.h"
 #include "nodes/pathnodes.h"
+#include "limits.h"
 
 
 /*
@@ -306,6 +307,43 @@ extern Path *reparameterize_path_by_child(PlannerInfo *root, Path *path,
 										  RelOptInfo *child_rel);
 extern bool path_is_reparameterizable_by_child(Path *path,
 											   RelOptInfo *child_rel);
+extern void free_path(Path *path);
+
+static inline void
+link_path(Path **path_link, Path *path)
+{
+	if (path->ref_count < 0)
+		ereport(WARNING,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errbacktrace(),
+				 errmsg("path node %p of type %d has negative reference count %d",
+						path, path->pathtype, path->ref_count)));
+
+	path->ref_count++;
+	*path_link = path;
+	Assert(path->ref_count > 0 && path->ref_count <= INT_MAX);
+}
+
+static inline void
+unlink_path(Path **path_link)
+{
+	Path	   *path = *path_link;
+
+	/* A path to be unlinked should have been linked before. */
+	if (path->ref_count < 0)
+		ereport(WARNING,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errbacktrace(),
+				 errmsg("path node %p of type %d had negative reference count %d",
+						path, path->pathtype, path->ref_count)));
+
+	path->ref_count--;
+	*path_link = NULL;
+
+	/* Free path if none is referencing it. */
+	if (path->ref_count == 0)
+		free_path(path);
+}
 
 /*
  * prototypes for relnode.c
