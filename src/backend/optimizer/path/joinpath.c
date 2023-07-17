@@ -1901,12 +1901,14 @@ match_unsorted_outer(PlannerInfo *root,
 		/*
 		 * Consider materializing the cheapest inner path, unless
 		 * enable_material is off or the path in question materializes its
-		 * output anyway.
+		 * output anyway. Link the path to a local reference so that it won't
+		 * be freed by add_path if the surrounding nest path is freed by
+		 * add_path. It will get freed if not used later.
 		 */
 		if (enable_material && inner_cheapest_total != NULL &&
 			!ExecMaterializesOutput(inner_cheapest_total->pathtype))
-			matpath = (Path *)
-				create_material_path(innerrel, inner_cheapest_total);
+			link_path(&matpath,
+					  (Path *) create_material_path(innerrel, inner_cheapest_total));
 	}
 
 	foreach(lc1, outerrel->pathlist)
@@ -2021,6 +2023,10 @@ match_unsorted_outer(PlannerInfo *root,
 								 inner_cheapest_total, merge_pathkeys,
 								 false);
 	}
+
+	/* Materialized inner path won't be used anymore. Unlink it */
+	if (matpath)
+		unlink_path(&matpath);
 
 	/*
 	 * Consider partial nestloop and mergejoin plan if outerrel has any
