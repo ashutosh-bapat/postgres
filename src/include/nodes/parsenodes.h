@@ -3868,6 +3868,7 @@ typedef struct PropGraphVertex
 	NodeTag		type;
 	RangeVar   *vtable;
 	List	   *vkey;
+	List	   *labels;
 	int			location;
 } PropGraphVertex;
 
@@ -3882,6 +3883,7 @@ typedef struct PropGraphEdge
 	List	   *edestkey;
 	char	   *edestvertex;
 	List	   *edestvertexcols;
+	List	   *labels;
 	int			location;
 } PropGraphEdge;
 

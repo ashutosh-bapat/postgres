@@ -21,6 +21,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
 #include "commands/propgraphcmds.h"
 #include "commands/tablecmds.h"
 #include "utils/builtins.h"
@@ -46,12 +47,15 @@ struct element_info
 	Oid		destvertexid;
 	int2vector *destkey;
 	int2vector *destref;
+
+	List   *labels;
 };
 
 
 static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
 static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
+static void insert_label_record(Oid peoid, const char *label);
 static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_element_relid(Oid peid);
@@ -103,6 +107,8 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 					 parser_errposition(pstate, vertex->location)));
 
 		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
+
+		vinfo->labels = vertex->labels;
 
 		table_close(rel, NoLock);
 
@@ -202,6 +208,8 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 		einfo->destref = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
 		// TODO: various consistency checks
+
+		einfo->labels = edge->labels;
 
 		table_close(destrel, NoLock);
 		table_close(srcrel, NoLock);
@@ -411,6 +419,56 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	}
 
 	table_close(rel, NoLock);
+
+	if (einfo->labels)
+	{
+		ListCell *lc;
+
+		foreach(lc, einfo->labels)
+		{
+			if (lfirst(lc))
+				insert_label_record(peoid, strVal(lfirst(lc)));
+			else
+				insert_label_record(peoid, einfo->aliasname);
+		}
+	}
+	else
+	{
+		insert_label_record(peoid, einfo->aliasname);
+	}
+}
+
+static void
+insert_label_record(Oid peoid, const char *label)
+{
+	Relation	rel;
+	NameData	labelname;
+	Oid			labeloid;
+	Datum		values[Natts_pg_propgraph_label] = {0};
+	bool		nulls[Natts_pg_propgraph_label] = {0};
+	HeapTuple	tup;
+	ObjectAddress myself;
+	ObjectAddress referenced;
+
+	rel = table_open(PropgraphLabelRelationId, RowExclusiveLock);
+
+	labeloid = GetNewOidWithIndex(rel, PropgraphLabelObjectIndexId, Anum_pg_propgraph_label_oid);
+	values[Anum_pg_propgraph_label_oid - 1] = ObjectIdGetDatum(labeloid);
+	values[Anum_pg_propgraph_label_pglelid - 1] = ObjectIdGetDatum(peoid);
+	namestrcpy(&labelname, label);
+	values[Anum_pg_propgraph_label_pgllabel - 1] = NameGetDatum(&labelname);
+
+	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+	CatalogTupleInsert(rel, tup);
+	heap_freetuple(tup);
+
+	ObjectAddressSet(myself, PropgraphLabelRelationId, labeloid);
+
+	/* Add dependency on the property graph element */
+	ObjectAddressSet(referenced, PropgraphElementRelationId, peoid);
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+
+	table_close(rel, NoLock);
 }
 
 ObjectAddress
@@ -457,6 +515,8 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 			vinfo->aliasname = vertex->vtable->relname;
 
 		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
+
+		vinfo->labels = vertex->labels;
 
 		table_close(rel, NoLock);
 
@@ -524,6 +584,8 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 		einfo->destref = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
 		// TODO: various consistency checks
+
+		einfo->labels = edge->labels;
 
 		table_close(destrel, NoLock);
 		table_close(srcrel, NoLock);

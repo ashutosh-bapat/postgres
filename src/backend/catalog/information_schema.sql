@@ -3151,10 +3151,11 @@ CREATE VIEW pg_element_table_labels AS
            CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
            CAST(pg.relname AS sql_identifier) AS property_graph_name,
            CAST(e.pgealias AS sql_identifier) AS element_table_alias,
-           CAST(e.pgealias AS sql_identifier) AS label_name  -- label defaults to alias
-    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e
+           CAST(l.pgllabel AS sql_identifier) AS label_name
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_label l
     WHERE pg.relnamespace = npg.oid
           AND e.pgepgid = pg.oid
+          AND l.pglelid = e.oid
           AND pg.relkind = 'g'
           AND (NOT pg_is_other_temp_schema(npg.oid))
           AND (pg_has_role(pg.relowner, 'USAGE')
@@ -3213,13 +3214,15 @@ GRANT SELECT ON pg_element_tables TO PUBLIC;
  */
 
 CREATE VIEW pg_labels AS
-    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+    SELECT DISTINCT
+           CAST(current_database() AS sql_identifier) AS property_graph_catalog,
            CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
            CAST(pg.relname AS sql_identifier) AS property_graph_name,
-           CAST(e.pgealias AS sql_identifier) AS label_name  -- label defaults to alias
-    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e
+           CAST(l.pgllabel AS sql_identifier) AS label_name
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_label l
     WHERE pg.relnamespace = npg.oid
           AND e.pgepgid = pg.oid
+          AND l.pglelid = e.oid
           AND pg.relkind = 'g'
           AND (NOT pg_is_other_temp_schema(npg.oid))
           AND (pg_has_role(pg.relowner, 'USAGE')

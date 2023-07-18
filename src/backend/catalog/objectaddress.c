@@ -50,6 +50,8 @@
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -373,6 +375,20 @@ static const ObjectPropertyType ObjectProperty[] =
 		InvalidAttrNumber,
 		OBJECT_OPFAMILY,
 		true
+	},
+	{
+		"property graph label",
+		PropgraphLabelRelationId,
+		PropgraphLabelObjectIndexId,
+		-1,
+		-1,
+		Anum_pg_propgraph_label_oid,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
 	},
 	{
 		"role",
@@ -850,6 +866,14 @@ static const struct object_type_map
 	/* OCLASS_PROPGRAPH_ELEMENT */
 	{
 		"property graph element", -1 // TODO
+	},
+	/* OCLASS_PROPGRAPH_LABEL */
+	{
+		"property graph label", -1 // TODO
+	},
+	/* OCLASS_PROPGRAPH_PROPERTY */
+	{
+		"property graph property", -1 // TODO
 	},
 	/* OCLASS_PUBLICATION */
 	{
@@ -3998,6 +4022,18 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
+		case OCLASS_PROPGRAPH_LABEL:
+			{
+				appendStringInfo(&buffer, "TODO label");
+				break;
+			}
+
+		case OCLASS_PROPGRAPH_PROPERTY:
+			{
+				appendStringInfo(&buffer, "TODO property");
+				break;
+			}
+
 		case OCLASS_PUBLICATION:
 			{
 				char	   *pubname = get_publication_name(object->objectId,
@@ -4611,6 +4647,14 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 
 		case OCLASS_PROPGRAPH_ELEMENT:
 			appendStringInfoString(&buffer, "property graph element");
+			break;
+
+		case OCLASS_PROPGRAPH_LABEL:
+			appendStringInfoString(&buffer, "property graph label");
+			break;
+
+		case OCLASS_PROPGRAPH_PROPERTY:
+			appendStringInfoString(&buffer, "property graph property");
 			break;
 
 		case OCLASS_PUBLICATION:
@@ -5859,6 +5903,14 @@ getObjectIdentityParts(const ObjectAddress *object,
 			}
 
 		case OCLASS_PROPGRAPH_ELEMENT:
+			elog(ERROR, "TODO2");
+			break;
+
+		case OCLASS_PROPGRAPH_LABEL:
+			elog(ERROR, "TODO2");
+			break;
+
+		case OCLASS_PROPGRAPH_PROPERTY:
 			elog(ERROR, "TODO2");
 			break;
 

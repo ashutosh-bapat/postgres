@@ -666,8 +666,11 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				opt_graph_table_key_clause
 				edge_table_list
 				source_vertex_table destination_vertex_table
+				opt_element_table_label_and_properties
+				label_and_properties_list
 %type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
+%type <node>	element_table_label_clause label_and_properties
 
 %type <list>	graph_pattern
 				graph_pattern_quantifier
@@ -9046,12 +9049,14 @@ vertex_table_list: vertex_table_definition						{ $$ = list_make1($1); }
 		;
 
 vertex_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
+				opt_element_table_label_and_properties
 				{
 					PropGraphVertex *n = makeNode(PropGraphVertex);
 
 					$1->alias = $2;
 					n->vtable = $1;
 					n->vkey = $3;
+					n->labels = $4;
 					n->location = @1;
 
 					$$ = (Node *) n;
@@ -9064,12 +9069,12 @@ opt_propgraph_table_alias:
 					$$ = makeNode(Alias);
 					$$->aliasname = $2;
 				}
-			| /*EMPTY*/								{ $$ = NULL; }
+			| /*EMPTY*/							{ $$ = NULL; }
 		;
 
 opt_graph_table_key_clause:
-			KEY '(' columnList ')'					{ $$ = $3; }
-			| /*EMPTY*/								{ $$ = NIL; }
+			KEY '(' columnList ')'				{ $$ = $3; }
+			| /*EMPTY*/							{ $$ = NIL; }
 		;
 
 opt_edge_tables_clause:
@@ -9089,7 +9094,7 @@ edge_table_list: edge_table_definition						{ $$ = list_make1($1); }
 		;
 
 edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_key_clause
-				source_vertex_table destination_vertex_table
+				source_vertex_table destination_vertex_table opt_element_table_label_and_properties
 				{
 					PropGraphEdge *n = makeNode(PropGraphEdge);
 
@@ -9102,6 +9107,7 @@ edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_
 					n->edestkey = linitial($5);
 					n->edestvertex = lsecond($5);
 					n->edestvertexcols = lthird($5);
+					n->labels = $6;
 					n->location = @1;
 
 					$$ = (Node *) n;
@@ -9125,6 +9131,36 @@ destination_vertex_table: DESTINATION ColId
 				| DESTINATION KEY '(' columnList ')' REFERENCES ColId '(' columnList ')'
 				{
 					$$ = list_make3($4, $7, $9);
+				}
+		;
+
+opt_element_table_label_and_properties:
+			label_and_properties_list			{ $$ = $1; }
+			| /*EMPTY*/							{ $$ = NIL; }
+		;
+
+label_and_properties_list:
+			label_and_properties
+				{
+					$$ = list_make1($1);
+				}
+			| label_and_properties_list label_and_properties
+				{
+					$$ = lappend($1, $2);
+				}
+		;
+
+label_and_properties: element_table_label_clause
+		;
+
+element_table_label_clause:
+			LABEL ColId
+				{
+					$$ = (Node *) makeString($2);
+				}
+			| DEFAULT LABEL
+				{
+					$$ = NULL;
 				}
 		;
 

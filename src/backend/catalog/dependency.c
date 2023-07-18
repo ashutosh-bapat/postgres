@@ -51,6 +51,8 @@
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -187,6 +189,8 @@ static const Oid object_classes[] = {
 	ParameterAclRelationId,		/* OCLASS_PARAMETER_ACL */
 	PolicyRelationId,			/* OCLASS_POLICY */
 	PropgraphElementRelationId,	/* OCLASS_PROPGRAPH_ELEMENT */
+	PropgraphLabelRelationId,	/* OCLASS_PROPGRAPH_LABEL */
+	PropgraphPropertyRelationId,	/* OCLASS_PROPGRAPH_PROPERTY */
 	PublicationNamespaceRelationId, /* OCLASS_PUBLICATION_NAMESPACE */
 	PublicationRelationId,		/* OCLASS_PUBLICATION */
 	PublicationRelRelationId,	/* OCLASS_PUBLICATION_REL */
@@ -1507,6 +1511,8 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_AM:
 		case OCLASS_AMOP:
 		case OCLASS_AMPROC:
+		case OCLASS_PROPGRAPH_LABEL:
+		case OCLASS_PROPGRAPH_PROPERTY:
 		case OCLASS_SCHEMA:
 		case OCLASS_TSPARSER:
 		case OCLASS_TSDICT:
@@ -2961,6 +2967,12 @@ getObjectClass(const ObjectAddress *object)
 
 		case PropgraphElementRelationId:
 			return OCLASS_PROPGRAPH_ELEMENT;
+
+		case PropgraphLabelRelationId:
+			return OCLASS_PROPGRAPH_LABEL;
+
+		case PropgraphPropertyRelationId:
+			return OCLASS_PROPGRAPH_PROPERTY;
 
 		case PublicationNamespaceRelationId:
 			return OCLASS_PUBLICATION_NAMESPACE;

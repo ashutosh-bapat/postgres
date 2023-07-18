@@ -19,7 +19,7 @@ CREATE TABLE e1 (a int, i int, t text, PRIMARY KEY (a, i));
 CREATE TABLE e2 (a int, x int, t text);
 
 CREATE PROPERTY GRAPH g2
-    VERTEX TABLES (t1 KEY (a), t2, t3 KEY (x))
+    VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL, t3 KEY (x) LABEL t3l1 LABEL t3l2)
     EDGE TABLES (
         e1
             SOURCE KEY (a) REFERENCES t1 (a)
@@ -29,11 +29,11 @@ CREATE PROPERTY GRAPH g2
             DESTINATION KEY (x, t) REFERENCES t3 (x, y)
     );
 
--- like g3 but assembled with ALTER
+-- like g2 but assembled with ALTER
 CREATE PROPERTY GRAPH g3;
-ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t1 KEY (a), t2);
+ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL);
 ALTER PROPERTY GRAPH g3
-    ADD VERTEX TABLES (t3 KEY (x))
+    ADD VERTEX TABLES (t3 KEY (x) LABEL t3l1 LABEL t3l2)
     ADD EDGE TABLES (
         e1 SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (i) REFERENCES t2 (i),
         e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y)

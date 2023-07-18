@@ -438,9 +438,9 @@ G921	Empty SQL-property graph			YES
 G922	Views as element tables			YES	
 G923	In-line views as element tables			NO	
 G924	Explicit key clause for element tables			YES	REQ
-G925	Explicit label and properties clause for element tables			NO	TODO REQ
-G926	More than one label for vertex tables			NO	
-G927	More than one label for edge tables			NO	
+G925	Explicit label and properties clause for element tables			YES	WIP REQ
+G926	More than one label for vertex tables			YES	WIP
+G927	More than one label for edge tables			YES	WIP
 G928	Value expressions as properties and renaming of properties			NO	
 G929	Labels and properties: EXCEPT list			NO	
 G940	Multi-sourced/destined edges			NO	XXX
