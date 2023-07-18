@@ -1486,10 +1486,6 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemovePolicyById(object->objectId);
 			break;
 
-		case OCLASS_PROPGRAPH_ELEMENT:
-			RemovePropgraphElementById(object->objectId);
-			break;
-
 		case OCLASS_PUBLICATION_NAMESPACE:
 			RemovePublicationSchemaById(object->objectId);
 			break;
@@ -1511,6 +1507,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_AM:
 		case OCLASS_AMOP:
 		case OCLASS_AMPROC:
+		case OCLASS_PROPGRAPH_ELEMENT:
 		case OCLASS_PROPGRAPH_LABEL:
 		case OCLASS_PROPGRAPH_PROPERTY:
 		case OCLASS_SCHEMA:

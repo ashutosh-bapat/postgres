@@ -377,6 +377,20 @@ static const ObjectPropertyType ObjectProperty[] =
 		true
 	},
 	{
+		"property graph element",
+		PropgraphElementRelationId,
+		PropgraphElementObjectIndexId,
+		-1,
+		-1,
+		Anum_pg_propgraph_element_oid,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
 		"property graph label",
 		PropgraphLabelRelationId,
 		PropgraphLabelObjectIndexId,

@@ -692,21 +692,3 @@ get_element_relid(Oid peid)
 
 	return pgerelid;
 }
-
-void
-RemovePropgraphElementById(Oid peid)
-{
-	HeapTuple	tup;
-	Relation	rel;
-
-	rel = table_open(PropgraphElementRelationId, RowExclusiveLock);
-
-	tup = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(peid));
-	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for property graph element %u", peid);
-
-	CatalogTupleDelete(rel, &tup->t_self);
-	ReleaseSysCache(tup);
-
-	table_close(rel, RowExclusiveLock);
-}
