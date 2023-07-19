@@ -667,10 +667,12 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				edge_table_list
 				source_vertex_table destination_vertex_table
 				opt_element_table_label_and_properties
+				element_table_properties
 				label_and_properties_list
 %type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
-%type <node>	element_table_label_clause label_and_properties
+%type <str>		element_table_label_clause
+%type <node>	label_and_properties
 
 %type <list>	graph_pattern
 				graph_pattern_quantifier
@@ -768,7 +770,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	PARALLEL PARAMETER PARSER PARTIAL PARTITION PASSING PASSWORD
 	PLACING PLANS POLICY
 	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
-	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROCEDURES PROGRAM PROPERTY PUBLICATION
+	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROCEDURES PROGRAM PROPERTIES PROPERTY PUBLICATION
 
 	QUOTE
 
@@ -9135,8 +9137,48 @@ destination_vertex_table: DESTINATION ColId
 		;
 
 opt_element_table_label_and_properties:
-			label_and_properties_list			{ $$ = $1; }
-			| /*EMPTY*/							{ $$ = NIL; }
+			element_table_properties
+				{
+					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
+
+					lp->properties = $1;
+					lp->location = @1;
+
+					$$ = list_make1(lp);
+				}
+			| label_and_properties_list
+				{
+					$$ = $1;
+				}
+			| /*EMPTY*/
+				{
+					$$ = NIL;
+				}
+		;
+
+element_table_properties:
+			NO PROPERTIES
+				{
+					$$ = NIL;
+				}
+			| PROPERTIES ALL COLUMNS
+			/*| PROPERTIES ARE ALL COLUMNS */
+				{
+					ColumnRef  *n = makeNode(ColumnRef);
+					ResTarget *r = makeNode(ResTarget);
+
+					n->fields = list_make1(makeNode(A_Star));
+					n->location = @1;
+
+					r->val = (Node *) n;
+					r->location = @1;
+
+					$$ = list_make1(r);
+				}
+			| PROPERTIES '(' xml_attribute_list ')'
+				{
+					$$ = $3;
+				}
 		;
 
 label_and_properties_list:
@@ -9150,13 +9192,32 @@ label_and_properties_list:
 				}
 		;
 
-label_and_properties: element_table_label_clause
+label_and_properties:
+			element_table_label_clause
+				{
+					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
+
+					lp->label = $1;
+					lp->location = @1;
+
+					$$ = (Node *) lp;
+				}
+			| element_table_label_clause element_table_properties
+				{
+					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
+
+					lp->label = $1;
+					lp->properties = $2;
+					lp->location = @1;
+
+					$$ = (Node *) lp;
+				}
 		;
 
 element_table_label_clause:
 			LABEL ColId
 				{
-					$$ = (Node *) makeString($2);
+					$$ = $2;
 				}
 			| DEFAULT LABEL
 				{
@@ -17557,6 +17618,7 @@ unreserved_keyword:
 			| PROCEDURE
 			| PROCEDURES
 			| PROGRAM
+			| PROPERTIES
 			| PROPERTY
 			| PUBLICATION
 			| QUOTE
@@ -18166,6 +18228,7 @@ bare_label_keyword:
 			| PROCEDURE
 			| PROCEDURES
 			| PROGRAM
+			| PROPERTIES
 			| PROPERTY
 			| PUBLICATION
 			| QUOTE

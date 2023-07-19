@@ -426,8 +426,10 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 
 		foreach(lc, einfo->labels)
 		{
-			if (lfirst(lc))
-				insert_label_record(peoid, strVal(lfirst(lc)));
+			PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
+
+			if (lp->label)
+				insert_label_record(peoid, lp->label);
 			else
 				insert_label_record(peoid, einfo->aliasname);
 		}

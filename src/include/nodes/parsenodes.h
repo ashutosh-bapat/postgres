@@ -3887,6 +3887,14 @@ typedef struct PropGraphEdge
 	int			location;
 } PropGraphEdge;
 
+typedef struct PropGraphLabelAndProperties
+{
+	NodeTag		type;
+	const char *label;
+	List	   *properties;
+	int			location;
+} PropGraphLabelAndProperties;
+
 /* ----------------------
  *	ALTER PROPERTY GRAPH Statement
  * ----------------------
