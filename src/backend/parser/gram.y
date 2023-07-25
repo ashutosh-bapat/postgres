@@ -667,12 +667,11 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				edge_table_list
 				source_vertex_table destination_vertex_table
 				opt_element_table_label_and_properties
-				element_table_properties
 				label_and_properties_list
 %type <node>	vertex_table_definition edge_table_definition
 %type <alias>	opt_propgraph_table_alias
 %type <str>		element_table_label_clause
-%type <node>	label_and_properties
+%type <node>	label_and_properties element_table_properties
 
 %type <list>	graph_pattern
 				graph_pattern_quantifier
@@ -9141,7 +9140,7 @@ opt_element_table_label_and_properties:
 				{
 					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
 
-					lp->properties = $1;
+					lp->properties = (PropGraphProperties *) $1;
 					lp->location = @1;
 
 					$$ = list_make1(lp);
@@ -9152,32 +9151,46 @@ opt_element_table_label_and_properties:
 				}
 			| /*EMPTY*/
 				{
-					$$ = NIL;
+					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
+					PropGraphProperties *pr = makeNode(PropGraphProperties);
+
+					pr->all = true;
+					pr->location = -1;
+					lp->properties = pr;
+					lp->location = -1;
+
+					$$ = list_make1(lp);
 				}
 		;
 
 element_table_properties:
 			NO PROPERTIES
 				{
-					$$ = NIL;
+					PropGraphProperties *pr = makeNode(PropGraphProperties);
+
+					pr->properties = NIL;
+					pr->location = @1;
+
+					$$ = (Node *) pr;
 				}
 			| PROPERTIES ALL COLUMNS
 			/*| PROPERTIES ARE ALL COLUMNS */
 				{
-					ColumnRef  *n = makeNode(ColumnRef);
-					ResTarget *r = makeNode(ResTarget);
+					PropGraphProperties *pr = makeNode(PropGraphProperties);
 
-					n->fields = list_make1(makeNode(A_Star));
-					n->location = @1;
+					pr->all = true;
+					pr->location = @1;
 
-					r->val = (Node *) n;
-					r->location = @1;
-
-					$$ = list_make1(r);
+					$$ = (Node *) pr;
 				}
 			| PROPERTIES '(' xml_attribute_list ')'
 				{
-					$$ = $3;
+					PropGraphProperties *pr = makeNode(PropGraphProperties);
+
+					pr->properties = $3;
+					pr->location = @1;
+
+					$$ = (Node *) pr;
 				}
 		;
 
@@ -9196,8 +9209,13 @@ label_and_properties:
 			element_table_label_clause
 				{
 					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
+					PropGraphProperties *pr = makeNode(PropGraphProperties);
+
+					pr->all = true;
+					pr->location = -1;
 
 					lp->label = $1;
+					lp->properties = pr;
 					lp->location = @1;
 
 					$$ = (Node *) lp;
@@ -9207,7 +9225,7 @@ label_and_properties:
 					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
 
 					lp->label = $1;
-					lp->properties = $2;
+					lp->properties = (PropGraphProperties *) $2;
 					lp->location = @1;
 
 					$$ = (Node *) lp;

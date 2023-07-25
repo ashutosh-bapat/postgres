@@ -3891,9 +3891,17 @@ typedef struct PropGraphLabelAndProperties
 {
 	NodeTag		type;
 	const char *label;
-	List	   *properties;
+	struct PropGraphProperties *properties;
 	int			location;
 } PropGraphLabelAndProperties;
+
+typedef struct PropGraphProperties
+{
+	NodeTag		type;
+	List	   *properties;
+	bool		all;
+	int			location;
+} PropGraphProperties;
 
 /* ----------------------
  *	ALTER PROPERTY GRAPH Statement

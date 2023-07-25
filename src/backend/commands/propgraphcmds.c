@@ -22,9 +22,13 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "commands/propgraphcmds.h"
 #include "commands/tablecmds.h"
+#include "parser/parse_relation.h"
+#include "parser/parse_target.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -55,7 +59,9 @@ struct element_info
 static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
 static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
-static void insert_label_record(Oid peoid, const char *label);
+static Oid insert_label_record(Oid peoid, const char *label);
+static void insert_property_records(Oid labeloid, Oid pgerelid, PropGraphProperties *properties);
+static void insert_property_record(Oid labeloid, const char *propname, Expr *expr);
 static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_element_relid(Oid peid);
@@ -427,20 +433,29 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		foreach(lc, einfo->labels)
 		{
 			PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
+			Oid			labeloid;
 
 			if (lp->label)
-				insert_label_record(peoid, lp->label);
+				labeloid = insert_label_record(peoid, lp->label);
 			else
-				insert_label_record(peoid, einfo->aliasname);
+				labeloid = insert_label_record(peoid, einfo->aliasname);
+			insert_property_records(labeloid, einfo->relid, lp->properties);
 		}
 	}
 	else
 	{
-		insert_label_record(peoid, einfo->aliasname);
+		Oid			labeloid;
+		PropGraphProperties *pr = makeNode(PropGraphProperties);
+
+		pr->all = true;
+		pr->location = -1;
+
+		labeloid = insert_label_record(peoid, einfo->aliasname);
+		insert_property_records(labeloid, einfo->relid, pr);
 	}
 }
 
-static void
+static Oid
 insert_label_record(Oid peoid, const char *label)
 {
 	Relation	rel;
@@ -456,9 +471,9 @@ insert_label_record(Oid peoid, const char *label)
 
 	labeloid = GetNewOidWithIndex(rel, PropgraphLabelObjectIndexId, Anum_pg_propgraph_label_oid);
 	values[Anum_pg_propgraph_label_oid - 1] = ObjectIdGetDatum(labeloid);
-	values[Anum_pg_propgraph_label_pglelid - 1] = ObjectIdGetDatum(peoid);
 	namestrcpy(&labelname, label);
 	values[Anum_pg_propgraph_label_pgllabel - 1] = NameGetDatum(&labelname);
+	values[Anum_pg_propgraph_label_pglelid - 1] = ObjectIdGetDatum(peoid);
 
 	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
 	CatalogTupleInsert(rel, tup);
@@ -468,6 +483,129 @@ insert_label_record(Oid peoid, const char *label)
 
 	/* Add dependency on the property graph element */
 	ObjectAddressSet(referenced, PropgraphElementRelationId, peoid);
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+
+	table_close(rel, NoLock);
+
+	return labeloid;
+}
+
+static void
+insert_property_records(Oid labeloid, Oid pgerelid, PropGraphProperties *properties)
+{
+	List	   *proplist = NIL;
+	ParseState *pstate;
+	ParseNamespaceItem *nsitem;
+	List *tp;
+	Relation rel;
+	ListCell *lc;
+
+	if (properties->all)
+	{
+		Relation	attRelation;
+		SysScanDesc scan;
+		ScanKeyData key[1];
+		HeapTuple	attributeTuple;
+
+		attRelation = table_open(AttributeRelationId, RowShareLock);
+		ScanKeyInit(&key[0],
+					Anum_pg_attribute_attrelid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(pgerelid));
+		scan = systable_beginscan(attRelation, AttributeRelidNumIndexId,
+								  true, NULL, 1, key);
+		while (HeapTupleIsValid(attributeTuple = systable_getnext(scan)))
+		{
+			Form_pg_attribute att = (Form_pg_attribute) GETSTRUCT(attributeTuple);
+			ColumnRef  *cr;
+			ResTarget *rt;
+
+			if (att->attnum <= 0 || att->attisdropped)
+				continue;
+
+			cr = makeNode(ColumnRef);
+			rt = makeNode(ResTarget);
+
+			cr->fields = list_make1(makeString(NameStr(att->attname)));
+			cr->location = -1;
+
+			rt->name = pstrdup(NameStr(att->attname));
+			rt->val = (Node *) cr;
+			rt->location = -1;
+
+			proplist = lappend(proplist, rt);
+		}
+		systable_endscan(scan);
+		table_close(attRelation, RowShareLock);
+	}
+	else
+	{
+		proplist = properties->properties;
+
+		foreach(lc, proplist)
+		{
+			ResTarget *rt = lfirst_node(ResTarget, lc);
+
+			if (!rt->name && !IsA(rt->val, ColumnRef))
+				ereport(ERROR,
+						errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("property name required"),
+						parser_errposition(NULL, rt->location));
+		}
+	}
+
+	rel = table_open(pgerelid, AccessShareLock);
+
+	pstate = make_parsestate(NULL);
+	nsitem = addRangeTableEntryForRelation(pstate,
+										   rel,
+										   AccessShareLock,
+										   NULL,
+										   false,
+										   true);
+	addNSItemToQuery(pstate, nsitem, true, true, true);
+
+	table_close(rel, NoLock);
+
+	tp = transformTargetList(pstate, proplist, EXPR_KIND_OTHER);
+
+	foreach(lc, tp)
+	{
+		TargetEntry *te = lfirst_node(TargetEntry, lc);
+
+		insert_property_record(labeloid, te->resname, te->expr);
+	}
+}
+
+static void
+insert_property_record(Oid labeloid, const char *propname, Expr *expr)
+{
+	Relation	rel;
+	NameData	propnamedata;
+	Oid			propoid;
+	Datum		values[Natts_pg_propgraph_property] = {0};
+	bool		nulls[Natts_pg_propgraph_property] = {0};
+	HeapTuple	tup;
+	ObjectAddress myself;
+	ObjectAddress referenced;
+
+	rel = table_open(PropgraphPropertyRelationId, RowExclusiveLock);
+
+	propoid = GetNewOidWithIndex(rel, PropgraphPropertyObjectIndexId, Anum_pg_propgraph_property_oid);
+	values[Anum_pg_propgraph_property_oid - 1] = ObjectIdGetDatum(propoid);
+	namestrcpy(&propnamedata, propname);
+	values[Anum_pg_propgraph_property_pgpname - 1] = NameGetDatum(&propnamedata);
+	values[Anum_pg_propgraph_property_pgplabelid - 1] = ObjectIdGetDatum(labeloid);
+	values[Anum_pg_propgraph_property_pgpexpr - 1] = CStringGetTextDatum(nodeToString(expr));
+
+	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+	CatalogTupleInsert(rel, tup);
+	heap_freetuple(tup);
+
+	ObjectAddressSet(myself, PropgraphPropertyRelationId, propoid);
+
+	/* Add dependency on the property graph label */
+	ObjectAddressSet(referenced, PropgraphLabelRelationId, labeloid);
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 
 	table_close(rel, NoLock);

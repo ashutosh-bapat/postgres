@@ -405,6 +405,20 @@ static const ObjectPropertyType ObjectProperty[] =
 		false
 	},
 	{
+		"property graph property",
+		PropgraphPropertyRelationId,
+		PropgraphPropertyObjectIndexId,
+		-1,
+		-1,
+		Anum_pg_propgraph_property_oid,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
 		"role",
 		AuthIdRelationId,
 		AuthIdOidIndexId,

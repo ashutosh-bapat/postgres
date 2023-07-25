@@ -3169,7 +3169,25 @@ GRANT SELECT ON pg_element_table_labels TO PUBLIC;
  * PG_ELEMENT_TABLE_PROPERTIES view
  */
 
--- TODO
+CREATE VIEW pg_element_table_properties AS
+    SELECT DISTINCT
+           CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(e.pgealias AS sql_identifier) AS element_table_alias,
+           CAST(pr.pgpname AS sql_identifier) AS property_name,
+           CAST(pg_get_expr(pr.pgpexpr, e.pgerelid) AS character_data) AS property_expression
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_label l, pg_propgraph_property pr
+    WHERE pg.relnamespace = npg.oid
+          AND e.pgepgid = pg.oid
+          AND l.pglelid = e.oid
+          AND pr.pgplabelid = l.oid
+          AND pg.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(npg.oid))
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_element_table_properties TO PUBLIC;
 
 
 /*
@@ -3205,7 +3223,24 @@ GRANT SELECT ON pg_element_tables TO PUBLIC;
  * PG_LABEL_PROPERTIES view
  */
 
--- TODO
+CREATE VIEW pg_label_properties AS
+    SELECT DISTINCT
+           CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(l.pgllabel AS sql_identifier) AS label_name,
+           CAST(pr.pgpname AS sql_identifier) AS property_name
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_label l, pg_propgraph_property pr
+    WHERE pg.relnamespace = npg.oid
+          AND e.pgepgid = pg.oid
+          AND l.pglelid = e.oid
+          AND pr.pgplabelid = l.oid
+          AND pg.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(npg.oid))
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_label_properties TO PUBLIC;
 
 
 /*

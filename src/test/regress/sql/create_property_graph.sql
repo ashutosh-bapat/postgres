@@ -42,6 +42,23 @@ ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2);  -- fail (TODO: dubious error m
 ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2) CASCADE;
 ALTER PROPERTY GRAPH g3 DROP EDGE TABLES (e2);
 
+CREATE PROPERTY GRAPH g4
+    VERTEX TABLES (
+        t1 KEY (a) NO PROPERTIES,
+        t2 DEFAULT LABEL PROPERTIES (i + j AS i_j, k),
+        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y AS yy) LABEL t3l2 PROPERTIES (x, z AS zz)
+    )
+    EDGE TABLES (
+        e1
+            SOURCE KEY (a) REFERENCES t1 (a)
+            DESTINATION KEY (i) REFERENCES t2 (i)
+            PROPERTIES ALL COLUMNS,
+        e2 KEY (a, x)
+            SOURCE KEY (a) REFERENCES t1 (a)
+            DESTINATION KEY (x, t) REFERENCES t3 (x, y)
+            PROPERTIES ALL COLUMNS
+    );
+
 -- error cases
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));
@@ -72,6 +89,8 @@ SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name,
 SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_graph_name, element_table_alias, ordinal_position;
 SELECT * FROM information_schema.pg_edge_table_components ORDER BY property_graph_name, edge_table_alias, edge_end DESC, ordinal_position;
 SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph_name, element_table_alias, label_name;
+SELECT * FROM information_schema.pg_element_table_properties ORDER BY property_graph_name, element_table_alias, property_name;
+SELECT * FROM information_schema.pg_label_properties ORDER BY property_graph_name, label_name, property_name;
 SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
 SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name;
 
