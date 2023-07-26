@@ -3907,6 +3907,13 @@ typedef struct PropGraphProperties
  *	ALTER PROPERTY GRAPH Statement
  * ----------------------
  */
+
+typedef enum AlterPropGraphElementKind
+{
+	PROPGRAPH_ELEMENT_KIND_VERTEX = 1,
+	PROPGRAPH_ELEMENT_KIND_EDGE = 2,
+} AlterPropGraphElementKind;
+
 typedef struct AlterPropGraphStmt
 {
 	NodeTag		type;
@@ -3916,7 +3923,14 @@ typedef struct AlterPropGraphStmt
 	List	   *add_edge_tables;
 	List	   *drop_vertex_tables;
 	List	   *drop_edge_tables;
-	DropBehavior behavior;
+	DropBehavior drop_behavior;
+	AlterPropGraphElementKind element_kind;
+	const char *element_alias;
+	List	   *add_labels;
+	const char *drop_label;
+	const char *alter_label;
+	List	   *add_properties;
+	List	   *drop_properties;
 } AlterPropGraphStmt;
 
 /* ----------------------

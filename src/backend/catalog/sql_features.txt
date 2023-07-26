@@ -446,8 +446,8 @@ G929	Labels and properties: EXCEPT list			NO
 G940	Multi-sourced/destined edges			NO	XXX
 G941	Implicit removal of incomplete edges			NO	XXX
 G950	Alter property graph statement: ADD/DROP element table			YES	
-G960	Alter element table definition: ADD/DROP LABEL			NO	
-G970	Alter element table definition: ALTER LABEL			NO	
+G960	Alter element table definition: ADD/DROP LABEL			NO	WIP
+G970	Alter element table definition: ALTER LABEL			NO	WIP
 G980	DROP PROPERTY GRAPH: CASCADE drop behavior			YES	
 R010	Row pattern recognition: FROM clause			NO	
 R020	Row pattern recognition: WINDOW clause			NO	

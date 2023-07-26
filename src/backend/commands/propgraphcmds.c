@@ -743,7 +743,7 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 
 		peoid = get_vertex_oid(pstate, pgrelid, alias, -1);
 		ObjectAddressSet(obj, PropgraphElementRelationId, peoid);
-		performDeletion(&obj, stmt->behavior, 0);
+		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
 	foreach (lc, stmt->drop_edge_tables)
@@ -754,7 +754,7 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 
 		peoid = get_edge_oid(pstate, pgrelid, alias, -1);
 		ObjectAddressSet(obj, PropgraphElementRelationId, peoid);
-		performDeletion(&obj, stmt->behavior, 0);
+		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
 	return pgaddress;
