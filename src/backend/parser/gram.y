@@ -9315,7 +9315,8 @@ AlterPropGraphStmt:
 					n->pgname = $4;
 					n->element_kind = $6;
 					n->element_alias = $8;
-					n->drop_label = $9;
+					n->drop_label = $11;
+					n->drop_behavior = $12;
 
 					$$ = (Node *) n;
 				}

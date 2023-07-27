@@ -757,6 +757,54 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
+	foreach (lc, stmt->add_labels)
+	{
+		PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
+		Oid			peoid;
+		Oid			pgerelid;
+		Oid			labeloid;
+
+		Assert(lp->label);
+
+		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
+			peoid = get_vertex_oid(pstate, pgrelid, stmt->element_alias, -1);
+		else
+			peoid = get_edge_oid(pstate, pgrelid, stmt->element_alias, -1);
+
+		pgerelid = get_element_relid(peoid);
+
+		labeloid = insert_label_record(peoid, lp->label);
+		insert_property_records(labeloid, pgerelid, lp->properties);
+	}
+
+	if (stmt->drop_label)
+	{
+		Oid			peoid;
+		Oid			labeloid;
+		ObjectAddress obj;
+
+		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
+			peoid = get_vertex_oid(pstate, pgrelid, stmt->element_alias, -1);
+		else
+			peoid = get_edge_oid(pstate, pgrelid, stmt->element_alias, -1);
+
+		labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME,
+								   Anum_pg_propgraph_label_oid,
+								   ObjectIdGetDatum(peoid),
+								   CStringGetDatum(stmt->drop_label));
+		if (!labeloid)
+			ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->drop_label),
+					parser_errposition(pstate, -1));
+
+		ObjectAddressSet(obj, PropgraphLabelRelationId, labeloid);
+		performDeletion(&obj, stmt->drop_behavior, 0);
+	}
+
+	// TODO: ALTER LABEL
+
 	return pgaddress;
 }
 

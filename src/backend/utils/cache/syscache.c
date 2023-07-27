@@ -51,6 +51,7 @@
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -448,6 +449,13 @@ static const struct cachedesc cacheinfo[] = {
 		PropgraphElementRelationId,
 		PropgraphElementObjectIndexId,
 		KEY(Anum_pg_propgraph_element_oid),
+		128
+	},
+	[PROPGRAPHLABELNAME] = {
+		PropgraphLabelRelationId,
+		PropgraphLabelLabelIndexId,
+		KEY(Anum_pg_propgraph_label_pglelid,
+			Anum_pg_propgraph_label_pgllabel),
 		128
 	},
 	[PUBLICATIONNAME] = {
