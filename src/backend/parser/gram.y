@@ -9324,12 +9324,16 @@ AlterPropGraphStmt:
 				ALTER LABEL ColId ADD_P PROPERTIES '(' xml_attribute_list ')'
 				{
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
+					PropGraphProperties *pr = makeNode(PropGraphProperties);
 
 					n->pgname = $4;
 					n->element_kind = $6;
 					n->element_alias = $8;
 					n->alter_label = $11;
-					n->add_properties = $15;
+
+					pr->properties = $15;
+					pr->location = @13;
+					n->add_properties = pr;
 
 					$$ = (Node *) n;
 				}

@@ -803,7 +803,75 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
-	// TODO: ALTER LABEL
+	if (stmt->add_properties)
+	{
+		Oid			peoid;
+		Oid			pgerelid;
+		Oid			labeloid;
+
+		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
+			peoid = get_vertex_oid(pstate, pgrelid, stmt->element_alias, -1);
+		else
+			peoid = get_edge_oid(pstate, pgrelid, stmt->element_alias, -1);
+
+		pgerelid = get_element_relid(peoid);
+
+		labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME,
+								   Anum_pg_propgraph_label_oid,
+								   ObjectIdGetDatum(peoid),
+								   CStringGetDatum(stmt->alter_label));
+		if (!labeloid)
+			ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
+					parser_errposition(pstate, -1));
+
+		insert_property_records(labeloid, pgerelid, stmt->add_properties);
+	}
+
+	if (stmt->drop_properties)
+	{
+		Oid			peoid;
+		Oid			labeloid;
+		ObjectAddress obj;
+
+		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
+			peoid = get_vertex_oid(pstate, pgrelid, stmt->element_alias, -1);
+		else
+			peoid = get_edge_oid(pstate, pgrelid, stmt->element_alias, -1);
+
+		labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME,
+								   Anum_pg_propgraph_label_oid,
+								   ObjectIdGetDatum(peoid),
+								   CStringGetDatum(stmt->alter_label));
+		if (!labeloid)
+			ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->drop_label),
+					parser_errposition(pstate, -1));
+
+		foreach (lc, stmt->drop_properties)
+		{
+			char	   *propname = strVal(lfirst(lc));
+			Oid			propoid;
+
+			propoid = GetSysCacheOid2(PROPGRAPHPROPNAME,
+									  Anum_pg_propgraph_property_oid,
+									  CStringGetDatum(propname),
+									  ObjectIdGetDatum(labeloid));
+			if (!propoid)
+				ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+						errmsg("property graph \"%s\" element \"%s\" label \"%s\" has no property \"%s\"",
+							   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label, propname),
+						parser_errposition(pstate, -1));
+
+			ObjectAddressSet(obj, PropgraphPropertyRelationId, propoid);
+			performDeletion(&obj, stmt->drop_behavior, 0);
+		}
+	}
 
 	return pgaddress;
 }

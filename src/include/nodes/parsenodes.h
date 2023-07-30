@@ -3929,7 +3929,7 @@ typedef struct AlterPropGraphStmt
 	List	   *add_labels;
 	const char *drop_label;
 	const char *alter_label;
-	List	   *add_properties;
+	PropGraphProperties *add_properties;
 	List	   *drop_properties;
 } AlterPropGraphStmt;
 
