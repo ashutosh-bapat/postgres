@@ -9069,7 +9069,7 @@ vertex_table_definition: qualified_name opt_propgraph_table_alias opt_graph_tabl
 		;
 
 opt_propgraph_table_alias:
-			AS ColId
+			AS name
 				{
 					$$ = makeNode(Alias);
 					$$->aliasname = $2;
@@ -9119,21 +9119,21 @@ edge_table_definition: qualified_name opt_propgraph_table_alias opt_graph_table_
 				}
 		;
 
-source_vertex_table: SOURCE ColId
+source_vertex_table: SOURCE name
 				{
 					$$ = list_make3(NULL, $2, NULL);
 				}
-				| SOURCE KEY '(' columnList ')' REFERENCES ColId '(' columnList ')'
+				| SOURCE KEY '(' columnList ')' REFERENCES name '(' columnList ')'
 				{
 					$$ = list_make3($4, $7, $9);
 				}
 		;
 
-destination_vertex_table: DESTINATION ColId
+destination_vertex_table: DESTINATION name
 				{
 					$$ = list_make3(NULL, $2, NULL);
 				}
-				| DESTINATION KEY '(' columnList ')' REFERENCES ColId '(' columnList ')'
+				| DESTINATION KEY '(' columnList ')' REFERENCES name '(' columnList ')'
 				{
 					$$ = list_make3($4, $7, $9);
 				}
@@ -9237,7 +9237,7 @@ label_and_properties:
 		;
 
 element_table_label_clause:
-			LABEL ColId
+			LABEL name
 				{
 					$$ = $2;
 				}
@@ -9296,7 +9296,7 @@ AlterPropGraphStmt:
 
 					$$ = (Node *) n;
 				}
-			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE ColId
+			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE name
 				add_label_list
 				{
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
@@ -9308,8 +9308,8 @@ AlterPropGraphStmt:
 
 					$$ = (Node *) n;
 				}
-			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE ColId
-				DROP LABEL ColId opt_drop_behavior
+			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE name
+				DROP LABEL name opt_drop_behavior
 				{
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
@@ -9321,8 +9321,8 @@ AlterPropGraphStmt:
 
 					$$ = (Node *) n;
 				}
-			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE ColId
-				ALTER LABEL ColId ADD_P PROPERTIES '(' xml_attribute_list ')'
+			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE name
+				ALTER LABEL name ADD_P PROPERTIES '(' xml_attribute_list ')'
 				{
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 					PropGraphProperties *pr = makeNode(PropGraphProperties);
@@ -9338,8 +9338,8 @@ AlterPropGraphStmt:
 
 					$$ = (Node *) n;
 				}
-			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE ColId
-				ALTER LABEL ColId DROP PROPERTIES '(' name_list ')' opt_drop_behavior
+			| ALTER PROPERTY GRAPH qualified_name ALTER vertex_or_edge TABLE name
+				ALTER LABEL name DROP PROPERTIES '(' name_list ')' opt_drop_behavior
 				{
 					AlterPropGraphStmt *n = makeNode(AlterPropGraphStmt);
 
@@ -9364,7 +9364,7 @@ add_label_list:
 			| add_label_list add_label			{ $$ = lappend($1, $2);	}
 		;
 
-add_label: ADD_P LABEL ColId element_table_properties
+add_label: ADD_P LABEL name element_table_properties
 				{
 					PropGraphLabelAndProperties *lp = makeNode(PropGraphLabelAndProperties);
 
@@ -17114,7 +17114,7 @@ label_disjunction:
 		;
 
 label_term:
-			ColId
+			name
 		;
 
 
