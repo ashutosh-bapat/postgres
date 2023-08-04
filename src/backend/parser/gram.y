@@ -567,7 +567,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <list>	copy_options
 
 %type <typnam>	Typename SimpleTypename ConstTypename
-				GenericType Numeric opt_float
+				GenericType Numeric opt_float JsonType
 				Character ConstCharacter
 				CharacterWithLength CharacterWithoutLength
 				ConstDatetime ConstInterval
@@ -648,7 +648,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 %type <node>	json_format_clause_opt
 				json_value_expr
-				json_output_clause_opt
+				json_returning_clause_opt
 				json_name_and_value
 				json_aggregate_func
 %type <list>	json_name_and_value_list
@@ -750,6 +750,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	INTERSECT INTERVAL INTO INVOKER IS ISNULL ISOLATION
 
 	JOIN JSON JSON_ARRAY JSON_ARRAYAGG JSON_OBJECT JSON_OBJECTAGG
+	JSON_SCALAR JSON_SERIALIZE
 
 	KEY KEYS
 
@@ -11285,6 +11286,7 @@ TransactionStmt:
 					n->kind = TRANS_STMT_ROLLBACK;
 					n->options = NIL;
 					n->chain = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| START TRANSACTION transaction_mode_list_or_empty
@@ -11293,6 +11295,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_START;
 					n->options = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| COMMIT opt_transaction opt_transaction_chain
@@ -11302,6 +11305,7 @@ TransactionStmt:
 					n->kind = TRANS_STMT_COMMIT;
 					n->options = NIL;
 					n->chain = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| ROLLBACK opt_transaction opt_transaction_chain
@@ -11311,6 +11315,7 @@ TransactionStmt:
 					n->kind = TRANS_STMT_ROLLBACK;
 					n->options = NIL;
 					n->chain = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| SAVEPOINT ColId
@@ -11319,6 +11324,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_SAVEPOINT;
 					n->savepoint_name = $2;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
 			| RELEASE SAVEPOINT ColId
@@ -11327,6 +11333,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_RELEASE;
 					n->savepoint_name = $3;
+					n->location = @3;
 					$$ = (Node *) n;
 				}
 			| RELEASE ColId
@@ -11335,6 +11342,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_RELEASE;
 					n->savepoint_name = $2;
+					n->location = @2;
 					$$ = (Node *) n;
 				}
 			| ROLLBACK opt_transaction TO SAVEPOINT ColId
@@ -11343,6 +11351,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_ROLLBACK_TO;
 					n->savepoint_name = $5;
+					n->location = @5;
 					$$ = (Node *) n;
 				}
 			| ROLLBACK opt_transaction TO ColId
@@ -11351,6 +11360,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_ROLLBACK_TO;
 					n->savepoint_name = $4;
+					n->location = @4;
 					$$ = (Node *) n;
 				}
 			| PREPARE TRANSACTION Sconst
@@ -11359,6 +11369,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_PREPARE;
 					n->gid = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| COMMIT PREPARED Sconst
@@ -11367,6 +11378,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_COMMIT_PREPARED;
 					n->gid = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| ROLLBACK PREPARED Sconst
@@ -11375,6 +11387,7 @@ TransactionStmt:
 
 					n->kind = TRANS_STMT_ROLLBACK_PREPARED;
 					n->gid = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 		;
@@ -11386,6 +11399,7 @@ TransactionStmtLegacy:
 
 					n->kind = TRANS_STMT_BEGIN;
 					n->options = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 			| END_P opt_transaction opt_transaction_chain
@@ -11395,6 +11409,7 @@ TransactionStmtLegacy:
 					n->kind = TRANS_STMT_COMMIT;
 					n->options = NIL;
 					n->chain = $3;
+					n->location = -1;
 					$$ = (Node *) n;
 				}
 		;
@@ -11998,15 +12013,33 @@ CreateConversionStmt:
 /*****************************************************************************
  *
  *		QUERY:
- *				CLUSTER [VERBOSE] <qualified_name> [ USING <index_name> ]
- *				CLUSTER [ (options) ] <qualified_name> [ USING <index_name> ]
- *				CLUSTER [VERBOSE]
+ *				CLUSTER (options) [ <qualified_name> [ USING <index_name> ] ]
+ *				CLUSTER [VERBOSE] [ <qualified_name> [ USING <index_name> ] ]
  *				CLUSTER [VERBOSE] <index_name> ON <qualified_name> (for pre-8.3)
  *
  *****************************************************************************/
 
 ClusterStmt:
-			CLUSTER opt_verbose qualified_name cluster_index_specification
+			CLUSTER '(' utility_option_list ')' qualified_name cluster_index_specification
+				{
+					ClusterStmt *n = makeNode(ClusterStmt);
+
+					n->relation = $5;
+					n->indexname = $6;
+					n->params = $3;
+					$$ = (Node *) n;
+				}
+			| CLUSTER '(' utility_option_list ')'
+				{
+					ClusterStmt *n = makeNode(ClusterStmt);
+
+					n->relation = NULL;
+					n->indexname = NULL;
+					n->params = $3;
+					$$ = (Node *) n;
+				}
+			/* unparenthesized VERBOSE kept for pre-14 compatibility */
+			| CLUSTER opt_verbose qualified_name cluster_index_specification
 				{
 					ClusterStmt *n = makeNode(ClusterStmt);
 
@@ -12017,16 +12050,7 @@ ClusterStmt:
 						n->params = lappend(n->params, makeDefElem("verbose", NULL, @2));
 					$$ = (Node *) n;
 				}
-
-			| CLUSTER '(' utility_option_list ')' qualified_name cluster_index_specification
-				{
-					ClusterStmt *n = makeNode(ClusterStmt);
-
-					n->relation = $5;
-					n->indexname = $6;
-					n->params = $3;
-					$$ = (Node *) n;
-				}
+			/* unparenthesized VERBOSE kept for pre-17 compatibility */
 			| CLUSTER opt_verbose
 				{
 					ClusterStmt *n = makeNode(ClusterStmt);
@@ -14436,6 +14460,7 @@ SimpleTypename:
 					$$->typmods = list_make2(makeIntConst(INTERVAL_FULL_RANGE, -1),
 											 makeIntConst($3, @3));
 				}
+			| JsonType								{ $$ = $1; }
 		;
 
 /* We have a separate ConstTypename to allow defaulting fixed-length
@@ -14454,6 +14479,7 @@ ConstTypename:
 			| ConstBit								{ $$ = $1; }
 			| ConstCharacter						{ $$ = $1; }
 			| ConstDatetime							{ $$ = $1; }
+			| JsonType								{ $$ = $1; }
 		;
 
 /*
@@ -14822,6 +14848,13 @@ interval_second:
 				}
 		;
 
+JsonType:
+			JSON
+				{
+					$$ = SystemTypeName("json");
+					$$->location = @1;
+				}
+		;
 
 /*****************************************************************************
  *
@@ -16024,7 +16057,7 @@ func_expr_common_subexpr:
 			| JSON_OBJECT '(' json_name_and_value_list
 				json_object_constructor_null_clause_opt
 				json_key_uniqueness_constraint_opt
-				json_output_clause_opt ')'
+				json_returning_clause_opt ')'
 				{
 					JsonObjectConstructor *n = makeNode(JsonObjectConstructor);
 
@@ -16035,7 +16068,7 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
-			| JSON_OBJECT '(' json_output_clause_opt ')'
+			| JSON_OBJECT '(' json_returning_clause_opt ')'
 				{
 					JsonObjectConstructor *n = makeNode(JsonObjectConstructor);
 
@@ -16049,7 +16082,7 @@ func_expr_common_subexpr:
 			| JSON_ARRAY '('
 				json_value_expr_list
 				json_array_constructor_null_clause_opt
-				json_output_clause_opt
+				json_returning_clause_opt
 			')'
 				{
 					JsonArrayConstructor *n = makeNode(JsonArrayConstructor);
@@ -16064,7 +16097,7 @@ func_expr_common_subexpr:
 				select_no_parens
 				json_format_clause_opt
 				/* json_array_constructor_null_clause_opt */
-				json_output_clause_opt
+				json_returning_clause_opt
 			')'
 				{
 					JsonArrayQueryConstructor *n = makeNode(JsonArrayQueryConstructor);
@@ -16077,7 +16110,7 @@ func_expr_common_subexpr:
 					$$ = (Node *) n;
 				}
 			| JSON_ARRAY '('
-				json_output_clause_opt
+				json_returning_clause_opt
 			')'
 				{
 					JsonArrayConstructor *n = makeNode(JsonArrayConstructor);
@@ -16088,7 +16121,36 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
-		;
+			| JSON '(' json_value_expr json_key_uniqueness_constraint_opt ')'
+				{
+					JsonParseExpr *n = makeNode(JsonParseExpr);
+
+					n->expr = (JsonValueExpr *) $3;
+					n->unique_keys = $4;
+					n->output = NULL;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| JSON_SCALAR '(' a_expr ')'
+				{
+					JsonScalarExpr *n = makeNode(JsonScalarExpr);
+
+					n->expr = (Expr *) $3;
+					n->output = NULL;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| JSON_SERIALIZE '(' json_value_expr json_returning_clause_opt ')'
+				{
+					JsonSerializeExpr *n = makeNode(JsonSerializeExpr);
+
+					n->expr = (JsonValueExpr *) $3;
+					n->output = (JsonOutput *) $4;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			;
+
 
 /*
  * SQL/XML support
@@ -16818,7 +16880,9 @@ opt_asymmetric: ASYMMETRIC
 json_value_expr:
 			a_expr json_format_clause_opt
 			{
-				$$ = (Node *) makeJsonValueExpr((Expr *) $1, castNode(JsonFormat, $2));
+				/* formatted_expr will be set during parse-analysis. */
+				$$ = (Node *) makeJsonValueExpr((Expr *) $1, NULL,
+												castNode(JsonFormat, $2));
 			}
 		;
 
@@ -16838,7 +16902,7 @@ json_encoding_clause_opt:
 			| /* EMPTY */					{ $$ = JS_ENC_DEFAULT; }
 		;
 
-json_output_clause_opt:
+json_returning_clause_opt:
 			RETURNING Typename json_format_clause_opt
 				{
 					JsonOutput *n = makeNode(JsonOutput);
@@ -16911,7 +16975,7 @@ json_aggregate_func:
 				json_name_and_value
 				json_object_constructor_null_clause_opt
 				json_key_uniqueness_constraint_opt
-				json_output_clause_opt
+				json_returning_clause_opt
 			')'
 				{
 					JsonObjectAgg *n = makeNode(JsonObjectAgg);
@@ -16929,7 +16993,7 @@ json_aggregate_func:
 				json_value_expr
 				json_array_aggregate_order_by_clause_opt
 				json_array_constructor_null_clause_opt
-				json_output_clause_opt
+				json_returning_clause_opt
 			')'
 				{
 					JsonArrayAgg *n = makeNode(JsonArrayAgg);
@@ -17646,7 +17710,6 @@ unreserved_keyword:
 			| INSTEAD
 			| INVOKER
 			| ISOLATION
-			| JSON
 			| KEY
 			| KEYS
 			| LABEL
@@ -17868,10 +17931,13 @@ col_name_keyword:
 			| INT_P
 			| INTEGER
 			| INTERVAL
+			| JSON
 			| JSON_ARRAY
 			| JSON_ARRAYAGG
 			| JSON_OBJECT
 			| JSON_OBJECTAGG
+			| JSON_SCALAR
+			| JSON_SERIALIZE
 			| LEAST
 			| NATIONAL
 			| NCHAR
@@ -18236,6 +18302,8 @@ bare_label_keyword:
 			| JSON_ARRAYAGG
 			| JSON_OBJECT
 			| JSON_OBJECTAGG
+			| JSON_SCALAR
+			| JSON_SERIALIZE
 			| KEY
 			| KEYS
 			| LABEL
