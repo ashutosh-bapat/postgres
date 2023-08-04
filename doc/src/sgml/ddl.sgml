@@ -1801,7 +1801,7 @@ REVOKE ALL ON accounts FROM PUBLIC;
       <para>
        Allows <command>SELECT</command> from
        any column, or specific column(s), of a table, view, materialized
-       view, or other table-like object.
+       view, property graph, or other table-like object.
        Also allows use of <command>COPY TO</command>.
        This privilege is also needed to reference existing column values in
        <command>UPDATE</command>, <command>DELETE</command>,

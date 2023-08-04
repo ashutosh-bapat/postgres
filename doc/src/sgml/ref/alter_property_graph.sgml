@@ -31,8 +31,24 @@ ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> DROP
 ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> DROP
     {EDGE|RELATIONSHIP} TABLES ( <replaceable class="parameter">edge_table_alias</replaceable> [, ...] ) [ CASCADE | RESTRICT ]
 
-ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replaceable> OWNER TO { <replaceable class="parameter">new_owner</replaceable> | CURRENT_USER | SESSION_USER }
-ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replaceable> RENAME TO <replaceable class="parameter">new_name</replaceable>
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> ALTER
+    {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE <replaceable class="parameter">element_table_alias</replaceable>
+    { ADD LABEL <replaceable class="parameter">label_name</replaceable> [ NO PROPERTIES | PROPERTIES ALL COLUMNS | PROPERTIES ( { <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">property_name</replaceable> ] } [, ...] ) ] } [ ... ]
+
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> ALTER
+    {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE <replaceable class="parameter">element_table_alias</replaceable>
+    DROP LABEL <replaceable class="parameter">label_name</replaceable> [ CASCADE | RESTRICT ]
+
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> ALTER
+    {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE <replaceable class="parameter">element_table_alias</replaceable>
+    ALTER LABEL <replaceable class="parameter">label_name</replaceable> ADD PROPERTIES ( { <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">property_name</replaceable> ] } [, ...] )
+
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> ALTER
+    {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE <replaceable class="parameter">element_table_alias</replaceable>
+    ALTER LABEL <replaceable class="parameter">label_name</replaceable> DROP PROPERTIES ( <replaceable class="parameter">property_name</replaceable> [, ...] ) [ CASCADE | RESTRICT ]
+
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> OWNER TO { <replaceable class="parameter">new_owner</replaceable> | CURRENT_USER | SESSION_USER }
+ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> RENAME TO <replaceable class="parameter">new_name</replaceable>
 ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replaceable> SET SCHEMA <replaceable class="parameter">new_schema</replaceable>
 </synopsis>
  </refsynopsisdiv>
@@ -64,6 +80,15 @@ ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replacea
      <para>
       Do not throw an error if the property graph does not exist.  A notice is
       issued in this case.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term>TODO</term>
+    <listitem>
+     <para>
+      TODO
      </para>
     </listitem>
    </varlistentry>

@@ -9686,15 +9686,6 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER PROPERTY GRAPH IF_P EXISTS qualified_name RENAME TO name
-				{
-					RenameStmt *n = makeNode(RenameStmt);
-					n->renameType = OBJECT_PROPGRAPH;
-					n->relation = $6;
-					n->newname = $9;
-					n->missing_ok = true;
-					$$ = (Node *)n;
-				}
 			| ALTER PUBLICATION name RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
@@ -10320,6 +10311,24 @@ AlterObjectSchemaStmt:
 					n->missing_ok = false;
 					$$ = (Node *) n;
 				}
+			| ALTER PROPERTY GRAPH qualified_name SET SCHEMA name
+				{
+					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
+					n->objectType = OBJECT_PROPGRAPH;
+					n->relation = $4;
+					n->newschema = $7;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER PROPERTY GRAPH IF_P EXISTS qualified_name SET SCHEMA name
+				{
+					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
+					n->objectType = OBJECT_PROPGRAPH;
+					n->relation = $6;
+					n->newschema = $9;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
 			| ALTER ROUTINE function_with_argtypes SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
@@ -10349,24 +10358,6 @@ AlterObjectSchemaStmt:
 					n->newschema = $8;
 					n->missing_ok = true;
 					$$ = (Node *) n;
-				}
-			| ALTER PROPERTY GRAPH qualified_name SET SCHEMA name
-				{
-					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
-					n->objectType = OBJECT_PROPGRAPH;
-					n->relation = $4;
-					n->newschema = $7;
-					n->missing_ok = false;
-					$$ = (Node *)n;
-				}
-			| ALTER PROPERTY GRAPH IF_P EXISTS qualified_name SET SCHEMA name
-				{
-					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
-					n->objectType = OBJECT_PROPGRAPH;
-					n->relation = $6;
-					n->newschema = $9;
-					n->missing_ok = true;
-					$$ = (Node *)n;
 				}
 			| ALTER STATISTICS any_name SET SCHEMA name
 				{
