@@ -44,7 +44,8 @@ static void try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1,
 								   List *parent_restrictlist);
 static void build_child_join_sjinfo(PlannerInfo *root,
 									SpecialJoinInfo *parent_sjinfo,
-									Relids left_relids, Relids right_relids,
+									RelOptInfo *left_child,
+									RelOptInfo *right_child,
 									SpecialJoinInfo *child_sjinfo);
 static void free_child_sjinfo_members(SpecialJoinInfo *child_sjinfo);
 static void compute_partition_bounds(PlannerInfo *root, RelOptInfo *rel1,
@@ -655,6 +656,32 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	return true;
 }
 
+/*
+ * make_dummy_sjinfo
+ *    Populate the given SpecialJoinInfo for a plain inner join, between rel1
+ *    and rel2, which does not have a SpecialJoinInfo associated with it.
+ */
+void
+make_dummy_sjinfo(SpecialJoinInfo *sjinfo, RelOptInfo *rel1, RelOptInfo *rel2)
+{
+	sjinfo->type = T_SpecialJoinInfo;
+	sjinfo->min_lefthand = rel1->relids;
+	sjinfo->min_righthand = rel2->relids;
+	sjinfo->syn_lefthand = rel1->relids;
+	sjinfo->syn_righthand = rel2->relids;
+	sjinfo->jointype = JOIN_INNER;
+	sjinfo->ojrelid = 0;
+	sjinfo->commute_above_l = NULL;
+	sjinfo->commute_above_r = NULL;
+	sjinfo->commute_below_l = NULL;
+	sjinfo->commute_below_r = NULL;
+	/* we don't bother trying to make the remaining fields valid */
+	sjinfo->lhs_strict = false;
+	sjinfo->semi_can_btree = false;
+	sjinfo->semi_can_hash = false;
+	sjinfo->semi_operators = NIL;
+	sjinfo->semi_rhs_exprs = NIL;
+}
 
 /*
  * make_join_rel
@@ -718,23 +745,7 @@ make_join_rel(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2)
 	if (sjinfo == NULL)
 	{
 		sjinfo = &sjinfo_data;
-		sjinfo->type = T_SpecialJoinInfo;
-		sjinfo->min_lefthand = rel1->relids;
-		sjinfo->min_righthand = rel2->relids;
-		sjinfo->syn_lefthand = rel1->relids;
-		sjinfo->syn_righthand = rel2->relids;
-		sjinfo->jointype = JOIN_INNER;
-		sjinfo->ojrelid = 0;
-		sjinfo->commute_above_l = NULL;
-		sjinfo->commute_above_r = NULL;
-		sjinfo->commute_below_l = NULL;
-		sjinfo->commute_below_r = NULL;
-		/* we don't bother trying to make the remaining fields valid */
-		sjinfo->lhs_strict = false;
-		sjinfo->semi_can_btree = false;
-		sjinfo->semi_can_hash = false;
-		sjinfo->semi_operators = NIL;
-		sjinfo->semi_rhs_exprs = NIL;
+		make_dummy_sjinfo(sjinfo, rel1, rel2);
 	}
 
 	/*
@@ -1618,8 +1629,8 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 		 * Construct SpecialJoinInfo from parent join relations's
 		 * SpecialJoinInfo.
 		 */
-		build_child_join_sjinfo(root, parent_sjinfo, child_rel1->relids,
-								child_rel2->relids, &child_sjinfo);
+		build_child_join_sjinfo(root, parent_sjinfo, child_rel1,
+								child_rel2, &child_sjinfo);
 
 		/* Find the AppendRelInfo structures */
 		appinfos = find_appinfos_by_relids(root,
@@ -1674,7 +1685,7 @@ try_partitionwise_join(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
  */
 static void
 build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
-						Relids left_relids, Relids right_relids,
+						RelOptInfo *left_child, RelOptInfo *right_child,
 						SpecialJoinInfo *child_sjinfo)
 {
 	AppendRelInfo **left_appinfos;
@@ -1682,10 +1693,18 @@ build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
 	AppendRelInfo **right_appinfos;
 	int			right_nappinfos;
 
+	/* Dummy SpecialJoinInfos can be created without any translation. */
+	if (parent_sjinfo->jointype == JOIN_INNER)
+	{
+		Assert(parent_sjinfo->ojrelid == 0);
+		make_dummy_sjinfo(child_sjinfo, left_child, right_child);
+		return;
+	}
+
 	memcpy(child_sjinfo, parent_sjinfo, sizeof(SpecialJoinInfo));
-	left_appinfos = find_appinfos_by_relids(root, left_relids,
+	left_appinfos = find_appinfos_by_relids(root, left_child->relids,
 											&left_nappinfos);
-	right_appinfos = find_appinfos_by_relids(root, right_relids,
+	right_appinfos = find_appinfos_by_relids(root, right_child->relids,
 											 &right_nappinfos);
 
 	child_sjinfo->min_lefthand =
@@ -1720,6 +1739,13 @@ build_child_join_sjinfo(PlannerInfo *root, SpecialJoinInfo *parent_sjinfo,
 static void
 free_child_sjinfo_members(SpecialJoinInfo *child_sjinfo)
 {
+	/*
+	 * Dummy SpecialJoinInfos do not have any translated fields and hence have
+	 * nothing to free.
+	 */
+	if (child_sjinfo->jointype == JOIN_INNER)
+		return;
+
 	/*
 	 * The relids are used only for comparison and their references are not
 	 * stored anywhere. Free those.
