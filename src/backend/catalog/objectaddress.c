@@ -4040,7 +4040,7 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				pgeform = (Form_pg_propgraph_element) GETSTRUCT(tup);
 
 				initStringInfo(&rel);
-				getRelationDescription(&rel, pgeform->pgerelid, false);
+				getRelationDescription(&rel, pgeform->pgepgid, false);
 
 				/* translator: second %s is, e.g., "property graph %s" */
 				appendStringInfo(&buffer, _("element %s in %s"),

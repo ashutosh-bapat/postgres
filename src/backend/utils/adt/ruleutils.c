@@ -35,6 +35,9 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -346,6 +349,9 @@ static char *pg_get_indexdef_worker(Oid indexrelid, int colno,
 									bool attrsOnly, bool keysOnly,
 									bool showTblSpc, bool inherits,
 									int prettyFlags, bool missing_ok);
+static void make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind);
+static void make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elrelid);
+static void make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid);
 static char *pg_get_statisticsobj_worker(Oid statextid, bool columns_only,
 										 bool missing_ok);
 static char *pg_get_partkeydef_worker(Oid relid, int prettyFlags,
@@ -1572,7 +1578,7 @@ pg_get_querydef(Query *query, bool pretty)
 }
 
 /*
- * pg_get_propgraph - get the definition of a property graph
+ * pg_get_propgraphdef - get the definition of a property graph
  */
 Datum
 pg_get_propgraphdef(PG_FUNCTION_ARGS)
@@ -1605,7 +1611,251 @@ pg_get_propgraphdef(PG_FUNCTION_ARGS)
 
 	ReleaseSysCache(classtup);
 
+	make_propgraphdef_elements(&buf, pgrelid, PGEKIND_VERTEX);
+	make_propgraphdef_elements(&buf, pgrelid, PGEKIND_EDGE);
+
 	PG_RETURN_TEXT_P(string_to_text(buf.data));
+}
+
+static void
+make_int2vector_column_list(StringInfo buf, const int2vector *v, Oid relid)
+{
+	appendStringInfoString(buf, "(");
+	for (int i = 0; i < v->dim1; i++)
+	{
+		char	   *attname;
+
+		if (i > 0)
+			appendStringInfoString(buf, ", ");
+		attname = get_attname(relid, v->values[i], false);
+		appendStringInfoString(buf, quote_identifier(attname));
+	}
+	appendStringInfoString(buf, ")");
+}
+
+static void
+make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
+{
+	Relation	pgerel;
+	ScanKeyData scankey[2];
+	SysScanDesc scan;
+	bool		first;
+	HeapTuple	tup;
+
+	pgerel = table_open(PropgraphElementRelationId, AccessShareLock);
+
+	ScanKeyInit(&scankey[0],
+				Anum_pg_propgraph_element_pgepgid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(pgrelid));
+	ScanKeyInit(&scankey[1],
+				Anum_pg_propgraph_element_pgekind,
+				BTEqualStrategyNumber, F_CHAREQ,
+				CharGetDatum(pgekind));
+
+	scan = systable_beginscan(pgerel, InvalidOid, true, NULL, 2, scankey);
+
+	first = true;
+	while ((tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_element pgeform = (Form_pg_propgraph_element) GETSTRUCT(tup);
+		char	   *relname;
+		Datum		datum;
+		bool		isnull;
+		int2vector *ekey;
+
+		if (first)
+		{
+			appendStringInfo(buf, "\n    %s TABLES (\n", pgekind == PGEKIND_VERTEX ? "VERTEX" : "EDGE");
+			first = false;
+		}
+		else
+			appendStringInfo(buf, ",\n");
+
+		relname = get_rel_name(pgeform->pgerelid);
+		if (relname && strcmp(relname, NameStr(pgeform->pgealias)) == 0)
+			appendStringInfo(buf, "        %s",
+							 generate_relation_name(pgeform->pgerelid, NIL));
+		else
+			appendStringInfo(buf, "        %s AS %s",
+							 generate_relation_name(pgeform->pgerelid, NIL),
+							 NameStr(pgeform->pgealias));
+
+		datum = heap_getattr(tup, Anum_pg_propgraph_element_pgekey, RelationGetDescr(pgerel), &isnull);
+		ekey = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+
+		Assert(ekey);
+		appendStringInfoString(buf, " KEY ");
+		make_int2vector_column_list(buf, ekey, pgeform->pgerelid);
+
+		if (pgekind == PGEKIND_EDGE)
+		{
+			int2vector *srckey;
+			int2vector *srcref;
+			int2vector *destkey;
+			int2vector *destref;
+			HeapTuple	tup2;
+			Form_pg_propgraph_element pgeform2;
+
+			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgesrckey, RelationGetDescr(pgerel), &isnull);
+			srckey = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgesrcref, RelationGetDescr(pgerel), &isnull);
+			srcref = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgedestkey, RelationGetDescr(pgerel), &isnull);
+			destkey = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgedestref, RelationGetDescr(pgerel), &isnull);
+			destref = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+
+			appendStringInfoString(buf, " SOURCE");
+			tup2 = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(pgeform->pgesrcvertexid));
+			if (!tup2)
+				elog(ERROR, "cache lookup failed for property graph element %u", pgeform->pgesrcvertexid);
+			pgeform2 = (Form_pg_propgraph_element) GETSTRUCT(tup2);
+			if (srckey)
+			{
+				appendStringInfoString(buf, " KEY ");
+				make_int2vector_column_list(buf, srckey, pgeform->pgerelid);
+				appendStringInfo(buf, " REFERENCES %s ", NameStr(pgeform2->pgealias));
+				make_int2vector_column_list(buf, srcref, pgeform2->pgerelid);
+			}
+			else
+				appendStringInfo(buf, " %s ", NameStr(pgeform2->pgealias));
+			ReleaseSysCache(tup2);
+
+			appendStringInfoString(buf, " DESTINATION");
+			tup2 = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(pgeform->pgedestvertexid));
+			if (!tup2)
+				elog(ERROR, "cache lookup failed for property graph element %u", pgeform->pgedestvertexid);
+			pgeform2 = (Form_pg_propgraph_element) GETSTRUCT(tup2);
+			if (destkey)
+			{
+				appendStringInfoString(buf, " KEY ");
+				make_int2vector_column_list(buf, destkey, pgeform->pgerelid);
+				appendStringInfo(buf, " REFERENCES %s ", NameStr(pgeform2->pgealias));
+				make_int2vector_column_list(buf, destref, pgeform2->pgerelid);
+			}
+			else
+				appendStringInfo(buf, " %s", NameStr(pgeform2->pgealias));
+			ReleaseSysCache(tup2);
+		}
+
+		make_propgraphdef_labels(buf, pgeform->oid, NameStr(pgeform->pgealias), pgeform->pgerelid);
+	}
+	if (!first)
+		appendStringInfo(buf, "\n    )");
+
+	systable_endscan(scan);
+	table_close(pgerel, AccessShareLock);
+}
+
+static void
+make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elrelid)
+{
+	Relation	pglrel;
+	ScanKeyData scankey[1];
+	SysScanDesc scan;
+	int			count;
+	HeapTuple	tup;
+
+	pglrel = table_open(PropgraphLabelRelationId, AccessShareLock);
+
+	ScanKeyInit(&scankey[0],
+				Anum_pg_propgraph_label_pglelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(elid));
+
+	count = 0;
+	scan = systable_beginscan(pglrel, InvalidOid, true, NULL, 1, scankey);
+	while ((tup = systable_getnext(scan)))
+	{
+		count++;
+	}
+	systable_endscan(scan);
+
+	scan = systable_beginscan(pglrel, PropgraphLabelLabelIndexId, true, NULL, 1, scankey);
+
+	while ((tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_label pglform = (Form_pg_propgraph_label) GETSTRUCT(tup);
+
+		if (strcmp(NameStr(pglform->pgllabel), elalias) == 0)
+		{
+			/* If the default label is the only label, don't print anything. */
+			if (count != 1)
+				appendStringInfo(buf, " DEFAULT LABEL");
+		}
+		else
+			appendStringInfo(buf, " LABEL %s",
+							 quote_identifier(NameStr(pglform->pgllabel)));
+
+		make_propgraphdef_properties(buf, pglform->oid, elrelid);
+	}
+
+	systable_endscan(scan);
+
+	table_close(pglrel, AccessShareLock);
+}
+
+static void
+make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid)
+{
+	List	   *context;
+	Relation	pgprel;
+	ScanKeyData scankey[1];
+	SysScanDesc scan;
+	HeapTuple	tup;
+	bool		first;
+
+	context = deparse_context_for(get_relation_name(elrelid), elrelid);
+
+	pgprel = table_open(PropgraphPropertyRelationId, AccessShareLock);
+
+	ScanKeyInit(&scankey[0],
+				Anum_pg_propgraph_property_pgplabelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(labelid));
+
+	scan = systable_beginscan(pgprel, InvalidOid, true, NULL, 1, scankey);
+
+	first = true;
+	while ((tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_property pgpform = (Form_pg_propgraph_property) GETSTRUCT(tup);
+		Datum		exprDatum;
+		bool		isnull;
+		char	   *tmp;
+		Node	   *expr;
+
+		if (first)
+		{
+			appendStringInfo(buf, " PROPERTIES (");
+			first = false;
+		}
+		else
+			appendStringInfo(buf, ", ");
+
+		exprDatum = heap_getattr(tup, Anum_pg_propgraph_property_pgpexpr, RelationGetDescr(pgprel), &isnull);
+		Assert(!isnull);
+		tmp = TextDatumGetCString(exprDatum);
+		expr = stringToNode(tmp);
+		pfree(tmp);
+
+		if (IsA(expr, Var) && strcmp(NameStr(pgpform->pgpname), get_attname(elrelid, castNode(Var, expr)->varattno, false)) == 0)
+			appendStringInfo(buf, "%s",
+							 NameStr(pgpform->pgpname));
+		else
+			appendStringInfo(buf, "%s AS %s",
+							 deparse_expression_pretty(expr, context, false, false, 0, 0),
+							 NameStr(pgpform->pgpname));
+	}
+
+	if (first)
+		appendStringInfo(buf, " NO PROPERTIES");
+	else
+		appendStringInfo(buf, ")");
+
+	systable_endscan(scan);
+	table_close(pgprel, AccessShareLock);
 }
 
 /*

@@ -49,7 +49,7 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
 	/* element key (column numbers in pgerelid relation) */
-	int2vector	pgekey;
+	int2vector	pgekey BKI_FORCE_NOT_NULL;
 
 	/*
 	 * for edges: source vertex key (column numbers in pgerelid relation)

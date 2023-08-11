@@ -101,7 +101,15 @@ SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_n
 SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name;
 
 
---\dG
+\a\t
+SELECT pg_get_propgraphdef('g2'::regclass);
+SELECT pg_get_propgraphdef('g3'::regclass);
+SELECT pg_get_propgraphdef('g4'::regclass);
+
+SELECT pg_get_propgraphdef('pg_type'::regclass);  -- error
+\a\t
+
+\dG g1
 
 -- TODO
 \d g1

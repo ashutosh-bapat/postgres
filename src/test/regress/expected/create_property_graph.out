@@ -36,11 +36,11 @@ ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 DROP LABEL t3l3x;  -- error
 ERROR:  property graph "g3" element "t3" has no label "t3l3x"
 ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 DROP LABEL t3l3;
 ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2);  -- fail (TODO: dubious error message)
-ERROR:  cannot drop element t2 in table t2 because other objects depend on it
-DETAIL:  element e1 in table e1 depends on element t2 in table t2
+ERROR:  cannot drop element t2 in property graph g3 because other objects depend on it
+DETAIL:  element e1 in property graph g3 depends on element t2 in property graph g3
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2) CASCADE;
-NOTICE:  drop cascades to element e1 in table e1
+NOTICE:  drop cascades to element e1 in property graph g3
 ALTER PROPERTY GRAPH g3 DROP EDGE TABLES (e2);
 CREATE PROPERTY GRAPH g4
     VERTEX TABLES (
@@ -278,7 +278,45 @@ SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE
  regress_graph_user1 | regress_graph_user2 | regression             | create_property_graph_tests | g1                  | SELECT         | NO
 (2 rows)
 
---\dG
+\a\t
+SELECT pg_get_propgraphdef('g2'::regclass);
+CREATE PROPERTY GRAPH create_property_graph_tests.g2
+    VERTEX TABLES (
+        t1 KEY (a) PROPERTIES (a, b),
+        t2 KEY (i) PROPERTIES (i, j, k),
+        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y, z) LABEL t3l2 PROPERTIES (x, y, z)
+    )
+    EDGE TABLES (
+        e1 KEY (a, i) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (i) REFERENCES t2 (i) PROPERTIES (a, i, t),
+        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y) PROPERTIES (a, x, t)
+    )
+SELECT pg_get_propgraphdef('g3'::regclass);
+CREATE PROPERTY GRAPH create_property_graph_tests.g3
+    VERTEX TABLES (
+        t1 KEY (a) PROPERTIES (a, b),
+        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y, z) LABEL t3l2 PROPERTIES (x, y, z)
+    )
+SELECT pg_get_propgraphdef('g4'::regclass);
+CREATE PROPERTY GRAPH create_property_graph_tests.g4
+    VERTEX TABLES (
+        t1 KEY (a) NO PROPERTIES,
+        t2 KEY (i) PROPERTIES ((i + j) AS i_j, (k * 2) AS kk),
+        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y AS yy) LABEL t3l2 PROPERTIES (x, z AS zz)
+    )
+    EDGE TABLES (
+        e1 KEY (a, i) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (i) REFERENCES t2 (i) PROPERTIES (a, i, t),
+        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y) PROPERTIES (a, x, t)
+    )
+SELECT pg_get_propgraphdef('pg_type'::regclass);  -- error
+ERROR:  "pg_type" is not a property graph
+\a\t
+\dG g1
+                             List of relations
+           Schema            | Name |      Type      |        Owner        
+-----------------------------+------+----------------+---------------------
+ create_property_graph_tests | g1   | property graph | regress_graph_user1
+(1 row)
+
 -- TODO
 \d g1
 Property graph "create_property_graph_tests.g1"
