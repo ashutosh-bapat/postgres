@@ -402,10 +402,24 @@ ExplainOneQuery(Query *query, int cursorOptions,
 		MemoryContextCounters mem_counts_start;
 		MemoryContextCounters mem_counts_end;
 		MemUsage	mem_usage;
+		MemoryContext planner_ctx;
+		MemoryContext saved_ctx;
+
+		/*
+		 * Create a new memory context to accurately measure memory malloc'ed
+		 * by the planner. For further accuracy we should use the same type of
+		 * memory context as the planner would use. That's usually AllocSet
+		 * but ensure that.
+		 */
+		Assert(IsA(CurrentMemoryContext, AllocSetContext));
+		planner_ctx = AllocSetContextCreate(CurrentMemoryContext,
+											"explain analyze planner context",
+											ALLOCSET_DEFAULT_SIZES);
 
 		if (es->buffers)
 			bufusage_start = pgBufferUsage;
-		MemoryContextMemConsumed(CurrentMemoryContext, &mem_counts_start);
+		MemoryContextMemConsumed(planner_ctx, &mem_counts_start);
+		saved_ctx = MemoryContextSwitchTo(planner_ctx);
 		INSTR_TIME_SET_CURRENT(planstart);
 
 		/* plan the query */
@@ -413,7 +427,8 @@ ExplainOneQuery(Query *query, int cursorOptions,
 
 		INSTR_TIME_SET_CURRENT(planduration);
 		INSTR_TIME_SUBTRACT(planduration, planstart);
-		MemoryContextMemConsumed(CurrentMemoryContext, &mem_counts_end);
+		MemoryContextSwitchTo(saved_ctx);
+		MemoryContextMemConsumed(planner_ctx, &mem_counts_end);
 		calc_mem_usage(&mem_usage, &mem_counts_end, &mem_counts_start);
 
 		/* calc differences of buffer counters. */
