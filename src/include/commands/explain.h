@@ -62,6 +62,12 @@ typedef struct ExplainState
 	ExplainWorkersState *workers_state; /* needed if parallel plan */
 } ExplainState;
 
+typedef struct MemUsage
+{
+	Size		mem_used;
+	Size		mem_allocated;
+} MemUsage;
+
 /* Hook for plugins to get control in ExplainOneQuery() */
 typedef void (*ExplainOneQuery_hook_type) (Query *query,
 										   int cursorOptions,
@@ -93,7 +99,7 @@ extern void ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into,
 						   ParamListInfo params, QueryEnvironment *queryEnv,
 						   const instr_time *planduration,
 						   const BufferUsage *bufusage,
-						   const Size *mem_consumed);
+						   const MemUsage *mem_usage);
 
 extern void ExplainPrintPlan(ExplainState *es, QueryDesc *queryDesc);
 extern void ExplainPrintTriggers(ExplainState *es, QueryDesc *queryDesc);
@@ -126,5 +132,8 @@ extern void ExplainOpenGroup(const char *objtype, const char *labelname,
 							 bool labeled, ExplainState *es);
 extern void ExplainCloseGroup(const char *objtype, const char *labelname,
 							  bool labeled, ExplainState *es);
+extern void calc_mem_usage(MemUsage *mem_usage,
+						   MemoryContextCounters *mem_counts_end,
+						   MemoryContextCounters *mem_counts_start);
 
 #endif							/* EXPLAIN_H */

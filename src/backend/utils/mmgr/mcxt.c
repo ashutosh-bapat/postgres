@@ -750,16 +750,13 @@ MemoryContextStatsDetail(MemoryContext context, int max_children,
 /*
  * Return the memory used in the given context and its children.
  */
-extern Size
-MemoryContextMemUsed(MemoryContext context)
+extern void
+MemoryContextMemConsumed(MemoryContext context,
+						 MemoryContextCounters *mem_consumed)
 {
-	MemoryContextCounters grand_totals;
+	memset(mem_consumed, 0, sizeof(*mem_consumed));
 
-	memset(&grand_totals, 0, sizeof(grand_totals));
-
-	MemoryContextStatsInternal(context, 0, false, 100, &grand_totals, false);
-
-	return grand_totals.totalspace - grand_totals.freespace;
+	MemoryContextStatsInternal(context, 0, false, 100, mem_consumed, false);
 }
 
 /*
