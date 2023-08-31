@@ -591,6 +591,8 @@ adjust_child_relids_multilevel(PlannerInfo *root, Relids relids,
 {
 	AppendRelInfo **appinfos;
 	int			nappinfos;
+	Relids		tmp_relids = NULL;
+	Relids		child_relids;
 
 	/*
 	 * If the given relids set doesn't contain any of the parent relids, it
@@ -599,13 +601,14 @@ adjust_child_relids_multilevel(PlannerInfo *root, Relids relids,
 	if (!bms_overlap(relids, parentrel->relids))
 		return relids;
 
+	tmp_relids = relids;
 	/* Recurse if immediate parent is not the top parent. */
 	if (childrel->parent != parentrel)
 	{
 		if (childrel->parent)
-			relids = adjust_child_relids_multilevel(root, relids,
-													childrel->parent,
-													parentrel);
+			tmp_relids = adjust_child_relids_multilevel(root, relids,
+														childrel->parent,
+														parentrel);
 		else
 			elog(ERROR, "childrel is not a child of parentrel");
 	}
@@ -613,11 +616,15 @@ adjust_child_relids_multilevel(PlannerInfo *root, Relids relids,
 	/* Now translate for this child. */
 	appinfos = find_appinfos_by_relids(root, childrel->relids, &nappinfos);
 
-	relids = adjust_child_relids(relids, nappinfos, appinfos);
+	child_relids = adjust_child_relids(tmp_relids, nappinfos, appinfos);
+
+	/* Free any intermediate Relids created. */
+	if (tmp_relids != relids)
+		bms_free(tmp_relids);
 
 	pfree(appinfos);
 
-	return relids;
+	return child_relids;
 }
 
 /*
