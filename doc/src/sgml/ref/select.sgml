@@ -586,19 +586,43 @@ TABLE [ ONLY ] <replaceable class="parameter">table_name</replaceable> [ * ]
      </varlistentry>
 
      <varlistentry>
-      <term><replaceable class="parameter">graph_name</replaceable></term>
+      <term><literal>GRAPH_TABLE ( <replaceable class="parameter">graph_name</replaceable> MATCH <replaceable class="parameter">graph_pattern</replaceable> COLUMNS ( { <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">name</replaceable> ] } [, ...] ) )</literal></term>
       <listitem>
        <para>
-        The name (optionally schema-qualified) of an existing property graph.
+        This clause produces output from matching the specifying graph pattern
+        against a property graph.  See <xref linkend="ddl-property-graphs"/>
+        and <xref linkend="queries-graph"/> for more information.
        </para>
-      </listitem>
-     </varlistentry>
 
-     <varlistentry>
-      <term><replaceable class="parameter">graph_pattern</replaceable></term>
-      <listitem>
        <para>
-        TODO
+        <replaceable class="parameter">graph_name</replaceable> is the name
+        (optionally schema-qualified) of an existing property graph (defined
+        with <xref linkend="sql-create-property-graph"/>).
+       </para>
+
+       <para>
+        <replaceable class="parameter">graph_pattern</replaceable> is a graph
+        pattern in a special graph pattern sublanguage.  See <xref
+        linkend="queries-graph-patterns"/>.
+       </para>
+
+       <para>
+        The <literal>COLUMNS</literal> clause defines the output columns of
+        the <literal>GRAPH_TABLE</literal> clause.  <replaceable
+        class="parameter">expression</replaceable> is a scalar expression
+        using the graph pattern variables defined in the <replaceable
+        class="parameter">graph_pattern</replaceable>.  The name of the output
+        columns are specified using the <literal>AS</literal> clauses.  If the
+        expressions are simple property references, the property names are
+        used as the output names, otherwise an explicit name must be
+        specified.
+       </para>
+
+       <para>
+        Like for other <literal>FROM</literal> clause items, a table alias
+        name and column alias names may follow the <literal>GRAPH_TABLE
+        (...)</literal> clause.  (A column alias list would be redundant with
+        the <literal>COLUMNS</literal> clause.)
        </para>
       </listitem>
      </varlistentry>

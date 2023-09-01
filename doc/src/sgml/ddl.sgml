@@ -5353,7 +5353,7 @@ SELECT ... FROM GRAPH_TABLE (myshop MATCH (:person WHERE name = '...')-[]->... C
    For more details on the syntax for creating property graphs, see <link
    linkend="sql-create-property-graph"><command>CREATE PROPERTY
    GRAPH</command></link>.  More details about the graph query syntax is in
-   TODO.
+   <xref linkend="queries-graph"/>.
   </para>
  </sect1>
 
