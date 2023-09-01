@@ -117,12 +117,13 @@ SELECT pg_get_propgraphdef('pg_type'::regclass);  -- error
 
 DROP TABLE g2;  -- error: wrong object type
 
-DROP PROPERTY GRAPH g2;
+DROP PROPERTY GRAPH g1;
 
-DROP PROPERTY GRAPH g2;  -- error: does not exist
+DROP PROPERTY GRAPH g1;  -- error: does not exist
 
-DROP PROPERTY GRAPH IF EXISTS g2;
+DROP PROPERTY GRAPH IF EXISTS g1;
 
-DROP SCHEMA create_property_graph_tests CASCADE;
+-- leave for pg_upgrade/pg_dump tests
+--DROP SCHEMA create_property_graph_tests CASCADE;
 
 DROP ROLE regress_graph_user1, regress_graph_user2;

@@ -18340,6 +18340,16 @@ getDependencies(Archive *fout)
 						 "classid = 'pg_amproc'::regclass AND objid = p.oid "
 						 "AND NOT (refclassid = 'pg_opfamily'::regclass AND amprocfamily = refobjid)\n");
 
+	/*
+	 * Translate dependencies of pg_propgraph_element entries into
+	 * dependencies of their parent pg_class entry.
+	 */
+	appendPQExpBufferStr(query, "UNION ALL\n"
+						 "SELECT 'pg_class'::regclass AS classid, pgepgid AS objid, refclassid, refobjid, deptype "
+						 "FROM pg_depend d, pg_propgraph_element pge "
+						 "WHERE deptype NOT IN ('p', 'e', 'i') AND "
+						 "classid = 'pg_propgraph_element'::regclass AND objid = pge.oid\n");
+
 	/* Sort the output for efficiency below */
 	appendPQExpBufferStr(query, "ORDER BY 1,2");
 
