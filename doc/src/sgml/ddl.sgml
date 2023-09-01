@@ -5134,7 +5134,7 @@ EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
   <title>Property Graphs</title>
 
   <indexterm zone="ddl-property-graphs">
-   <primary>user mapping</primary>
+   <primary>property graph</primary>
   </indexterm>
 
   <para>
@@ -5231,12 +5231,12 @@ CREATE PROPERTY GRAPH myshop
   <para>
    This graph could then be queried like this:
 <programlisting>
--- get list customers active today
+-- get list of customers active today
 SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers)-[IS customer_orders]->(o IS orders WHERE ordered_when = current_date) COLUMNS (c.name AS customer_name));
 </programlisting>
    corresponding approximately to this relational query:
 <programlisting>
--- get list customers active today
+-- get list of customers active today
 SELECT customers.name FROM customers JOIN customer_orders USING (customer_id) JOIN orders USING (order_id) WHERE orders.ordered_when = current_date;
 </programlisting>
   </para>
