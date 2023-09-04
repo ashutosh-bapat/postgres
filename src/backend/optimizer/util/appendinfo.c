@@ -492,6 +492,12 @@ adjust_appendrel_attrs_mutator(Node *node,
 		newinfo->left_mcvfreq = -1;
 		newinfo->right_mcvfreq = -1;
 
+		/*
+		 * Wipe out commuted parent RestrictInfo. The caller will compute
+		 * commuted clause if required.
+		 */
+		newinfo->comm_rinfo = NULL;
+
 		return (Node *) newinfo;
 	}
 

@@ -246,6 +246,8 @@ make_restrictinfo_internal(PlannerInfo *root,
 
 	restrictinfo->left_hasheqoperator = InvalidOid;
 	restrictinfo->right_hasheqoperator = InvalidOid;
+	restrictinfo->comm_rinfo = NULL;
+	restrictinfo->is_commuted = false;
 
 	return restrictinfo;
 }
@@ -354,14 +356,27 @@ make_sub_restrictinfos(PlannerInfo *root,
  * be hazardous if the source is subject to change.  Also notice that we
  * assume without checking that the commutator op is a member of the same
  * btree and hash opclasses as the original op.
+ *
+ * If a commuted RestrictInfo is already available it is returned.
  */
 RestrictInfo *
 commute_restrictinfo(RestrictInfo *rinfo, Oid comm_op)
 {
 	RestrictInfo *result;
 	OpExpr	   *newclause;
-	OpExpr	   *clause = castNode(OpExpr, rinfo->clause);
+	OpExpr	   *clause;
 
+	if (rinfo->comm_rinfo)
+	{
+		result = rinfo->comm_rinfo;
+		newclause = castNode(OpExpr, result->clause);
+		Assert(list_length(newclause->args) == 2);
+		Assert(newclause->opno == comm_op);
+
+		return result;
+	}
+
+	clause = castNode(OpExpr, rinfo->clause);
 	Assert(list_length(clause->args) == 2);
 
 	/* flat-copy all the fields of clause ... */
@@ -403,6 +418,11 @@ commute_restrictinfo(RestrictInfo *rinfo, Oid comm_op)
 	result->right_mcvfreq = rinfo->left_mcvfreq;
 	result->left_hasheqoperator = InvalidOid;
 	result->right_hasheqoperator = InvalidOid;
+	result->is_commuted = !rinfo->is_commuted;
+	result->comm_rinfo = rinfo;
+
+	/* Save the commuted RestrictInfo for later use. */
+	rinfo->comm_rinfo = result;
 
 	return result;
 }
