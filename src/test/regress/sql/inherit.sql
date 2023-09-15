@@ -736,6 +736,12 @@ alter table pp1 alter column f1 set not null;
 \d+ cc1
 \d+ cc2
 
+-- cannot create table with inconsistent NO INHERIT constraint
+create table cc3 (a2 int not null no inherit) inherits (cc1);
+
+-- change NO INHERIT status of inherited constraint: no dice, it's inherited
+alter table cc2 add not null a2 no inherit;
+
 -- remove constraint from cc2: no dice, it's inherited
 alter table cc2 alter column a2 drop not null;
 
@@ -840,7 +846,20 @@ create table inh_child (a int primary key);
 alter table inh_child inherit inh_parent;		-- nope
 alter table inh_child alter a set not null;
 alter table inh_child inherit inh_parent;		-- now it works
-drop table inh_parent, inh_child;
+
+-- don't interfere with other types of constraints
+alter table inh_parent add constraint inh_parent_excl exclude ((1) with =);
+alter table inh_parent add constraint inh_parent_uq unique (a);
+alter table inh_parent add constraint inh_parent_fk foreign key (a) references inh_parent (a);
+create table inh_child2 () inherits (inh_parent);
+create table inh_child3 (like inh_parent);
+alter table inh_child3 inherit inh_parent;
+select conrelid::regclass, conname, contype, coninhcount, conislocal
+ from pg_constraint
+ where conrelid::regclass::text in ('inh_parent', 'inh_child', 'inh_child2', 'inh_child3')
+ order by 2, 1;
+
+drop table inh_parent, inh_child, inh_child2, inh_child3;
 
 --
 -- test multi inheritance tree
@@ -900,6 +919,27 @@ select conrelid::regclass, contype, conname,
  order by conrelid::regclass::text, conname;
 
 drop table inh_p1, inh_p2, inh_p3, inh_p4 cascade;
+
+--
+-- Mixed ownership inheritance tree
+--
+create role regress_alice;
+create role regress_bob;
+grant all on schema public to regress_alice, regress_bob;
+grant regress_alice to regress_bob;
+set session authorization regress_alice;
+create table inh_parent (a int not null);
+set session authorization regress_bob;
+create table inh_child () inherits (inh_parent);
+set session authorization regress_alice;
+-- alice can't do this: she doesn't own inh_child
+alter table inh_parent alter a drop not null;
+set session authorization regress_bob;
+alter table inh_parent alter a drop not null;
+reset session authorization;
+drop table inh_parent, inh_child;
+revoke all on schema public from regress_alice, regress_bob;
+drop role regress_alice, regress_bob;
 
 --
 -- Check use of temporary tables with inheritance trees

@@ -548,8 +548,7 @@ static void GetForeignKeyCheckTriggers(Relation trigrel,
 									   Oid *insertTriggerOid,
 									   Oid *updateTriggerOid);
 static void ATExecDropConstraint(Relation rel, const char *constrName,
-								 DropBehavior behavior,
-								 bool recurse, bool recursing,
+								 DropBehavior behavior, bool recurse,
 								 bool missing_ok, LOCKMODE lockmode);
 static ObjectAddress dropconstraint_internal(Relation rel,
 											 HeapTuple constraintTup, DropBehavior behavior,
@@ -654,7 +653,7 @@ static void refuseDupeIndexAttach(Relation parentIdx, Relation partIdx,
 static void verifyPartitionIndexNotNull(IndexInfo *iinfo, Relation partIdx);
 static List *GetParentedForeignKeyRefs(Relation partition);
 static void ATDetachCheckNoForeignKeyRefs(Relation partition);
-static char GetAttributeCompression(Oid atttypid, char *compression);
+static char GetAttributeCompression(Oid atttypid, const char *compression);
 static char GetAttributeStorage(Oid atttypid, const char *storagemode);
 
 
@@ -948,16 +947,9 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 			attr->atthasdef = true;
 		}
 
-		if (colDef->identity)
-			attr->attidentity = colDef->identity;
-
-		if (colDef->generated)
-			attr->attgenerated = colDef->generated;
-
-		if (colDef->compression)
-			attr->attcompression = GetAttributeCompression(attr->atttypid,
-														   colDef->compression);
-
+		attr->attidentity = colDef->identity;
+		attr->attgenerated = colDef->generated;
+		attr->attcompression = GetAttributeCompression(attr->atttypid, colDef->compression);
 		if (colDef->storage_name)
 			attr->attstorage = GetAttributeStorage(attr->atttypid, colDef->storage_name);
 	}
@@ -2765,10 +2757,8 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				/*
 				 * No, create a new inherited column
 				 */
-				def = makeNode(ColumnDef);
-				def->colname = pstrdup(attributeName);
-				def->typeName = makeTypeNameFromOid(attribute->atttypid,
-													attribute->atttypmod);
+				def = makeColumnDef(attributeName, attribute->atttypid,
+									attribute->atttypmod, attribute->attcollation);
 				def->inhcount = 1;
 				def->is_local = false;
 				/* mark attnotnull if parent has it and it's not NO INHERIT */
@@ -2776,20 +2766,11 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 					bms_is_member(parent_attno - FirstLowInvalidHeapAttributeNumber,
 								  pkattrs))
 					def->is_not_null = true;
-				def->is_from_type = false;
 				def->storage = attribute->attstorage;
-				def->raw_default = NULL;
-				def->cooked_default = NULL;
 				def->generated = attribute->attgenerated;
-				def->collClause = NULL;
-				def->collOid = attribute->attcollation;
-				def->constraints = NIL;
-				def->location = -1;
 				if (CompressionMethodIsValid(attribute->attcompression))
 					def->compression =
 						pstrdup(GetCompressionMethodName(attribute->attcompression));
-				else
-					def->compression = NULL;
 				inhSchema = lappend(inhSchema, def);
 				newattmap->attnums[parent_attno - 1] = ++child_attno;
 
@@ -5264,7 +5245,7 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab,
 			break;
 		case AT_DropConstraint: /* DROP CONSTRAINT */
 			ATExecDropConstraint(rel, cmd->name, cmd->behavior,
-								 cmd->recurse, false,
+								 cmd->recurse,
 								 cmd->missing_ok, lockmode);
 			break;
 		case AT_AlterColumnType:	/* ALTER COLUMN TYPE */
@@ -8940,7 +8921,14 @@ ATPrepAddPrimaryKey(List **wqueue, Relation rel, AlterTableCmd *cmd,
 	List	   *children;
 	List	   *newconstrs = NIL;
 	ListCell   *lc;
-	IndexStmt  *stmt;
+	IndexStmt  *indexstmt;
+
+	/* No work if not creating a primary key */
+	if (!IsA(cmd->def, IndexStmt))
+		return;
+	indexstmt = castNode(IndexStmt, cmd->def);
+	if (!indexstmt->primary)
+		return;
 
 	/* No work if no legacy inheritance children are present */
 	if (rel->rd_rel->relkind != RELKIND_RELATION ||
@@ -8949,8 +8937,7 @@ ATPrepAddPrimaryKey(List **wqueue, Relation rel, AlterTableCmd *cmd,
 
 	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
 
-	stmt = castNode(IndexStmt, cmd->def);
-	foreach(lc, stmt->indexParams)
+	foreach(lc, indexstmt->indexParams)
 	{
 		IndexElem  *elem = lfirst_node(IndexElem, lc);
 		Constraint *nnconstr;
@@ -12290,8 +12277,7 @@ createForeignKeyCheckTriggers(Oid myRelOid, Oid refRelOid,
  */
 static void
 ATExecDropConstraint(Relation rel, const char *constrName,
-					 DropBehavior behavior,
-					 bool recurse, bool recursing,
+					 DropBehavior behavior, bool recurse,
 					 bool missing_ok, LOCKMODE lockmode)
 {
 	Relation	conrel;
@@ -12299,10 +12285,6 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 	ScanKeyData skey[3];
 	HeapTuple	tuple;
 	bool		found = false;
-
-	/* At top level, permission check was done in ATPrepCmd, else do it */
-	if (recursing)
-		ATSimplePermissions(AT_DropConstraint, rel, ATT_TABLE | ATT_FOREIGN_TABLE);
 
 	conrel = table_open(ConstraintRelationId, RowExclusiveLock);
 
@@ -12329,7 +12311,7 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 	{
 		List	   *readyRels = NIL;
 
-		dropconstraint_internal(rel, tuple, behavior, recurse, recursing,
+		dropconstraint_internal(rel, tuple, behavior, recurse, false,
 								missing_ok, &readyRels, lockmode);
 		found = true;
 	}
@@ -12379,6 +12361,10 @@ dropconstraint_internal(Relation rel, HeapTuple constraintTup, DropBehavior beha
 	if (list_member_oid(*readyRels, RelationGetRelid(rel)))
 		return InvalidObjectAddress;
 	*readyRels = lappend_oid(*readyRels, RelationGetRelid(rel));
+
+	/* At top level, permission check was done in ATPrepCmd, else do it */
+	if (recursing)
+		ATSimplePermissions(AT_DropConstraint, rel, ATT_TABLE | ATT_FOREIGN_TABLE);
 
 	conrel = table_open(ConstraintRelationId, RowExclusiveLock);
 
@@ -15777,9 +15763,10 @@ MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel)
 								attributeName)));
 
 			/*
-			 * Check child doesn't discard NOT NULL property.  (Other
-			 * constraints are checked elsewhere.)  However, if the constraint
-			 * is NO INHERIT in the parent, this is allowed.
+			 * If the parent has a not-null constraint that's not NO INHERIT,
+			 * make sure the child has one too.
+			 *
+			 * Other constraints are checked elsewhere.
 			 */
 			if (attribute->attnotnull && !childatt->attnotnull)
 			{
@@ -15787,11 +15774,12 @@ MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel)
 
 				contup = findNotNullConstraintAttnum(RelationGetRelid(parent_rel),
 													 attribute->attnum);
-				if (!((Form_pg_constraint) GETSTRUCT(contup))->connoinherit)
+				if (HeapTupleIsValid(contup) &&
+					!((Form_pg_constraint) GETSTRUCT(contup))->connoinherit)
 					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("column \"%s\" in child table must be marked NOT NULL",
-									attributeName)));
+							errcode(ERRCODE_DATATYPE_MISMATCH),
+							errmsg("column \"%s\" in child table must be marked NOT NULL",
+								   attributeName));
 			}
 
 			/*
@@ -16012,10 +16000,20 @@ MergeConstraintsIntoExisting(Relation child_rel, Relation parent_rel)
 		systable_endscan(child_scan);
 
 		if (!found)
+		{
+			if (parent_con->contype == CONSTRAINT_NOTNULL)
+				ereport(ERROR,
+						errcode(ERRCODE_DATATYPE_MISMATCH),
+						errmsg("column \"%s\" in child table must be marked NOT NULL",
+							   get_attname(parent_relid,
+										   extractNotNullColumn(parent_tuple),
+										   false)));
+
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
 					 errmsg("child table is missing constraint \"%s\"",
 							NameStr(parent_con->conname))));
+		}
 	}
 
 	systable_endscan(parent_scan);
@@ -20113,7 +20111,7 @@ ATDetachCheckNoForeignKeyRefs(Relation partition)
  * resolve column compression specification to compression method.
  */
 static char
-GetAttributeCompression(Oid atttypid, char *compression)
+GetAttributeCompression(Oid atttypid, const char *compression)
 {
 	char		cmethod;
 

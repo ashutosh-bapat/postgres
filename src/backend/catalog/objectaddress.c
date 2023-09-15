@@ -507,8 +507,14 @@ static const ObjectPropertyType ObjectProperty[] =
 		TransformRelationId,
 		TransformOidIndexId,
 		TRFOID,
+		-1,
+		Anum_pg_transform_oid,
 		InvalidAttrNumber,
-		Anum_pg_transform_oid
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
 	},
 	{
 		"trigger",

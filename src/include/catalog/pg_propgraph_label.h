@@ -43,7 +43,7 @@ CATALOG(pg_propgraph_label,8303,PropgraphLabelRelationId)
  */
 typedef FormData_pg_propgraph_label *Form_pg_propgraph_label;
 
-DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_label_oid_index, 8304, PropgraphLabelObjectIndexId, on pg_propgraph_label using btree(oid oid_ops));
-DECLARE_UNIQUE_INDEX(pg_propgraph_label_label_index, 8305, PropgraphLabelLabelIndexId, on pg_propgraph_label using btree(pglelid oid_ops, pgllabel name_ops));
+DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_label_oid_index, 8304, PropgraphLabelObjectIndexId, pg_propgraph_label, btree(oid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_propgraph_label_label_index, 8305, PropgraphLabelLabelIndexId, pg_propgraph_label, btree(pglelid oid_ops, pgllabel name_ops));
 
 #endif							/* PG_PROPGRAPH_LABEL_H */

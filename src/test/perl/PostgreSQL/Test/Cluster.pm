@@ -549,7 +549,7 @@ sub init
 		}
 		else
 		{
-			@copycmd = qw(cp -a);
+			@copycmd = qw(cp -RPp);
 			$expected_exitcode = 0;
 		}
 
@@ -2140,7 +2140,6 @@ sub _pgbench_make_files
 			# cleanup file weight
 			$filename =~ s/\@\d+$//;
 
-			#push @filenames, $filename;
 			# filenames are expected to be unique on a test
 			if (-e $filename)
 			{
