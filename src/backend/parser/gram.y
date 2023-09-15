@@ -684,6 +684,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				path_term
 				path_factor
 				path_primary
+				element_pattern
+				opt_is_label_expression
+%type <str>		opt_colid
 
 
 /*
@@ -17070,7 +17073,7 @@ path_factor:
 path_primary:
 			element_pattern
 				{
-					$$ = NULL;	// TODO
+					$$ = $1;
 				}
 			| '(' path_pattern_expression where_clause ')'
 				{
@@ -17079,40 +17082,96 @@ path_primary:
 		;
 
 element_pattern:
-			vertex_pattern
-			| edge_pattern
-		;
+			'(' opt_colid opt_is_label_expression where_clause ')'
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
 
-vertex_pattern:
-			'(' element_pattern_filler ')'
-		;
+					ep->kind = VERTEX_PATTERN;
+					ep->variable = $2;
+					ep->labelexpr = $3;
+					ep->whereClause = $4;
+					ep->location = @1;
 
-element_pattern_filler:
-			opt_colid opt_is_label_expression where_clause
+					$$ = (Node *) ep;
+				}
+			/* full edge pointing left: <-[ xxx ]- */
+			| LEFT_ARROW_BRACKET opt_colid opt_is_label_expression where_clause RIGHT_BRACKET_MINUS
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = EDGE_PATTERN_LEFT;
+					ep->variable = $2;
+					ep->labelexpr = $3;
+					ep->whereClause = $4;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
+			/* full edge pointing right: -[ xxx ]-> */
+			| MINUS_LEFT_BRACKET opt_colid opt_is_label_expression where_clause BRACKET_RIGHT_ARROW
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = EDGE_PATTERN_RIGHT;
+					ep->variable = $2;
+					ep->labelexpr = $3;
+					ep->whereClause = $4;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
+			/* full edge any direction: -[ xxx ]- */
+			| MINUS_LEFT_BRACKET opt_colid opt_is_label_expression where_clause RIGHT_BRACKET_MINUS
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = EDGE_PATTERN_ANY;
+					ep->variable = $2;
+					ep->labelexpr = $3;
+					ep->whereClause = $4;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
+			/* abbreviated edge patterns */
+			| LEFT_ARROW
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = EDGE_PATTERN_LEFT;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
+			| RIGHT_ARROW
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = EDGE_PATTERN_RIGHT;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
+			| '-'
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = EDGE_PATTERN_ANY;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
 		;
 
 opt_colid:
-			ColId
-			| /*EMPTY*/
+			ColId			{ $$ = $1; }
+			| /*EMPTY*/		{ $$ = NULL; }
 		;
 
 opt_is_label_expression:
-			IS label_expression
-			| ':' label_expression
-			| /*EMPTY*/
-		;
-
-edge_pattern:
-			/* full edge pointing left: <-[ xxx ]- */
-			LEFT_ARROW_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
-			/* full edge pointing right: -[ xxx ]-> */
-			| MINUS_LEFT_BRACKET element_pattern_filler BRACKET_RIGHT_ARROW
-			/* full edge any direction: -[ xxx ]- */
-			| MINUS_LEFT_BRACKET element_pattern_filler RIGHT_BRACKET_MINUS
-			/* abbreviated edge patterns */
-			| LEFT_ARROW
-			| RIGHT_ARROW
-			| '-'
+			IS label_expression		{ $$ = NULL; /*TODO*/ }
+			| ':' label_expression	{ $$ = NULL; /*TODO*/ }
+			| /*EMPTY*/				{ $$ = NULL; }
 		;
 
 /*

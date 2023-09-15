@@ -955,6 +955,28 @@ typedef struct PartitionCmd
 	bool		concurrent;
 } PartitionCmd;
 
+/*
+ * Nodes for graph pattern
+ */
+
+typedef enum ElementPatternKind
+{
+	VERTEX_PATTERN = 0,
+	EDGE_PATTERN_LEFT,
+	EDGE_PATTERN_RIGHT,
+	EDGE_PATTERN_ANY,
+} ElementPatternKind;
+
+typedef struct ElementPattern
+{
+	NodeTag		type;
+	ElementPatternKind kind;
+	const char *variable;
+	Node	   *labelexpr;
+	Node	   *whereClause;
+	int			location;
+} ElementPattern;
+
 /****************************************************************************
  *	Nodes for a Query tree
  ****************************************************************************/
