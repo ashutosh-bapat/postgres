@@ -561,6 +561,10 @@ _readRangeTblEntry(void)
 			/* we re-use these RELATION fields, too: */
 			READ_OID_FIELD(relid);
 			break;
+		case RTE_GRAPH_TABLE:
+			READ_OID_FIELD(relid);
+			READ_NODE_FIELD(graph_pattern);
+			break;
 		case RTE_RESULT:
 			/* no extra fields */
 			break;

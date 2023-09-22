@@ -5187,7 +5187,7 @@ CREATE TABLE customers (
 
 CREATE TABLE orders (
     order_id integer PRIMARY KEY,
-    order_date ordered_when
+    ordered_when date
 );
 
 CREATE TABLE order_items (

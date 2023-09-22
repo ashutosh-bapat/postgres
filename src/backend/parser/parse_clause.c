@@ -69,6 +69,8 @@ static ParseNamespaceItem *transformRangeFunction(ParseState *pstate,
 												  RangeFunction *r);
 static ParseNamespaceItem *transformRangeTableFunc(ParseState *pstate,
 												   RangeTableFunc *rtf);
+static ParseNamespaceItem *transformRangeGraphTable(ParseState *pstate,
+													RangeGraphTable *rgt);
 static TableSampleClause *transformRangeTableSample(ParseState *pstate,
 													RangeTableSample *rts);
 static ParseNamespaceItem *getNSItemForSpecialRelationTypes(ParseState *pstate,
@@ -899,6 +901,55 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 }
 
 /*
+ * transformRangeGraphTable
+ *
+ * TODO
+ */
+static ParseNamespaceItem *
+transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
+{
+	Relation	rel;
+	Oid			graphid;
+	List	   *colnames = NIL;
+	List	   *coltypes = NIL;
+	List	   *coltypmods = NIL;
+	List	   *colcollations = NIL;
+	ListCell   *lc;
+
+	rel = parserOpenTable(pstate, rgt->graph_name, AccessShareLock);
+	if (rel->rd_rel->relkind != RELKIND_PROPGRAPH)
+		ereport(ERROR,
+				errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				errmsg("\"%s\" is not a property graph",
+					   RelationGetRelationName(rel)),
+				parser_errposition(pstate, rgt->graph_name->location));
+
+	graphid = RelationGetRelid(rel);
+
+	foreach(lc, rgt->columns)
+	{
+		ResTarget  *rt = lfirst_node(ResTarget, lc);
+		char	   *colname;
+
+		if (rt->name)
+			colname = rt->name;
+		else
+			colname = pstrdup("FIXME");
+
+		colnames = lappend(colnames, makeString(colname));
+
+		// FIXME
+		coltypes = lappend_oid(coltypes, TEXTOID);
+		coltypmods = lappend_int(coltypmods, -1);
+		colcollations = lappend_oid(colcollations, DEFAULT_COLLATION_OID);
+	}
+
+	table_close(rel, NoLock);
+
+	return addRangeTableEntryForGraphTable(pstate, graphid, rgt->graph_pattern, colnames, coltypes, coltypmods, colcollations, rgt->alias, false, true);
+}
+
+/*
  * transformRangeTableSample --- transform a TABLESAMPLE clause
  *
  * Caller has already transformed rts->relation, we just have to validate
@@ -1104,13 +1155,6 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		rtr->rtindex = nsitem->p_rtindex;
 		return (Node *) rtr;
 	}
-	else if (IsA(n, RangeGraphTable))
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("GRAPH_TABLE is not implemented"),
-				 parser_errposition(pstate, castNode(RangeGraphTable, n)->location)));
-	}
 	else if (IsA(n, RangeTableFunc))
 	{
 		/* table function is like a plain relation */
@@ -1118,6 +1162,18 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		ParseNamespaceItem *nsitem;
 
 		nsitem = transformRangeTableFunc(pstate, (RangeTableFunc *) n);
+		*top_nsitem = nsitem;
+		*namespace = list_make1(nsitem);
+		rtr = makeNode(RangeTblRef);
+		rtr->rtindex = nsitem->p_rtindex;
+		return (Node *) rtr;
+	}
+	else if (IsA(n, RangeGraphTable))
+	{
+		RangeTblRef *rtr;
+		ParseNamespaceItem *nsitem;
+
+		nsitem = transformRangeGraphTable(pstate, (RangeGraphTable *) n);
 		*top_nsitem = nsitem;
 		*namespace = list_make1(nsitem);
 		rtr = makeNode(RangeTblRef);

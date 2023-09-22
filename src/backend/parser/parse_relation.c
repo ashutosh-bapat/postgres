@@ -2127,6 +2127,66 @@ addRangeTableEntryForTableFunc(ParseState *pstate,
 								rte->colcollations);
 }
 
+ParseNamespaceItem *
+addRangeTableEntryForGraphTable(ParseState *pstate,
+								Oid graphid,
+								List *graph_pattern,
+								List *colnames,
+								List *coltypes,
+								List *coltypmods,
+								List *colcollations,
+								Alias *alias,
+								bool lateral,
+								bool inFromCl)
+{
+	RangeTblEntry *rte = makeNode(RangeTblEntry);
+	char	   *refname = alias ? alias->aliasname : pstrdup("graph_table");
+	Alias	   *eref;
+
+	Assert(pstate != NULL);
+
+	rte->rtekind = RTE_GRAPH_TABLE;
+	rte->relid = graphid;
+	rte->relkind = RELKIND_PROPGRAPH;
+	rte->graph_pattern = graph_pattern;
+	rte->coltypes = coltypes;
+	rte->coltypmods = coltypmods;
+	rte->colcollations = colcollations;
+	rte->alias = alias;
+
+	eref = alias ? copyObject(alias) : makeAlias(refname, NIL);
+
+	if (!eref->colnames)
+		eref->colnames = colnames;
+
+	rte->eref = eref;
+
+	/*
+	 * Set flags and access permissions.
+	 *
+	 * Subqueries are never checked for access rights, so no need to perform
+	 * addRTEPermissionInfo(). FIXME
+	 */
+	rte->lateral = lateral;
+	rte->inh = false;			/* never true for values RTEs */
+	rte->inFromCl = inFromCl;
+
+	/*
+	 * Add completed RTE to pstate's range table list, so that we know its
+	 * index.  But we don't add it to the join list --- caller must do that if
+	 * appropriate.
+	 */
+	pstate->p_rtable = lappend(pstate->p_rtable, rte);
+
+	/*
+	 * Build a ParseNamespaceItem, but don't add it to the pstate's namespace
+	 * list --- caller must do that if appropriate.
+	 */
+	return buildNSItemFromLists(rte, list_length(pstate->p_rtable),
+								rte->coltypes, rte->coltypmods,
+								rte->colcollations);
+}
+
 /*
  * Add an entry for a VALUES list to the pstate's range table (p_rtable).
  * Then, construct and return a ParseNamespaceItem for the new RTE.
@@ -2941,6 +3001,7 @@ expandRTE(RangeTblEntry *rte, int rtindex, int sublevels_up,
 		case RTE_VALUES:
 		case RTE_CTE:
 		case RTE_NAMEDTUPLESTORE:
+		case RTE_GRAPH_TABLE:
 			{
 				/* Tablefunc, Values, CTE, or ENR RTE */
 				ListCell   *aliasp_item = list_head(rte->eref->colnames);
@@ -3318,6 +3379,7 @@ get_rte_attribute_is_dropped(RangeTblEntry *rte, AttrNumber attnum)
 		case RTE_TABLEFUNC:
 		case RTE_VALUES:
 		case RTE_CTE:
+		case RTE_GRAPH_TABLE:
 
 			/*
 			 * Subselect, Table Functions, Values, CTE RTEs never have dropped

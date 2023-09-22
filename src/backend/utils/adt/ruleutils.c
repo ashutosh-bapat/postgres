@@ -8081,6 +8081,7 @@ get_name_for_var_field(Var *var, int fieldno,
 		case RTE_RELATION:
 		case RTE_VALUES:
 		case RTE_NAMEDTUPLESTORE:
+		case RTE_GRAPH_TABLE:
 		case RTE_RESULT:
 
 			/*
@@ -11708,6 +11709,11 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				break;
 			case RTE_TABLEFUNC:
 				get_tablefunc(rte->tablefunc, context, true);
+				break;
+			case RTE_GRAPH_TABLE:
+				appendStringInfo(buf, "GRAPH_TABLE (%s MATCH %s COLUMNS %s)",
+								 generate_relation_name(rte->relid, context->namespaces),
+								 "TODO", "TODO");
 				break;
 			case RTE_VALUES:
 				/* Values list RTE */

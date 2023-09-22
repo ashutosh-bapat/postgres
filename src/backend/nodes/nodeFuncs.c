@@ -2726,6 +2726,7 @@ range_table_entry_walker_impl(RangeTblEntry *rte,
 			break;
 		case RTE_CTE:
 		case RTE_NAMEDTUPLESTORE:
+		case RTE_GRAPH_TABLE: // TODO
 		case RTE_RESULT:
 			/* nothing to do */
 			break;
@@ -3724,6 +3725,7 @@ range_table_mutator_impl(List *rtable,
 				break;
 			case RTE_CTE:
 			case RTE_NAMEDTUPLESTORE:
+			case RTE_GRAPH_TABLE: // TODO
 			case RTE_RESULT:
 				/* nothing to do */
 				break;
@@ -4234,14 +4236,6 @@ raw_expression_tree_walker_impl(Node *node,
 					return true;
 			}
 			break;
-		case T_RangeGraphTable:
-			{
-				RangeGraphTable *rgt = (RangeGraphTable *) node;
-
-				if (WALK(rgt->alias))
-					return true;
-			}
-			break;
 		case T_RangeTableSample:
 			{
 				RangeTableSample *rts = (RangeTableSample *) node;
@@ -4278,6 +4272,14 @@ raw_expression_tree_walker_impl(Node *node,
 				if (WALK(rtfc->colexpr))
 					return true;
 				if (WALK(rtfc->coldefexpr))
+					return true;
+			}
+			break;
+		case T_RangeGraphTable:
+			{
+				RangeGraphTable *rgt = (RangeGraphTable *) node;
+
+				if (WALK(rgt->alias))
 					return true;
 			}
 			break;

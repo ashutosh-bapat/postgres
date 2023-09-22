@@ -388,6 +388,9 @@ _jumbleRangeTblEntry(JumbleState *jstate, Node *node)
 		case RTE_NAMEDTUPLESTORE:
 			JUMBLE_STRING(enrname);
 			break;
+		case RTE_GRAPH_TABLE:
+			// TODO
+			break;
 		case RTE_RESULT:
 			break;
 		default:

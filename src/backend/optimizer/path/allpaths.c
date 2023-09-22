@@ -448,6 +448,9 @@ set_rel_size(PlannerInfo *root, RelOptInfo *rel,
 				/* Might as well just build the path immediately */
 				set_namedtuplestore_pathlist(root, rel, rte);
 				break;
+			case RTE_GRAPH_TABLE:
+				// XXX?
+				break;
 			case RTE_RESULT:
 				/* Might as well just build the path immediately */
 				set_result_pathlist(root, rel, rte);
@@ -522,6 +525,9 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 				break;
 			case RTE_NAMEDTUPLESTORE:
 				/* tuplestore reference --- fully handled during set_rel_size */
+				break;
+			case RTE_GRAPH_TABLE:
+				// XXX?
 				break;
 			case RTE_RESULT:
 				/* simple Result --- fully handled during set_rel_size */
@@ -730,6 +736,10 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 			 * infrastructure to support that.
 			 */
 			return;
+
+		case RTE_GRAPH_TABLE:
+			// XXX?
+			break;
 
 		case RTE_RESULT:
 			/* RESULT RTEs, in themselves, are no problem. */

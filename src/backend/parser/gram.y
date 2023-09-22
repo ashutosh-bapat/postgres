@@ -13775,6 +13775,16 @@ table_ref:	relation_expr opt_alias_clause
 					n->alias = $3;
 					$$ = (Node *) n;
 				}
+			| GRAPH_TABLE '(' qualified_name MATCH graph_pattern COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
+				{
+					RangeGraphTable *n = makeNode(RangeGraphTable);
+					n->graph_name = $3;
+					n->graph_pattern = $5;
+					n->columns = $8;
+					n->alias = $11;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
 			| select_with_parens opt_alias_clause
 				{
 					RangeSubselect *n = makeNode(RangeSubselect);
@@ -13801,16 +13811,6 @@ table_ref:	relation_expr opt_alias_clause
 				{
 					$2->alias = $4;
 					$$ = (Node *) $2;
-				}
-			| GRAPH_TABLE '(' qualified_name MATCH graph_pattern COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
-				{
-					RangeGraphTable *n = makeNode(RangeGraphTable);
-					n->graph_name = $3;
-					n->graph_pattern = $5;
-					n->columns = $8;
-					n->alias = $11;
-					n->location = @1;
-					$$ = (Node *) n;
 				}
 		;
 

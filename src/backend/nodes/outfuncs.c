@@ -555,6 +555,10 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 			/* we re-use these RELATION fields, too: */
 			WRITE_OID_FIELD(relid);
 			break;
+		case RTE_GRAPH_TABLE:
+			WRITE_OID_FIELD(relid);
+			WRITE_NODE_FIELD(graph_pattern);
+			break;
 		case RTE_RESULT:
 			/* no extra fields */
 			break;

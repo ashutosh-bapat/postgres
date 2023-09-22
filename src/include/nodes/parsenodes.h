@@ -644,19 +644,6 @@ typedef struct RangeFunction
 } RangeFunction;
 
 /*
- * RangeGraphTable - raw form of GRAPH_TABLE clause
- */
-typedef struct RangeGraphTable
-{
-	NodeTag		type;
-	RangeVar   *graph_name;
-	List	   *graph_pattern;
-	List	   *columns;
-	Alias	   *alias;			/* table alias & optional column aliases */
-	int			location;		/* token location, or -1 if unknown */
-} RangeGraphTable;
-
-/*
  * RangeTableFunc - raw form of "table functions" such as XMLTABLE
  */
 typedef struct RangeTableFunc
@@ -688,6 +675,19 @@ typedef struct RangeTableFuncCol
 	Node	   *coldefexpr;		/* column default value expression */
 	int			location;		/* token location, or -1 if unknown */
 } RangeTableFuncCol;
+
+/*
+ * RangeGraphTable - raw form of GRAPH_TABLE clause
+ */
+typedef struct RangeGraphTable
+{
+	NodeTag		type;
+	RangeVar   *graph_name;
+	List	   *graph_pattern;
+	List	   *columns;
+	Alias	   *alias;			/* table alias & optional column aliases */
+	int			location;		/* token location, or -1 if unknown */
+} RangeGraphTable;
 
 /*
  * RangeTableSample - TABLESAMPLE appearing in a raw FROM clause
@@ -1053,6 +1053,7 @@ typedef enum RTEKind
 	RTE_VALUES,					/* VALUES (<exprlist>), (<exprlist>), ... */
 	RTE_CTE,					/* common table expr (WITH list element) */
 	RTE_NAMEDTUPLESTORE,		/* tuplestore, e.g. for AFTER triggers */
+	RTE_GRAPH_TABLE,			/* GRAPH_TABLE clause */
 	RTE_RESULT					/* RTE represents an empty FROM clause; such
 								 * RTEs are added by the planner, they're not
 								 * present during parsing or rewriting */
@@ -1186,6 +1187,11 @@ typedef struct RangeTblEntry
 	 * Fields valid for a TableFunc RTE (else NULL):
 	 */
 	TableFunc  *tablefunc;
+
+	/*
+	 * Fields valid for a graph table RTE (else NULL):
+	 */
+	List	   *graph_pattern;
 
 	/*
 	 * Fields valid for a values RTE (else NIL):
