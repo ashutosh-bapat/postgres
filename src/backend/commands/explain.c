@@ -123,7 +123,8 @@ static void show_buffer_usage(ExplainState *es, const BufferUsage *usage,
 							  bool planning);
 static void show_wal_usage(ExplainState *es, const WalUsage *usage);
 static void show_planning_memory(ExplainState *es,
-								 const MemUsage *usage);
+								 const MemUsage *usage,
+								 const MemUsage *bms_usage);
 static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
 									ExplainState *es);
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
@@ -401,9 +402,13 @@ ExplainOneQuery(Query *query, int cursorOptions,
 					bufusage;
 		MemoryContextCounters mem_counts_start;
 		MemoryContextCounters mem_counts_end;
+		MemoryContextCounters bms_mem_counts_start;
+		MemoryContextCounters bms_mem_counts_end;
 		MemUsage	mem_usage;
+		MemUsage	bms_mem_usage;
 		MemoryContext planner_ctx;
 		MemoryContext saved_ctx;
+		MemoryContext bms_context;
 
 		/*
 		 * Create a new memory context to accurately measure memory malloc'ed
@@ -415,10 +420,12 @@ ExplainOneQuery(Query *query, int cursorOptions,
 		planner_ctx = AllocSetContextCreate(CurrentMemoryContext,
 											"explain analyze planner context",
 											ALLOCSET_DEFAULT_SIZES);
+		bms_context = set_bms_mem_context(planner_ctx);
 
 		if (es->buffers)
 			bufusage_start = pgBufferUsage;
 		MemoryContextMemConsumed(planner_ctx, &mem_counts_start);
+		MemoryContextMemConsumed(bms_context, &bms_mem_counts_start);
 		saved_ctx = MemoryContextSwitchTo(planner_ctx);
 		INSTR_TIME_SET_CURRENT(planstart);
 
@@ -427,9 +434,14 @@ ExplainOneQuery(Query *query, int cursorOptions,
 
 		INSTR_TIME_SET_CURRENT(planduration);
 		INSTR_TIME_SUBTRACT(planduration, planstart);
+		reset_bms_mem_context();
+
 		MemoryContextSwitchTo(saved_ctx);
 		MemoryContextMemConsumed(planner_ctx, &mem_counts_end);
+		MemoryContextMemConsumed(bms_context, &bms_mem_counts_end);
 		calc_mem_usage(&mem_usage, &mem_counts_end, &mem_counts_start);
+		calc_mem_usage(&bms_mem_usage, &bms_mem_counts_end,
+							&bms_mem_counts_start);
 
 		/* calc differences of buffer counters. */
 		if (es->buffers)
@@ -441,7 +453,8 @@ ExplainOneQuery(Query *query, int cursorOptions,
 		/* run it (if needed) and produce output */
 		ExplainOnePlan(plan, into, es, queryString, params, queryEnv,
 					   &planduration, (es->buffers ? &bufusage : NULL),
-					   &mem_usage);
+					   &mem_usage, &bms_mem_usage);
+
 	}
 }
 
@@ -551,7 +564,7 @@ void
 ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 			   const char *queryString, ParamListInfo params,
 			   QueryEnvironment *queryEnv, const instr_time *planduration,
-			   const BufferUsage *bufusage, const MemUsage *mem_usage)
+			   const BufferUsage *bufusage, const MemUsage *mem_usage, const MemUsage *bms_mem_usage)
 {
 	DestReceiver *dest;
 	QueryDesc  *queryDesc;
@@ -657,7 +670,7 @@ ExplainOnePlan(PlannedStmt *plannedstmt, IntoClause *into, ExplainState *es,
 	if (es->summary && mem_usage)
 	{
 		ExplainOpenGroup("Planning Memory", "Planning Memory", true, es);
-		show_planning_memory(es, mem_usage);
+		show_planning_memory(es, mem_usage, bms_mem_usage);
 		ExplainCloseGroup("Planning Memory", "Planning Memory", true, es);
 	}
 
@@ -3779,7 +3792,8 @@ show_wal_usage(ExplainState *es, const WalUsage *usage)
  * Show planner's memory usage details.
  */
 static void
-show_planning_memory(ExplainState *es, const MemUsage *usage)
+show_planning_memory(ExplainState *es, const MemUsage *usage,
+						const MemUsage *bms_usage)
 {
 	if (es->format == EXPLAIN_FORMAT_TEXT)
 	{
@@ -3787,11 +3801,18 @@ show_planning_memory(ExplainState *es, const MemUsage *usage)
 						 "Planning Memory: used=%zu bytes allocated=%zu bytes",
 						 usage->mem_used, usage->mem_allocated);
 		appendStringInfoChar(es->str, '\n');
+		appendStringInfo(es->str,
+						 "Bitmapset Memory: used=%zu bytes allocated=%zu bytes",
+						 bms_usage->mem_used, bms_usage->mem_allocated);
 	}
 	else
 	{
 		ExplainPropertyInteger("Used", "bytes", usage->mem_used, es);
 		ExplainPropertyInteger("Allocated", "bytes", usage->mem_allocated, es);
+		ExplainPropertyInteger("Bitmapset Used", "bytes",
+								bms_usage->mem_used, es);
+		ExplainPropertyInteger("Bitmapse Allocated", "bytes",
+								bms_usage->mem_allocated, es);
 	}
 }
 

@@ -30,6 +30,7 @@
 #include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 #include "port/pg_bitutils.h"
+#include "utils/memutils.h"
 
 
 #define WORDNUM(x)	((x) / BITS_PER_BITMAPWORD)
@@ -72,6 +73,47 @@
 #error "invalid BITS_PER_BITMAPWORD"
 #endif
 
+/* To measure memory used by bitmapsets use a separate Memory context. */
+MemoryContext bms_context = NULL;
+
+MemoryContext
+set_bms_mem_context(MemoryContext parent_context)
+{
+	Assert(IsA(parent_context, AllocSetContext));
+	bms_context = AllocSetContextCreate(parent_context,
+										"bitmap set context",
+										ALLOCSET_DEFAULT_SIZES);
+	return bms_context;
+}
+
+void
+reset_bms_mem_context(void)
+{
+	bms_context = NULL;
+}
+
+/*
+ * If separate context for bitmapsets is configured use that.
+ *
+ * The function uses palloc0 always so that we don't need to create two
+ * variants. And performance is not a concern here.
+ */
+static Bitmapset *
+bms_alloc(Size size)
+{
+	MemoryContext oldcontext = NULL;
+	Bitmapset *result;
+
+	if (bms_context)
+		oldcontext = MemoryContextSwitchTo(bms_context);
+
+	result = (Bitmapset *) palloc0(size);
+
+	if (oldcontext)
+		MemoryContextSwitchTo(oldcontext);
+
+	return result;
+}
 
 /*
  * bms_copy - make a palloc'd copy of a bitmapset
@@ -85,7 +127,7 @@ bms_copy(const Bitmapset *a)
 	if (a == NULL)
 		return NULL;
 	size = BITMAPSET_SIZE(a->nwords);
-	result = (Bitmapset *) palloc(size);
+	result = bms_alloc(size);
 	memcpy(result, a, size);
 	return result;
 }
@@ -178,7 +220,7 @@ bms_make_singleton(int x)
 		elog(ERROR, "negative bitmapset member not allowed");
 	wordnum = WORDNUM(x);
 	bitnum = BITNUM(x);
-	result = (Bitmapset *) palloc0(BITMAPSET_SIZE(wordnum + 1));
+	result = bms_alloc(BITMAPSET_SIZE(wordnum + 1));
 	result->type = T_Bitmapset;
 	result->nwords = wordnum + 1;
 	result->words[wordnum] = ((bitmapword) 1 << bitnum);
@@ -894,7 +936,7 @@ bms_add_range(Bitmapset *a, int lower, int upper)
 
 	if (a == NULL)
 	{
-		a = (Bitmapset *) palloc0(BITMAPSET_SIZE(uwordnum + 1));
+		a = bms_alloc(BITMAPSET_SIZE(uwordnum + 1));
 		a->type = T_Bitmapset;
 		a->nwords = uwordnum + 1;
 	}

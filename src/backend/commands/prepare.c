@@ -585,9 +585,13 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 				bufusage;
 	MemoryContextCounters mem_counts_start;
 	MemoryContextCounters mem_counts_end;
+	MemoryContextCounters bms_mem_counts_start;
+	MemoryContextCounters bms_mem_counts_end;
 	MemUsage	mem_usage;
+	MemUsage	bms_mem_usage;
 	MemoryContext planner_ctx;
 	MemoryContext saved_ctx;
+	MemoryContext bms_context;
 
 	/*
 	 * Create a new memory context to accurately measure memory malloc'ed by
@@ -599,10 +603,12 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 	planner_ctx = AllocSetContextCreate(CurrentMemoryContext,
 										"explain analyze planner context",
 										ALLOCSET_DEFAULT_SIZES);
+	bms_context = set_bms_mem_context(planner_ctx);
 
 	if (es->buffers)
 		bufusage_start = pgBufferUsage;
 	MemoryContextMemConsumed(planner_ctx, &mem_counts_start);
+	MemoryContextMemConsumed(bms_context, &bms_mem_counts_start);
 	saved_ctx = MemoryContextSwitchTo(planner_ctx);
 	INSTR_TIME_SET_CURRENT(planstart);
 
@@ -641,9 +647,12 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 
 	INSTR_TIME_SET_CURRENT(planduration);
 	INSTR_TIME_SUBTRACT(planduration, planstart);
+	reset_bms_mem_context();
 	MemoryContextSwitchTo(saved_ctx);
 	MemoryContextMemConsumed(planner_ctx, &mem_counts_end);
+	MemoryContextMemConsumed(bms_context, &bms_mem_counts_end);
 	calc_mem_usage(&mem_usage, &mem_counts_end, &mem_counts_start);
+	calc_mem_usage(&bms_mem_usage, &bms_mem_counts_end, &bms_mem_counts_start);
 
 	/* calc differences of buffer counters. */
 	if (es->buffers)
@@ -662,7 +671,7 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 		if (pstmt->commandType != CMD_UTILITY)
 			ExplainOnePlan(pstmt, into, es, query_string, paramLI, queryEnv,
 						   &planduration, (es->buffers ? &bufusage : NULL),
-						   &mem_usage);
+						   &mem_usage, &bms_mem_usage);
 		else
 			ExplainOneUtility(pstmt->utilityStmt, into, es, query_string,
 							  paramLI, queryEnv);

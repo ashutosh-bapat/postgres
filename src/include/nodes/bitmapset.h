@@ -123,4 +123,7 @@ extern uint32 bms_hash_value(const Bitmapset *a);
 extern uint32 bitmap_hash(const void *key, Size keysize);
 extern int	bitmap_match(const void *key1, const void *key2, Size keysize);
 
+extern MemoryContext set_bms_mem_context(MemoryContext parent_context);
+extern void reset_bms_mem_context(void);
+
 #endif							/* BITMAPSET_H */
