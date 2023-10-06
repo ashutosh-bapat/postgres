@@ -1929,9 +1929,9 @@ my %tests = (
 		    CREATE DATABASE regression_invalid;
 			UPDATE pg_database SET datconnlimit = -2 WHERE datname = 'regression_invalid'),
 		regexp => qr/^CREATE DATABASE regression_invalid/m,
-		not_like => {
-			pg_dumpall_dbprivs => 1,
-		},
+
+		# invalid databases should never be dumped
+		like => {},
 	},
 
 	'CREATE ACCESS METHOD gist2' => {
@@ -4256,11 +4256,13 @@ my %tests = (
 
 	'GRANT SELECT ON TABLE measurement' => {
 		create_order => 91,
-		create_sql => 'GRANT SELECT ON
-						   TABLE dump_test.measurement
-						   TO regress_dump_test_role;',
+		create_sql => 'GRANT SELECT ON TABLE dump_test.measurement
+						   TO regress_dump_test_role;
+					   GRANT SELECT(city_id) ON TABLE dump_test.measurement
+						   TO "regress_quoted  \"" role";',
 		regexp =>
-		  qr/^\QGRANT SELECT ON TABLE dump_test.measurement TO regress_dump_test_role;\E/m,
+		  qr/^\QGRANT SELECT ON TABLE dump_test.measurement TO regress_dump_test_role;\E\n.*
+			 ^\QGRANT SELECT(city_id) ON TABLE dump_test.measurement TO "regress_quoted  \"" role";\E/xms,
 		like => {
 			%full_runs,
 			%dump_test_schema_runs,

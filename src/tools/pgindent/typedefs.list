@@ -2151,6 +2151,7 @@ ProjectionPath
 PromptInterruptContext
 ProtocolVersion
 PrsStorage
+PruneResult
 PruneState
 PruneStepResult
 PsqlScanCallbacks
@@ -3198,6 +3199,7 @@ bbstreamer_tar_archiver
 bbstreamer_tar_parser
 bbstreamer_zstd_frame
 bgworker_main_type
+bh_node_type
 binaryheap
 binaryheap_comparator
 bitmapword

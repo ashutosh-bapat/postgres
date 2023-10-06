@@ -1317,6 +1317,8 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 {
 	List	   *subpaths = NIL;
 	bool		subpaths_valid = true;
+	List	   *startup_subpaths = NIL;
+	bool		startup_subpaths_valid = true;
 	List	   *partial_subpaths = NIL;
 	List	   *pa_partial_subpaths = NIL;
 	List	   *pa_nonpartial_subpaths = NIL;
@@ -1355,6 +1357,20 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 									  &subpaths, NULL);
 		else
 			subpaths_valid = false;
+
+		/*
+		 * When the planner is considering cheap startup plans, we'll also
+		 * collect all the cheapest_startup_paths and build an AppendPath
+		 * containing those as subpaths.
+		 */
+		if (rel->consider_startup && childrel->pathlist != NIL &&
+			childrel->cheapest_startup_path->param_info == NULL)
+			accumulate_append_subpath(childrel->cheapest_startup_path,
+									  &startup_subpaths,
+									  NULL);
+		else
+			startup_subpaths_valid = false;
+
 
 		/* Same idea, but for a partial plan. */
 		if (childrel->partial_pathlist != NIL)
@@ -1487,6 +1503,11 @@ add_paths_to_append_rel(PlannerInfo *root, RelOptInfo *rel,
 		add_path(rel, (Path *) create_append_path(root, rel, subpaths, NIL,
 												  NIL, NULL, 0, false,
 												  -1));
+
+	/* build an AppendPath for the cheap startup paths, if valid */
+	if (startup_subpaths_valid)
+		add_path(rel, (Path *) create_append_path(root, rel, startup_subpaths,
+												  NIL, NIL, NULL, 0, false, -1));
 
 	/*
 	 * Consider an append of unordered, unparameterized partial paths.  Make
@@ -3483,7 +3504,8 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 			/*
 			 * Except for the topmost scan/join rel, consider gathering
 			 * partial paths.  We'll do the same for the topmost scan/join rel
-			 * once we know the final targetlist (see grouping_planner).
+			 * once we know the final targetlist (see grouping_planner's and
+			 * its call to apply_scanjoin_target_to_paths).
 			 */
 			if (!bms_equal(rel->relids, root->all_query_rels))
 				generate_useful_gather_paths(root, rel, false);
@@ -4479,6 +4501,9 @@ print_path(PlannerInfo *root, Path *path, int indent)
 			break;
 		case T_TidPath:
 			ptype = "TidScan";
+			break;
+		case T_TidRangePath:
+			ptype = "TidRangePath";
 			break;
 		case T_SubqueryScanPath:
 			ptype = "SubqueryScan";
