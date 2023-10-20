@@ -357,9 +357,6 @@ build_simple_rel(PlannerInfo *root, int relid, RelOptInfo *parent)
 			rel->attr_widths = (int32 *)
 				palloc0((rel->max_attr - rel->min_attr + 1) * sizeof(int32));
 			break;
-		case RTE_GRAPH_TABLE:
-			elog(ERROR, "GRAPH_TABLE is not implemented");
-			break;
 		case RTE_RESULT:
 			/* RTE_RESULT has no columns, nor could it have whole-row Var */
 			rel->min_attr = 0;
