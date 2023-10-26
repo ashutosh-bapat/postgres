@@ -961,10 +961,11 @@ typedef struct PartitionCmd
 
 typedef enum ElementPatternKind
 {
-	VERTEX_PATTERN = 0,
+	VERTEX_PATTERN,
 	EDGE_PATTERN_LEFT,
 	EDGE_PATTERN_RIGHT,
 	EDGE_PATTERN_ANY,
+	PAREN_EXPR,
 } ElementPatternKind;
 
 typedef struct ElementPattern
@@ -973,7 +974,9 @@ typedef struct ElementPattern
 	ElementPatternKind kind;
 	const char *variable;
 	Node	   *labelexpr;
+	List	   *subexpr;
 	Node	   *whereClause;
+	List	   *quantifier;
 	int			location;
 } ElementPattern;
 

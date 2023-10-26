@@ -677,14 +677,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <ival>	vertex_or_edge
 
 %type <list>	graph_pattern
-				graph_pattern_quantifier
+				opt_graph_pattern_quantifier
 				path_pattern_list
-%type <node>	path_pattern
+				path_pattern
 				path_pattern_expression
 				path_term
-				path_factor
+%type <node>	path_factor
 				path_primary
-				element_pattern
 				opt_is_label_expression
 				label_expression
 				label_disjunction
@@ -17105,30 +17104,25 @@ path_pattern:
 
 path_pattern_expression:
 			path_term								{ $$ = $1; }
+			/* | path_multiset_alternation */
+			/* | path_pattern_union */
 		;
 
 path_term:
-			path_factor
-			| path_term path_factor
+			path_factor								{ $$ = list_make1($1); }
+			| path_term path_factor					{ $$ = lappend($1, $2); }
 		;
 
 path_factor:
-			path_primary
-			| path_primary graph_pattern_quantifier
+			path_primary opt_graph_pattern_quantifier
+				{
+					ElementPattern *ep = (ElementPattern *) $1;
+
+					ep->quantifier = $2;
+				}
 		;
 
 path_primary:
-			element_pattern
-				{
-					$$ = $1;
-				}
-			| '(' path_pattern_expression where_clause ')'
-				{
-					$$ = NULL;	// TODO
-				}
-		;
-
-element_pattern:
 			'(' opt_colid opt_is_label_expression where_clause ')'
 				{
 					ElementPattern *ep = makeNode(ElementPattern);
@@ -17208,6 +17202,17 @@ element_pattern:
 
 					$$ = (Node *) ep;
 				}
+			| '(' path_pattern_expression where_clause ')'
+				{
+					ElementPattern *ep = makeNode(ElementPattern);
+
+					ep->kind = PAREN_EXPR;
+					ep->subexpr = $2;
+					ep->whereClause = $3;
+					ep->location = @1;
+
+					$$ = (Node *) ep;
+				}
 		;
 
 opt_colid:
@@ -17225,10 +17230,11 @@ opt_is_label_expression:
  * graph pattern quantifier
  */
 
-graph_pattern_quantifier:
+opt_graph_pattern_quantifier:
 			LEFT_BRACE Iconst RIGHT_BRACE				{ $$ = list_make2_int($2, $2); }
 			| LEFT_BRACE ',' Iconst RIGHT_BRACE			{ $$ = list_make2_int(0, $3); }
 			| LEFT_BRACE Iconst ',' Iconst RIGHT_BRACE	{ $$ = list_make2_int($2, $4); }
+			| /*EMPTY*/									{ $$ = NULL; }
 		;
 
 /*
