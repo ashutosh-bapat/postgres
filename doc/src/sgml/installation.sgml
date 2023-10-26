@@ -2090,9 +2090,9 @@ ninja
     configure with the <option>--backend</option> option to select the one you
     want to use and then build using <literal>meson compile</literal>. To
     learn more about these backends and other arguments you can provide to
-    ninja, you can refer to the meson <ulink
+    ninja, you can refer to the <ulink
     url="https://mesonbuild.com/Running-Meson.html#building-from-the-source">
-    documentation</ulink>.
+    Meson documentation</ulink>.
    </para>
   </step>
 
@@ -2743,8 +2743,8 @@ ninja install
        <para>
         The default backend Meson uses is ninja and that should suffice for
         most use cases.  However, if you'd like to fully integrate with Visual
-        Studio, you can set the <option>BACKEND</option> to
-        <command>vs</command>.
+        Studio, you can set the <replaceable>BACKEND</replaceable> to
+        <literal>vs</literal>.
        </para>
       </listitem>
      </varlistentry>

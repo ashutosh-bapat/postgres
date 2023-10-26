@@ -72,7 +72,7 @@ typedef enum
 	PGC_SU_BACKEND,
 	PGC_BACKEND,
 	PGC_SUSET,
-	PGC_USERSET
+	PGC_USERSET,
 } GucContext;
 
 /*
@@ -119,7 +119,7 @@ typedef enum
 	PGC_S_OVERRIDE,				/* special case to forcibly set default */
 	PGC_S_INTERACTIVE,			/* dividing line for error reporting */
 	PGC_S_TEST,					/* test per-database or per-user setting */
-	PGC_S_SESSION				/* SET command */
+	PGC_S_SESSION,				/* SET command */
 } GucSource;
 
 /*
@@ -196,7 +196,7 @@ typedef enum
 	/* Types of set_config_option actions */
 	GUC_ACTION_SET,				/* regular SET command */
 	GUC_ACTION_LOCAL,			/* SET LOCAL command */
-	GUC_ACTION_SAVE				/* function SET option, or temp assignment */
+	GUC_ACTION_SAVE,			/* function SET option, or temp assignment */
 } GucAction;
 
 #define GUC_QUALIFIER_SEPARATOR '.'
@@ -363,7 +363,7 @@ extern const char *GetConfigOptionResetString(const char *name);
 extern int	GetConfigOptionFlags(const char *name, bool missing_ok);
 extern void ProcessConfigFile(GucContext context);
 extern char *convert_GUC_name_for_parameter_acl(const char *name);
-extern bool check_GUC_name_for_parameter_acl(const char *name);
+extern void check_GUC_name_for_parameter_acl(const char *name);
 extern void InitializeGUCOptions(void);
 extern bool SelectConfigFiles(const char *userDoption, const char *progname);
 extern void ResetAllOptions(void);
