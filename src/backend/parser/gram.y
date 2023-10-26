@@ -686,6 +686,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				path_primary
 				element_pattern
 				opt_is_label_expression
+				label_expression
+				label_disjunction
+				label_term
 %type <str>		opt_colid
 
 
@@ -17213,8 +17216,8 @@ opt_colid:
 		;
 
 opt_is_label_expression:
-			IS label_expression		{ $$ = NULL; /*TODO*/ }
-			| ':' label_expression	{ $$ = NULL; /*TODO*/ }
+			IS label_expression		{ $$ = $2; }
+			| ':' label_expression	{ $$ = $2; }
 			| /*EMPTY*/				{ $$ = NULL; }
 		;
 
@@ -17239,10 +17242,12 @@ label_expression:
 
 label_disjunction:
 			label_expression '|' label_term
+				{ $$ = makeOrExpr($1, $3, @2); }
 		;
 
 label_term:
 			name
+				{ $$ = makeColumnRef($1, NIL, @1, yyscanner); }
 		;
 
 
