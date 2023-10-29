@@ -11841,10 +11841,31 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				get_tablefunc(rte->tablefunc, context, true);
 				break;
 			case RTE_GRAPH_TABLE:
-				appendStringInfo(buf, "GRAPH_TABLE (%s MATCH ",
-								 generate_relation_name(rte->relid, context->namespaces));
+				appendStringInfoString(buf, "GRAPH_TABLE (");
+				appendStringInfoString(buf, generate_relation_name(rte->relid, context->namespaces));
+				appendStringInfoString(buf, " MATCH ");
 				get_graph_pattern_def(rte->graph_pattern, context);
-				appendStringInfo(buf, " COLUMNS %s)", "TODO");
+				appendStringInfoString(buf, " COLUMNS (");
+				{
+					ListCell   *lc;
+					bool		first = true;
+
+					foreach(lc, rte->eref->colnames)
+					{
+						char	   *colname = strVal(lfirst(lc));
+
+						if (!first)
+						{
+							appendStringInfoString(buf, ", ");
+							first = false;
+						}
+						appendStringInfoString(buf, "TODO");
+						appendStringInfoString(buf, " AS ");
+						appendStringInfoString(buf, quote_identifier(colname));
+					}
+				}
+				appendStringInfoString(buf, ")");
+				appendStringInfoString(buf, ")");
 				break;
 			case RTE_VALUES:
 				/* Values list RTE */

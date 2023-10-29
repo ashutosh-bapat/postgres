@@ -52,10 +52,10 @@ SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE addres
 ERROR:  GRAPH_TABLE is not implemented
 CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'USA')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
 SELECT pg_get_viewdef('customers_us'::regclass);
-                                         pg_get_viewdef                                         
-------------------------------------------------------------------------------------------------
-  SELECT customer_name                                                                         +
-    FROM GRAPH_TABLE (myshop MATCH (c IS TODO WHERE TODO)-[IS TODO]->(o IS TODO) COLUMNS TODO);
+                                                  pg_get_viewdef                                                   
+-------------------------------------------------------------------------------------------------------------------
+  SELECT customer_name                                                                                            +
+    FROM GRAPH_TABLE (myshop MATCH (c IS TODO WHERE TODO)-[IS TODO]->(o IS TODO) COLUMNS (TODO AS customer_name));
 (1 row)
 
 -- TODO: leave some for pg_upgrade/pg_dump tests
