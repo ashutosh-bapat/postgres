@@ -7519,6 +7519,119 @@ get_utility_query_def(Query *query, deparse_context *context)
 	}
 }
 
+
+static void
+get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
+{
+	StringInfo	buf = context->buf;
+	ListCell   *lc;
+
+	foreach(lc, path_pattern_expr)
+	{
+		ElementPattern *ep = lfirst_node(ElementPattern, lc);
+		const char *sep = "";
+
+		switch (ep->kind)
+		{
+			case VERTEX_PATTERN:
+				appendStringInfoString(buf, "(");
+				break;
+			case EDGE_PATTERN_LEFT:
+				appendStringInfoString(buf, "<-[");
+				break;
+			case EDGE_PATTERN_RIGHT:
+			case EDGE_PATTERN_ANY:
+				appendStringInfoString(buf, "-[");
+				break;
+			case PAREN_EXPR:
+				appendStringInfoString(buf, "(");
+				break;
+		}
+
+		if (ep->variable)
+		{
+			appendStringInfoString(buf, ep->variable);
+			sep = " ";
+		}
+
+		if (ep->labelexpr)
+		{
+			appendStringInfoString(buf, sep);
+			appendStringInfoString(buf, "IS ");
+			appendStringInfoString(buf, "TODO");
+			sep = " ";
+		}
+
+		if (ep->subexpr)
+		{
+			appendStringInfoString(buf, sep);
+			get_path_pattern_expr_def(ep->subexpr, context);
+			sep = " ";
+		}
+
+		if (ep->whereClause)
+		{
+			appendStringInfoString(buf, sep);
+			appendStringInfoString(buf, "WHERE ");
+			appendStringInfoString(buf, "TODO");
+		}
+
+		switch (ep->kind)
+		{
+			case VERTEX_PATTERN:
+				appendStringInfoString(buf, ")");
+				break;
+			case EDGE_PATTERN_LEFT:
+			case EDGE_PATTERN_ANY:
+				appendStringInfoString(buf, "]-");
+				break;
+			case EDGE_PATTERN_RIGHT:
+				appendStringInfoString(buf, "]->");
+				break;
+			case PAREN_EXPR:
+				appendStringInfoString(buf, ")");
+				break;
+		}
+
+		if (ep->quantifier)
+		{
+			int			lower = linitial_int(ep->quantifier);
+			int			upper = lsecond_int(ep->quantifier);
+
+			appendStringInfo(buf, "{%d,%d}", lower, upper);
+		}
+	}
+}
+
+static void
+get_graph_pattern_def(List *graph_pattern, deparse_context *context)
+{
+	StringInfo	buf = context->buf;
+	List	   *path_pattern_list = linitial_node(List, graph_pattern);
+	Node	   *where_clause = lsecond(graph_pattern);
+	ListCell   *lc;
+	bool		first = true;
+
+	foreach(lc, path_pattern_list)
+	{
+		List	   *path_pattern_expr = lfirst_node(List, lc);
+
+		if (!first)
+		{
+			appendStringInfoString(buf, ", ");
+			first = false;
+		}
+
+		get_path_pattern_expr_def(path_pattern_expr, context);
+	}
+
+	if (where_clause)
+	{
+		appendStringInfoString(buf, "WHERE ");
+		get_rule_expr(where_clause, context, false);
+	}
+}
+
 /*
  * Display a Var appropriately.
  *
@@ -11728,9 +11841,10 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				get_tablefunc(rte->tablefunc, context, true);
 				break;
 			case RTE_GRAPH_TABLE:
-				appendStringInfo(buf, "GRAPH_TABLE (%s MATCH %s COLUMNS %s)",
-								 generate_relation_name(rte->relid, context->namespaces),
-								 "TODO", "TODO");
+				appendStringInfo(buf, "GRAPH_TABLE (%s MATCH ",
+								 generate_relation_name(rte->relid, context->namespaces));
+				get_graph_pattern_def(rte->graph_pattern, context);
+				appendStringInfo(buf, " COLUMNS %s)", "TODO");
 				break;
 			case RTE_VALUES:
 				/* Values list RTE */
