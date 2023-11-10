@@ -2131,6 +2131,7 @@ ParseNamespaceItem *
 addRangeTableEntryForGraphTable(ParseState *pstate,
 								Oid graphid,
 								List *graph_pattern,
+								List *columns,
 								List *colnames,
 								List *coltypes,
 								List *coltypmods,
@@ -2149,6 +2150,7 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	rte->relid = graphid;
 	rte->relkind = RELKIND_PROPGRAPH;
 	rte->graph_pattern = graph_pattern;
+	rte->graph_table_columns = columns;
 	rte->coltypes = coltypes;
 	rte->coltypmods = coltypmods;
 	rte->colcollations = colcollations;

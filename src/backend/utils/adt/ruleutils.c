@@ -10214,6 +10214,14 @@ get_rule_expr(Node *node, deparse_context *context,
 			get_tablefunc((TableFunc *) node, context, showimplicit);
 			break;
 
+		case T_PropertyRef:
+			{
+				PropertyRef *pr = (PropertyRef *) node;
+
+				appendStringInfo(buf, "%s.%s", quote_identifier(pr->elvarname), quote_identifier(pr->propname));
+				break;
+			}
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
@@ -11847,19 +11855,24 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				get_graph_pattern_def(rte->graph_pattern, context);
 				appendStringInfoString(buf, " COLUMNS (");
 				{
-					ListCell   *lc;
+					ListCell   *lc1, *lc2;
 					bool		first = true;
 
-					foreach(lc, rte->eref->colnames)
+					forboth(lc1, rte->graph_table_columns, lc2, rte->eref->colnames)
 					{
-						char	   *colname = strVal(lfirst(lc));
+						Node	   *n = lfirst(lc1);
+						char	   *colname = strVal(lfirst(lc2));
+						deparse_context context = {0};
 
 						if (!first)
 						{
 							appendStringInfoString(buf, ", ");
 							first = false;
 						}
-						appendStringInfoString(buf, "TODO");
+
+						context.buf = buf;
+
+						get_rule_expr(n, &context, false);
 						appendStringInfoString(buf, " AS ");
 						appendStringInfoString(buf, quote_identifier(colname));
 					}

@@ -1188,6 +1188,7 @@ typedef struct RangeTblEntry
 	 * Fields valid for a graph table RTE (else NULL):
 	 */
 	List	   *graph_pattern;
+	List	   *graph_table_columns;
 
 	/*
 	 * Fields valid for a values RTE (else NIL):

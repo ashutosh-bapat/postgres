@@ -900,6 +900,93 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 										  tf, rtf->alias, is_lateral, true);
 }
 
+typedef struct GraphTableParseState
+{
+	List *variables;
+} GraphTableParseState;
+
+static Node *
+transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
+{
+	if (ep->variable)
+		gpstate->variables = lappend(gpstate->variables, makeString(pstrdup(ep->variable)));
+	return (Node *) ep;
+}
+
+static Node *
+transformPathTerm(GraphTableParseState *gpstate, List *path_term)
+{
+	List *result = NIL;
+	ListCell *lc;
+
+	foreach(lc, path_term)
+	{
+		Node *n = transformElementPattern(gpstate, lfirst_node(ElementPattern, lc));
+
+		result = lappend(result, n);
+	}
+
+	return (Node *) result;
+}
+
+static Node *
+transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
+{
+	List *result = NIL;
+	ListCell *lc;
+
+	foreach(lc, path_pattern)
+	{
+		Node *n = transformPathTerm(gpstate, lfirst(lc));
+
+		result = lappend(result, n);
+	}
+
+	return (Node *) result;
+}
+
+static Node *
+transformGraphPattern(GraphTableParseState *gpstate, List *graph_pattern)
+{
+	Node *ppl;
+	Node *wc;
+
+	ppl = transformPathPatternList(gpstate, linitial(graph_pattern));
+	wc = lsecond(graph_pattern); // TODO
+
+	return (Node *) list_make2(ppl, wc);
+}
+
+static Node *
+graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
+{
+	GraphTableParseState *gpstate = pstate->p_ref_hook_state;
+
+	if (list_length(cref->fields) == 2)
+	{
+		Node	   *field1 = linitial(cref->fields);
+		Node	   *field2 = lsecond(cref->fields);
+		char	   *elvarname;
+		char       *propname;
+		PropertyRef *pr;
+
+		elvarname = strVal(field1);
+		propname = strVal(field2);
+
+		(void) gpstate; // FIXME
+
+		pr = makeNode(PropertyRef);
+		pr->elvarname = elvarname;
+		pr->propname = propname;
+		pr->location = cref->location;
+
+		return (Node *) pr;
+	}
+
+	elog(ERROR, "invalid property reference");
+	return NULL;
+}
+
 /*
  * transformRangeGraphTable
  *
@@ -910,6 +997,10 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 {
 	Relation	rel;
 	Oid			graphid;
+	ParseState *pstate2;
+	GraphTableParseState *gpstate = palloc0_object(GraphTableParseState);
+	Node	   *gp;
+	List	   *columns = NIL;
 	List	   *colnames = NIL;
 	List	   *coltypes = NIL;
 	List	   *coltypmods = NIL;
@@ -926,6 +1017,12 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 	graphid = RelationGetRelid(rel);
 
+	gp = transformGraphPattern(gpstate, rgt->graph_pattern);
+
+	pstate2 = make_parsestate(NULL);
+	pstate2->p_pre_columnref_hook = graph_table_property_reference;
+	pstate2->p_ref_hook_state = gpstate;
+
 	foreach(lc, rgt->columns)
 	{
 		ResTarget  *rt = lfirst_node(ResTarget, lc);
@@ -938,6 +1035,8 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 		colnames = lappend(colnames, makeString(colname));
 
+		columns = lappend(columns, transformExpr(pstate2, rt->val, EXPR_KIND_OTHER));
+
 		// FIXME
 		coltypes = lappend_oid(coltypes, TEXTOID);
 		coltypmods = lappend_int(coltypmods, -1);
@@ -946,7 +1045,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 	table_close(rel, NoLock);
 
-	return addRangeTableEntryForGraphTable(pstate, graphid, rgt->graph_pattern, colnames, coltypes, coltypmods, colcollations, rgt->alias, false, true);
+	return addRangeTableEntryForGraphTable(pstate, graphid, (List *) gp, columns, colnames, coltypes, coltypmods, colcollations, rgt->alias, false, true);
 }
 
 /*

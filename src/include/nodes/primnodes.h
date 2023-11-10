@@ -1860,6 +1860,17 @@ typedef struct InferenceElem
 	Oid			inferopclass;	/* OID of att opclass, or InvalidOid */
 } InferenceElem;
 
+/*
+ * PropertyRef - property reference inside GRAPH_TABLE clause
+ */
+typedef struct PropertyRef
+{
+	Expr		xpr;
+	const char *elvarname;
+	const char *propname;
+	int			location;
+} PropertyRef;
+
 /*--------------------
  * TargetEntry -
  *	   a target entry (used in query target lists)
