@@ -23,7 +23,9 @@
 #include "catalog/pg_type.h"
 #include "common/hashfn.h"
 #include "common/int.h"
+#include "common/unicode_category.h"
 #include "common/unicode_norm.h"
+#include "common/unicode_version.h"
 #include "funcapi.h"
 #include "lib/hyperloglog.h"
 #include "libpq/pqformat.h"
@@ -5289,12 +5291,11 @@ string_agg_deserialize(PG_FUNCTION_ARGS)
 	sstate = PG_GETARG_BYTEA_PP(0);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makeStringAggState(fcinfo);
 
@@ -5307,7 +5308,6 @@ string_agg_deserialize(PG_FUNCTION_ARGS)
 	appendBinaryStringInfo(result, data, datalen);
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	PG_RETURN_POINTER(result);
 }
@@ -6237,6 +6237,65 @@ unicode_norm_form_from_string(const char *formstr)
 				 errmsg("invalid normalization form: %s", formstr)));
 
 	return form;
+}
+
+/*
+ * Returns version of Unicode used by Postgres in "major.minor" format (the
+ * same format as the Unicode version reported by ICU). The third component
+ * ("update version") never involves additions to the character repertiore and
+ * is unimportant for most purposes.
+ *
+ * See: https://unicode.org/versions/
+ */
+Datum
+unicode_version(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_TEXT_P(cstring_to_text(PG_UNICODE_VERSION));
+}
+
+/*
+ * Returns version of Unicode used by ICU, if enabled; otherwise NULL.
+ */
+Datum
+icu_unicode_version(PG_FUNCTION_ARGS)
+{
+#ifdef USE_ICU
+	PG_RETURN_TEXT_P(cstring_to_text(U_UNICODE_VERSION));
+#else
+	PG_RETURN_NULL();
+#endif
+}
+
+/*
+ * Check whether the string contains only assigned Unicode code
+ * points. Requires that the database encoding is UTF-8.
+ */
+Datum
+unicode_assigned(PG_FUNCTION_ARGS)
+{
+	text	   *input = PG_GETARG_TEXT_PP(0);
+	unsigned char *p;
+	int			size;
+
+	if (GetDatabaseEncoding() != PG_UTF8)
+		ereport(ERROR,
+				(errmsg("Unicode categorization can only be performed if server encoding is UTF8")));
+
+	/* convert to pg_wchar */
+	size = pg_mbstrlen_with_len(VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+	p = (unsigned char *) VARDATA_ANY(input);
+	for (int i = 0; i < size; i++)
+	{
+		pg_wchar	uchar = utf8_to_unicode(p);
+		int			category = unicode_category(uchar);
+
+		if (category == PG_U_UNASSIGNED)
+			PG_RETURN_BOOL(false);
+
+		p += pg_utf_mblen(p);
+	}
+
+	PG_RETURN_BOOL(true);
 }
 
 Datum

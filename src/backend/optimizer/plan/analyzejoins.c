@@ -35,20 +35,6 @@
 #include "utils/lsyscache.h"
 
 /*
- * UniqueRelInfo caches a fact that a relation is unique when being joined
- * to other relation(s) specified by outerrelids.
- * 'extra_clauses' contains additional clauses from a baserestrictinfo list that
- * were used to prove uniqueness. We cache it for the SJ checking procedure: SJ
- * can be removed if the outer relation contains strictly the same set of
- * clauses.
- */
-typedef struct UniqueRelInfo
-{
-	Relids		outerrelids;
-	List	   *extra_clauses;
-} UniqueRelInfo;
-
-/*
  * The context for replace_varno_walker() containing source and target relids.
  */
 typedef struct
@@ -488,9 +474,9 @@ remove_rel_from_query(PlannerInfo *root, RelOptInfo *rel,
 			/* ph_needed might or might not become empty */
 			phv->phrels = replace_relid(phv->phrels, relid, subst);
 			phv->phrels = replace_relid(phv->phrels, ojrelid, subst);
-			phinfo->ph_lateral = replace_relid(phinfo->ph_lateral, relid, subst);
-			phinfo->ph_var->phrels = replace_relid(phinfo->ph_var->phrels, relid, subst);
 			Assert(!bms_is_empty(phv->phrels));
+			replace_varno((Node *) phv->phexpr, relid, subst);
+			phinfo->ph_lateral = replace_relid(phinfo->ph_lateral, relid, subst);
 			Assert(phv->phnullingrels == NULL); /* no need to adjust */
 		}
 	}
@@ -1335,7 +1321,7 @@ innerrel_is_unique_ext(PlannerInfo *root,
 		 * supersets of them anyway.
 		 */
 		old_context = MemoryContextSwitchTo(root->planner_cxt);
-		uniqueRelInfo = palloc(sizeof(UniqueRelInfo));
+		uniqueRelInfo = makeNode(UniqueRelInfo);
 		uniqueRelInfo->extra_clauses = outer_exprs;
 		uniqueRelInfo->outerrelids = bms_copy(outerrelids);
 		innerrel->unique_for_rels = lappend(innerrel->unique_for_rels,
