@@ -2222,6 +2222,7 @@ find_expr_references_walker(Node *node,
 			switch (rte->rtekind)
 			{
 				case RTE_RELATION:
+				case RTE_GRAPH_TABLE:
 					add_object_address(OCLASS_CLASS, rte->relid, 0,
 									   context->addrs);
 					break;

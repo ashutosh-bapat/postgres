@@ -58,13 +58,5 @@ SELECT pg_get_viewdef('customers_us'::regclass);
     FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE ((c.address)::text = 'US'::text))-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
 (1 row)
 
--- TODO: leave some for pg_upgrade/pg_dump tests
-DROP SCHEMA graph_table_tests CASCADE;
-NOTICE:  drop cascades to 7 other objects
-DETAIL:  drop cascades to table products
-drop cascades to table customers
-drop cascades to table orders
-drop cascades to table order_items
-drop cascades to table customer_orders
-drop cascades to property graph myshop
-drop cascades to view customers_us
+-- leave for pg_upgrade/pg_dump tests
+--DROP SCHEMA graph_table_tests CASCADE;

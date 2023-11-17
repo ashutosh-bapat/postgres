@@ -55,5 +55,5 @@ CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH 
 
 SELECT pg_get_viewdef('customers_us'::regclass);
 
--- TODO: leave some for pg_upgrade/pg_dump tests
-DROP SCHEMA graph_table_tests CASCADE;
+-- leave for pg_upgrade/pg_dump tests
+--DROP SCHEMA graph_table_tests CASCADE;
