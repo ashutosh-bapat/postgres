@@ -7573,7 +7573,7 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 		{
 			appendStringInfoString(buf, sep);
 			appendStringInfoString(buf, "WHERE ");
-			appendStringInfoString(buf, "TODO");
+			get_rule_expr(ep->whereClause, context, false);
 		}
 
 		switch (ep->kind)

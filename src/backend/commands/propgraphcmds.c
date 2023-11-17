@@ -25,6 +25,7 @@
 #include "catalog/pg_propgraph_property.h"
 #include "commands/propgraphcmds.h"
 #include "commands/tablecmds.h"
+#include "nodes/nodeFuncs.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "utils/builtins.h"
@@ -60,8 +61,8 @@ static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_claus
 static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid insert_label_record(Oid peoid, const char *label);
-static void insert_property_records(Oid labeloid, Oid pgerelid, PropGraphProperties *properties);
-static void insert_property_record(Oid labeloid, const char *propname, Expr *expr);
+static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProperties *properties);
+static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *expr);
 static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_element_relid(Oid peid);
@@ -358,6 +359,7 @@ int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Re
 static void
 insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 {
+	Oid			graphid = pgaddress.objectId;
 	Relation	rel;
 	NameData	aliasname;
 	Oid			peoid;
@@ -372,7 +374,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	peoid = GetNewOidWithIndex(rel, PropgraphElementObjectIndexId, Anum_pg_propgraph_element_oid);
 	einfo->elementid = peoid;
 	values[Anum_pg_propgraph_element_oid - 1] = ObjectIdGetDatum(peoid);
-	values[Anum_pg_propgraph_element_pgepgid - 1] = ObjectIdGetDatum(pgaddress.objectId);
+	values[Anum_pg_propgraph_element_pgepgid - 1] = ObjectIdGetDatum(graphid);
 	values[Anum_pg_propgraph_element_pgerelid - 1] = ObjectIdGetDatum(einfo->relid);
 	namestrcpy(&aliasname, einfo->aliasname);
 	values[Anum_pg_propgraph_element_pgealias - 1] = NameGetDatum(&aliasname);
@@ -439,7 +441,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 				labeloid = insert_label_record(peoid, lp->label);
 			else
 				labeloid = insert_label_record(peoid, einfo->aliasname);
-			insert_property_records(labeloid, einfo->relid, lp->properties);
+			insert_property_records(graphid, labeloid, einfo->relid, lp->properties);
 		}
 	}
 	else
@@ -451,7 +453,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		pr->location = -1;
 
 		labeloid = insert_label_record(peoid, einfo->aliasname);
-		insert_property_records(labeloid, einfo->relid, pr);
+		insert_property_records(graphid, labeloid, einfo->relid, pr);
 	}
 }
 
@@ -491,7 +493,7 @@ insert_label_record(Oid peoid, const char *label)
 }
 
 static void
-insert_property_records(Oid labeloid, Oid pgerelid, PropGraphProperties *properties)
+insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProperties *properties)
 {
 	List	   *proplist = NIL;
 	ParseState *pstate;
@@ -573,12 +575,12 @@ insert_property_records(Oid labeloid, Oid pgerelid, PropGraphProperties *propert
 	{
 		TargetEntry *te = lfirst_node(TargetEntry, lc);
 
-		insert_property_record(labeloid, te->resname, te->expr);
+		insert_property_record(graphid, labeloid, te->resname, te->expr);
 	}
 }
 
 static void
-insert_property_record(Oid labeloid, const char *propname, Expr *expr)
+insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *expr)
 {
 	Relation	rel;
 	NameData	propnamedata;
@@ -593,8 +595,10 @@ insert_property_record(Oid labeloid, const char *propname, Expr *expr)
 
 	propoid = GetNewOidWithIndex(rel, PropgraphPropertyObjectIndexId, Anum_pg_propgraph_property_oid);
 	values[Anum_pg_propgraph_property_oid - 1] = ObjectIdGetDatum(propoid);
+	values[Anum_pg_propgraph_property_pgppgid - 1] = ObjectIdGetDatum(graphid);
 	namestrcpy(&propnamedata, propname);
 	values[Anum_pg_propgraph_property_pgpname - 1] = NameGetDatum(&propnamedata);
+	values[Anum_pg_propgraph_property_pgptypid - 1] = ObjectIdGetDatum(exprType((Node *) expr));
 	values[Anum_pg_propgraph_property_pgplabelid - 1] = ObjectIdGetDatum(labeloid);
 	values[Anum_pg_propgraph_property_pgpexpr - 1] = CStringGetTextDatum(nodeToString(expr));
 
@@ -774,7 +778,7 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 		pgerelid = get_element_relid(peoid);
 
 		labeloid = insert_label_record(peoid, lp->label);
-		insert_property_records(labeloid, pgerelid, lp->properties);
+		insert_property_records(pgrelid, labeloid, pgerelid, lp->properties);
 	}
 
 	if (stmt->drop_label)
@@ -827,7 +831,7 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
 					parser_errposition(pstate, -1));
 
-		insert_property_records(labeloid, pgerelid, stmt->add_properties);
+		insert_property_records(pgrelid, labeloid, pgerelid, stmt->add_properties);
 	}
 
 	if (stmt->drop_properties)

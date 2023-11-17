@@ -25,6 +25,7 @@
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "miscadmin.h"
@@ -46,6 +47,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
+#include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -900,16 +902,113 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 										  tf, rtf->alias, is_lateral, true);
 }
 
+static Oid
+get_property_type(Oid graphid, const char *propname)
+{
+	Relation	rel;
+	SysScanDesc	scan;
+	ScanKeyData	key[2];
+	HeapTuple	tuple;
+	Oid			result = InvalidOid;
+
+	rel = table_open(PropgraphPropertyRelationId, RowShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_property_pgppgid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
+				Anum_pg_propgraph_property_pgpname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				CStringGetDatum(propname));
+
+	scan = systable_beginscan(rel, PropgraphPropertyGraphNameIndexId, true, NULL, 2, key);
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_property prop = (Form_pg_propgraph_property) GETSTRUCT(tuple);
+
+		result = prop->pgptypid;
+		break;
+	}
+
+	systable_endscan(scan);
+	table_close(rel, RowShareLock);
+
+	if (!result)
+		elog(ERROR, "property \"%s\" does not exist", propname);
+
+	return result;
+}
+
 typedef struct GraphTableParseState
 {
+	Oid graphid;
 	List *variables;
+	const char *localvar;
 } GraphTableParseState;
+
+static Node *
+graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
+{
+	GraphTableParseState *gpstate = pstate->p_ref_hook_state;
+	PropertyRef *pr = makeNode(PropertyRef);
+
+	pr->location = cref->location;
+
+	if (list_length(cref->fields) == 2)
+	{
+		Node	   *field1 = linitial(cref->fields);
+		Node	   *field2 = lsecond(cref->fields);
+		char	   *elvarname;
+		char       *propname;
+
+		elvarname = strVal(field1);
+		propname = strVal(field2);
+
+		(void) gpstate; // FIXME
+
+		pr->elvarname = elvarname;
+		pr->propname = propname;
+
+	}
+	else if (list_length(cref->fields) == 1 &&
+		gpstate->localvar)
+	{
+		Node	   *field = linitial(cref->fields);
+		char	   *elvarname;
+		char       *propname;
+
+		elvarname = pstrdup(gpstate->localvar);
+		propname = strVal(field);
+
+		(void) gpstate; // FIXME
+
+		pr->elvarname = elvarname;
+		pr->propname = propname;
+	}
+	else
+		elog(ERROR, "invalid property reference");
+
+	pr->typeId = get_property_type(gpstate->graphid, pr->propname);
+
+	return (Node *) pr;
+}
 
 static Node *
 transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
 {
+	ParseState *pstate2;
+
+	pstate2 = make_parsestate(NULL);
+	pstate2->p_pre_columnref_hook = graph_table_property_reference;
+	pstate2->p_ref_hook_state = gpstate;
+
 	if (ep->variable)
 		gpstate->variables = lappend(gpstate->variables, makeString(pstrdup(ep->variable)));
+
+	gpstate->localvar = ep->variable;
+	ep->whereClause = transformExpr(pstate2, ep->whereClause, EXPR_KIND_OTHER);
+	gpstate->localvar = NULL;
+
 	return (Node *) ep;
 }
 
@@ -957,36 +1056,6 @@ transformGraphPattern(GraphTableParseState *gpstate, List *graph_pattern)
 	return (Node *) list_make2(ppl, wc);
 }
 
-static Node *
-graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
-{
-	GraphTableParseState *gpstate = pstate->p_ref_hook_state;
-
-	if (list_length(cref->fields) == 2)
-	{
-		Node	   *field1 = linitial(cref->fields);
-		Node	   *field2 = lsecond(cref->fields);
-		char	   *elvarname;
-		char       *propname;
-		PropertyRef *pr;
-
-		elvarname = strVal(field1);
-		propname = strVal(field2);
-
-		(void) gpstate; // FIXME
-
-		pr = makeNode(PropertyRef);
-		pr->elvarname = elvarname;
-		pr->propname = propname;
-		pr->location = cref->location;
-
-		return (Node *) pr;
-	}
-
-	elog(ERROR, "invalid property reference");
-	return NULL;
-}
-
 /*
  * transformRangeGraphTable
  *
@@ -1016,6 +1085,8 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 				parser_errposition(pstate, rgt->graph_name->location));
 
 	graphid = RelationGetRelid(rel);
+
+	gpstate->graphid = graphid;
 
 	gp = transformGraphPattern(gpstate, rgt->graph_pattern);
 

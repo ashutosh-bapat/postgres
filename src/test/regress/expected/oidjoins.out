@@ -271,4 +271,6 @@ NOTICE:  checking pg_propgraph_element {pgerelid} => pg_class {oid}
 NOTICE:  checking pg_propgraph_element {pgesrcvertexid} => pg_propgraph_element {oid}
 NOTICE:  checking pg_propgraph_element {pgedestvertexid} => pg_propgraph_element {oid}
 NOTICE:  checking pg_propgraph_label {pglelid} => pg_propgraph_element {oid}
+NOTICE:  checking pg_propgraph_property {pgppgid} => pg_class {oid}
+NOTICE:  checking pg_propgraph_property {pgptypid} => pg_type {oid}
 NOTICE:  checking pg_propgraph_property {pgplabelid} => pg_propgraph_label {oid}

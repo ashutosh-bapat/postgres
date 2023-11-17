@@ -29,8 +29,20 @@ CATALOG(pg_propgraph_property,8306,PropgraphPropertyRelationId)
 {
 	Oid			oid;
 
+	/*
+	 * OID of the property graph relation.  This can also be found out by
+	 * chasing via pgplabelid, but having it here is more efficient.
+	 */
+	Oid         pgppgid BKI_LOOKUP(pg_class);
+
 	/* property name */
 	NameData	pgpname;
+
+	/*
+	 * Type of the property.  (This can be computed from pgpexpr, but storing
+	 * it makes parsing GRAPH_TABLE more efficient.)
+	 */
+	Oid			pgptypid BKI_LOOKUP_OPT(pg_type);
 
 	/* OID of the label */
 	Oid			pgplabelid BKI_LOOKUP(pg_propgraph_label);
@@ -54,5 +66,7 @@ DECLARE_TOAST(pg_propgraph_property, 8309, 8310);
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_property_oid_index, 8307, PropgraphPropertyObjectIndexId, pg_propgraph_property, btree(oid oid_ops));
 DECLARE_UNIQUE_INDEX(pg_propgraph_property_name_index, 8308, PropgraphPropertyNameIndexId, pg_propgraph_property, btree(pgpname name_ops, pgplabelid oid_ops));
+
+DECLARE_INDEX(pg_propgraph_property_graph_name_index, 8311, PropgraphPropertyGraphNameIndexId, pg_propgraph_property, btree(pgppgid oid_ops, pgpname name_ops));
 
 #endif							/* PG_PROPGRAPH_PROPERTY_H */

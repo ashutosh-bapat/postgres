@@ -1868,6 +1868,7 @@ typedef struct PropertyRef
 	Expr		xpr;
 	const char *elvarname;
 	const char *propname;
+	Oid			typeId;
 	int			location;
 } PropertyRef;
 
