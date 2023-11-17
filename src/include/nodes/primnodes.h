@@ -1861,6 +1861,16 @@ typedef struct InferenceElem
 } InferenceElem;
 
 /*
+ * GraphLabelRef - label reference in label expression inside GRAPH_TABLE clause
+ */
+typedef struct GraphLabelRef
+{
+	NodeTag		type;
+	const char *labelname;
+	int			location;
+} GraphLabelRef;
+
+/*
  * PropertyRef - property reference inside GRAPH_TABLE clause
  */
 typedef struct PropertyRef

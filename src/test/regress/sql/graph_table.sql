@@ -51,7 +51,7 @@ SELECT customer_name FROM GRAPH_TABLE (xxx MATCH (c IS customers WHERE address =
 SELECT customer_name FROM GRAPH_TABLE (pg_class MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- error
 SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- TODO
 
-CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'USA')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
+CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
 
 SELECT pg_get_viewdef('customers_us'::regclass);
 

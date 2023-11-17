@@ -994,6 +994,63 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 }
 
 static Node *
+transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
+{
+	Node *result;
+
+	if (labelexpr == NULL)
+		return NULL;
+
+	check_stack_depth();
+
+	switch (nodeTag(labelexpr))
+	{
+		case T_ColumnRef:
+			{
+				ColumnRef *cref = (ColumnRef *) labelexpr;
+				const char *labelname;
+				GraphLabelRef *lref;
+
+				Assert(list_length(cref->fields) == 1);
+				labelname = strVal(linitial(cref->fields));
+
+				lref = makeNode(GraphLabelRef);
+				lref->labelname = labelname;
+				lref->location = cref->location;
+
+				result = (Node *) lref;
+				break;
+			}
+
+		case T_BoolExpr:
+			{
+				BoolExpr *be = (BoolExpr *) labelexpr;
+				ListCell *lc;
+				List	   *args = NIL;
+
+				foreach(lc, be->args)
+				{
+					Node	   *arg = (Node *) lfirst(lc);
+
+					arg = transformLabelExpr(gpstate, arg);
+					args = lappend(args, arg);
+				}
+
+				result = (Node *) makeBoolExpr(be->boolop, args, be->location);
+				break;
+			}
+
+		default:
+			/* should not reach here */
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(labelexpr));
+			result = NULL;		/* keep compiler quiet */
+			break;
+	}
+
+	return result;
+}
+
+static Node *
 transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
 {
 	ParseState *pstate2;
@@ -1004,6 +1061,8 @@ transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
 
 	if (ep->variable)
 		gpstate->variables = lappend(gpstate->variables, makeString(pstrdup(ep->variable)));
+
+	ep->labelexpr = transformLabelExpr(gpstate, ep->labelexpr);
 
 	gpstate->localvar = ep->variable;
 	ep->whereClause = transformExpr(pstate2, ep->whereClause, EXPR_KIND_OTHER);

@@ -7521,6 +7521,52 @@ get_utility_query_def(Query *query, deparse_context *context)
 
 
 static void
+get_graph_label_expr(Node *label_expr, deparse_context *context)
+{
+	StringInfo	buf = context->buf;
+
+	check_stack_depth();
+
+	switch (nodeTag(label_expr))
+	{
+		case T_GraphLabelRef:
+			{
+				GraphLabelRef *lref = (GraphLabelRef *) label_expr;
+
+				appendStringInfoString(buf, quote_identifier(lref->labelname));
+				break;
+			}
+
+		case T_BoolExpr:
+			{
+				BoolExpr *be = (BoolExpr *) label_expr;
+				ListCell *lc;
+				bool first = true;
+
+				Assert(be->boolop == OR_EXPR);
+
+				foreach(lc, be->args)
+				{
+					if (!first)
+					{
+						if (be->boolop == OR_EXPR)
+							appendStringInfoString(buf, "|");
+					}
+					else
+						first = false;
+					get_graph_label_expr(lfirst(lc), context);
+				}
+
+				break;
+			}
+
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(label_expr));
+			break;
+	}
+}
+
+static void
 get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 {
 	StringInfo	buf = context->buf;
@@ -7558,7 +7604,7 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 		{
 			appendStringInfoString(buf, sep);
 			appendStringInfoString(buf, "IS ");
-			appendStringInfoString(buf, "TODO");
+			get_graph_label_expr(ep->labelexpr, context);
 			sep = " ";
 		}
 
