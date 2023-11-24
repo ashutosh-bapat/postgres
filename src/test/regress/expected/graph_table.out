@@ -48,6 +48,10 @@ SELECT customer_name FROM GRAPH_TABLE (pg_class MATCH (c IS customers WHERE addr
 ERROR:  "pg_class" is not a property graph
 LINE 1: SELECT customer_name FROM GRAPH_TABLE (pg_class MATCH (c IS ...
                                                ^
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (cx.name AS customer_name));  -- error
+ERROR:  graph pattern variable "cx" does not exist
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.namex AS customer_name));  -- error
+ERROR:  property "namex" does not exist
 SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- TODO
 ERROR:  GRAPH_TABLE is not implemented
 CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));

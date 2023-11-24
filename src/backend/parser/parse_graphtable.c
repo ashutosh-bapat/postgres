@@ -59,7 +59,9 @@ get_property_type(Oid graphid, const char *propname)
 	table_close(rel, RowShareLock);
 
 	if (!result)
-		elog(ERROR, "property \"%s\" does not exist", propname);
+		ereport(ERROR,
+				errcode(ERRCODE_SYNTAX_ERROR),
+				errmsg("property \"%s\" does not exist", propname));
 
 	return result;
 }
@@ -82,7 +84,11 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 		elvarname = strVal(field1);
 		propname = strVal(field2);
 
-		(void) gpstate; // FIXME
+		if (!list_member(gpstate->variables, field1))
+			ereport(ERROR,
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("graph pattern variable \"%s\" does not exist", elvarname),
+					parser_errposition(pstate, cref->location));
 
 		pr->elvarname = elvarname;
 		pr->propname = propname;
@@ -98,7 +104,11 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 		elvarname = pstrdup(gpstate->localvar);
 		propname = strVal(field);
 
-		(void) gpstate; // FIXME
+		if (!list_member(gpstate->variables, makeString(elvarname)))
+			ereport(ERROR,
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("graph pattern variable \"%s\" does not exist", elvarname),
+					parser_errposition(pstate, cref->location));
 
 		pr->elvarname = elvarname;
 		pr->propname = propname;
@@ -224,11 +234,16 @@ transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
 Node *
 transformGraphPattern(GraphTableParseState *gpstate, List *graph_pattern)
 {
-	Node *ppl;
-	Node *wc;
+	Node *path_pattern_list = linitial(graph_pattern);
+	Node *where_clause = lsecond(graph_pattern);
+	ParseState *pstate2;
 
-	ppl = transformPathPatternList(gpstate, linitial(graph_pattern));
-	wc = lsecond(graph_pattern); // TODO
+	pstate2 = make_parsestate(NULL);
+	pstate2->p_pre_columnref_hook = graph_table_property_reference;
+	pstate2->p_ref_hook_state = gpstate;
 
-	return (Node *) list_make2(ppl, wc);
+	path_pattern_list = transformPathPatternList(gpstate, (List *) path_pattern_list);
+	where_clause = transformExpr(pstate2, where_clause, EXPR_KIND_OTHER);
+
+	return (Node *) list_make2(path_pattern_list, where_clause);
 }
