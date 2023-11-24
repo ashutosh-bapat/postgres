@@ -899,15 +899,15 @@ static const struct object_type_map
 	},
 	/* OCLASS_PROPGRAPH_ELEMENT */
 	{
-		"property graph element", -1 // TODO
+		"property graph element", -1
 	},
 	/* OCLASS_PROPGRAPH_LABEL */
 	{
-		"property graph label", -1 // TODO
+		"property graph label", -1
 	},
 	/* OCLASS_PROPGRAPH_PROPERTY */
 	{
-		"property graph property", -1 // TODO
+		"property graph property", -1
 	},
 	/* OCLASS_PUBLICATION */
 	{
