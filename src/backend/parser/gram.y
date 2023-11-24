@@ -840,6 +840,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token		MODE_PLPGSQL_ASSIGN2
 %token		MODE_PLPGSQL_ASSIGN3
 
+ /*
+  * FIXME: The brace characters are assigned token symbols because if we
+  * mention literal braces in the rules then the ecpg parser assembly breaks.
+  */
 %token		LEFT_BRACE RIGHT_BRACE
 
 /* Precedence: lowest to highest */
