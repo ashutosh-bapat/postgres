@@ -389,7 +389,9 @@ _jumbleRangeTblEntry(JumbleState *jstate, Node *node)
 			JUMBLE_STRING(enrname);
 			break;
 		case RTE_GRAPH_TABLE:
-			// TODO
+			JUMBLE_FIELD(relid);
+			JUMBLE_NODE(graph_pattern);
+			JUMBLE_NODE(graph_table_columns);
 			break;
 		case RTE_RESULT:
 			break;
