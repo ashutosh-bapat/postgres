@@ -1116,9 +1116,7 @@ transformGraphPattern(GraphTableParseState *gpstate, List *graph_pattern)
 }
 
 /*
- * transformRangeGraphTable
- *
- * TODO
+ * transformRangeGraphTable -- transform a GRAPH_TABLE clause
  */
 static ParseNamespaceItem *
 transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
@@ -1130,9 +1128,6 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	Node	   *gp;
 	List	   *columns = NIL;
 	List	   *colnames = NIL;
-	List	   *coltypes = NIL;
-	List	   *coltypmods = NIL;
-	List	   *colcollations = NIL;
 	ListCell   *lc;
 
 	rel = parserOpenTable(pstate, rgt->graph_name, AccessShareLock);
@@ -1179,16 +1174,11 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 		colnames = lappend(colnames, makeString(colname));
 		columns = lappend(columns, colexpr);
-
-		// FIXME
-		coltypes = lappend_oid(coltypes, TEXTOID);
-		coltypmods = lappend_int(coltypmods, -1);
-		colcollations = lappend_oid(colcollations, DEFAULT_COLLATION_OID);
 	}
 
 	table_close(rel, NoLock);
 
-	return addRangeTableEntryForGraphTable(pstate, graphid, (List *) gp, columns, colnames, coltypes, coltypmods, colcollations, rgt->alias, false, true);
+	return addRangeTableEntryForGraphTable(pstate, graphid, (List *) gp, columns, colnames, rgt->alias, false, true);
 }
 
 /*

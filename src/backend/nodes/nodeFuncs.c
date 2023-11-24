@@ -504,6 +504,7 @@ exprTypmod(const Node *expr)
 			return ((const SetToDefault *) expr)->typeMod;
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
+		//TODO: case T_PropertyRef:
 		default:
 			break;
 	}
@@ -1002,6 +1003,9 @@ exprCollation(const Node *expr)
 			break;
 		case T_PlaceHolderVar:
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
+			break;
+		case T_PropertyRef:
+			coll = DEFAULT_COLLATION_OID; // FIXME
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));

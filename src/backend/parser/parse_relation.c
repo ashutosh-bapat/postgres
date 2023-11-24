@@ -2133,9 +2133,6 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 								List *graph_pattern,
 								List *columns,
 								List *colnames,
-								List *coltypes,
-								List *coltypmods,
-								List *colcollations,
 								Alias *alias,
 								bool lateral,
 								bool inFromCl)
@@ -2143,6 +2140,12 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	RangeTblEntry *rte = makeNode(RangeTblEntry);
 	char	   *refname = alias ? alias->aliasname : pstrdup("graph_table");
 	Alias	   *eref;
+	int			numaliases;
+	int			varattno;
+	ListCell   *lc;
+	List	   *coltypes = NIL;
+	List	   *coltypmods = NIL;
+	List	   *colcollations = NIL;
 
 	Assert(pstate != NULL);
 
@@ -2151,9 +2154,6 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	rte->relkind = RELKIND_PROPGRAPH;
 	rte->graph_pattern = graph_pattern;
 	rte->graph_table_columns = columns;
-	rte->coltypes = coltypes;
-	rte->coltypmods = coltypmods;
-	rte->colcollations = colcollations;
 	rte->alias = alias;
 
 	eref = alias ? copyObject(alias) : makeAlias(refname, NIL);
@@ -2161,7 +2161,32 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	if (!eref->colnames)
 		eref->colnames = colnames;
 
+	numaliases = list_length(eref->colnames);
+
+	/* fill in any unspecified alias columns */
+	varattno = 0;
+	foreach(lc, colnames)
+	{
+		varattno++;
+		if (varattno > numaliases)
+			eref->colnames = lappend(eref->colnames, lfirst(lc));
+	}
+	if (varattno < numaliases)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("GRAPH_TABLE \"%s\" has %d columns available but %d columns specified",
+						refname, varattno, numaliases)));
+
 	rte->eref = eref;
+
+	foreach(lc, columns)
+	{
+		Node *colexpr = lfirst(lc);
+
+		coltypes = lappend_oid(coltypes, exprType(colexpr));
+		coltypmods = lappend_int(coltypmods, exprTypmod(colexpr));
+		colcollations = lappend_oid(colcollations, exprCollation(colexpr));
+	}
 
 	/*
 	 * Set flags and access permissions.
@@ -2170,7 +2195,6 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	 * addRTEPermissionInfo(). FIXME
 	 */
 	rte->lateral = lateral;
-	rte->inh = false;			/* never true for values RTEs */
 	rte->inFromCl = inFromCl;
 
 	/*
@@ -2185,8 +2209,7 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	 * list --- caller must do that if appropriate.
 	 */
 	return buildNSItemFromLists(rte, list_length(pstate->p_rtable),
-								rte->coltypes, rte->coltypmods,
-								rte->colcollations);
+								coltypes, coltypmods, colcollations);
 }
 
 /*
