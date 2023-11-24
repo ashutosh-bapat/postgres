@@ -2146,6 +2146,8 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	List	   *coltypes = NIL;
 	List	   *coltypmods = NIL;
 	List	   *colcollations = NIL;
+	RTEPermissionInfo *perminfo;
+	ParseNamespaceItem *nsitem;
 
 	Assert(pstate != NULL);
 
@@ -2190,12 +2192,12 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 
 	/*
 	 * Set flags and access permissions.
-	 *
-	 * Subqueries are never checked for access rights, so no need to perform
-	 * addRTEPermissionInfo(). FIXME
 	 */
 	rte->lateral = lateral;
 	rte->inFromCl = inFromCl;
+
+	perminfo = addRTEPermissionInfo(&pstate->p_rteperminfos, rte);
+	perminfo->requiredPerms = ACL_SELECT;
 
 	/*
 	 * Add completed RTE to pstate's range table list, so that we know its
@@ -2208,8 +2210,12 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	 * Build a ParseNamespaceItem, but don't add it to the pstate's namespace
 	 * list --- caller must do that if appropriate.
 	 */
-	return buildNSItemFromLists(rte, list_length(pstate->p_rtable),
-								coltypes, coltypmods, colcollations);
+	nsitem = buildNSItemFromLists(rte, list_length(pstate->p_rtable),
+								  coltypes, coltypmods, colcollations);
+
+	nsitem->p_perminfo = perminfo;
+
+	return nsitem;
 }
 
 /*
