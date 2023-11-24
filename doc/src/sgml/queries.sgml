@@ -2875,7 +2875,7 @@ SELECT ... FROM GRAPH_TABLE (mygraph MATCH ... COLUMNS (...)) AS myresult (a, b,
    </para>
 
    <para>
-    Furthermore, it is possible to graph pattern variables in the patch
+    Furthermore, it is possible to define graph pattern variables in the path
     pattern expressions.  These are bound to the matched elements and can be
     used to refer to the property values from those elements.  The most
     important use is to use them in the <literal>COLUMNS</literal> clause to
