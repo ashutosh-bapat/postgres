@@ -4171,6 +4171,14 @@ ORDER BY c.ordinal_position;
   </table>
  </sect1>
 
+ <sect1 id="infoschema-property-graphs">
+  <title><literal>property_graphs</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
  <sect1 id="infoschema-referential-constraints">
   <title><literal>referential_constraints</literal></title>
 
