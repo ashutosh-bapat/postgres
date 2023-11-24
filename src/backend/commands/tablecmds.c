@@ -6529,11 +6529,6 @@ ATSimplePermissions(AlterTableType cmdtype, Relation rel, int allowed_targets)
 		case RELKIND_SEQUENCE:
 			actual_target = ATT_SEQUENCE;
 			break;
-#if TODO
-		case RELKIND_PROPGRAPH:
-			actual_target = ATT_PROPGRAPH;
-			break;
-#endif
 		default:
 			actual_target = 0;
 			break;
