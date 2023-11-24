@@ -3116,7 +3116,6 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("CREATE", "POLICY", MatchAny, "ON", MatchAny, "AS", MatchAny, "USING"))
 		COMPLETE_WITH("(");
 
-
 /* CREATE PROPERTY GRAPH */
 	else if (Matches("CREATE", "PROPERTY"))
 		COMPLETE_WITH("GRAPH");
@@ -3132,7 +3131,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH(",", ")");
 	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(") &&
 			 TailMatches(")"))
-		COMPLETE_WITH("EDGE"); // FIXME
+		COMPLETE_WITH("EDGE"); /* FIXME: doesn't seem to work */
 	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
 			 TailMatches("EDGE|RELATIONSHIP"))
 		COMPLETE_WITH("TABLES");
@@ -4154,6 +4153,14 @@ psql_completion(const char *text, int start, int end)
 		else
 			COMPLETE_WITH("FROM");
 	}
+
+/* GRAPH_TABLE */
+	else if (TailMatches("GRAPH_TABLE"))
+		COMPLETE_WITH("(");
+	else if (TailMatches("GRAPH_TABLE", "("))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
+	else if (TailMatches("GRAPH_TABLE", "(", MatchAny))
+		COMPLETE_WITH("MATCH");
 
 /* GROUP BY */
 	else if (TailMatches("FROM", MatchAny, "GROUP"))
