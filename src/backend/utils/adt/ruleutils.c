@@ -1637,7 +1637,7 @@ static void
 make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 {
 	Relation	pgerel;
-	ScanKeyData scankey[2];
+	ScanKeyData scankey[1];
 	SysScanDesc scan;
 	bool		first;
 	HeapTuple	tup;
@@ -1648,12 +1648,8 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 				Anum_pg_propgraph_element_pgepgid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(pgrelid));
-	ScanKeyInit(&scankey[1],
-				Anum_pg_propgraph_element_pgekind,
-				BTEqualStrategyNumber, F_CHAREQ,
-				CharGetDatum(pgekind));
 
-	scan = systable_beginscan(pgerel, InvalidOid, true, NULL, 2, scankey);
+	scan = systable_beginscan(pgerel, PropgraphElementAliasIndexId, true, NULL, 1, scankey);
 
 	first = true;
 	while ((tup = systable_getnext(scan)))
@@ -1663,6 +1659,9 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 		Datum		datum;
 		bool		isnull;
 		int2vector *ekey;
+
+		if (pgeform->pgekind != pgekind)
+			continue;
 
 		if (first)
 		{
@@ -1765,12 +1764,18 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 				ObjectIdGetDatum(elid));
 
 	count = 0;
-	scan = systable_beginscan(pglrel, InvalidOid, true, NULL, 1, scankey);
+	scan = systable_beginscan(pglrel, PropgraphLabelLabelIndexId, true, NULL, 1, scankey);
 	while ((tup = systable_getnext(scan)))
 	{
 		count++;
 	}
 	systable_endscan(scan);
+
+	/* XXX need to re-init scan key for second scan */
+	ScanKeyInit(&scankey[0],
+				Anum_pg_propgraph_label_pglelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(elid));
 
 	scan = systable_beginscan(pglrel, PropgraphLabelLabelIndexId, true, NULL, 1, scankey);
 
@@ -1815,6 +1820,10 @@ make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(labelid));
 
+	/*
+	 * TODO: Should use an index here, maybe PropgraphPropertyNameIndexId.
+	 * Also should make sure properties are put out in a deterministic order.
+	 */
 	scan = systable_beginscan(pgprel, InvalidOid, true, NULL, 1, scankey);
 
 	first = true;
