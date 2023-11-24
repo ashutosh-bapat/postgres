@@ -929,7 +929,6 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 				Oid			classId;
 				ObjectAddress address;
 
-				// XXX
 				if (stmt->relation)
 					address = get_object_address_rv(stmt->objectType,
 													stmt->relation,
