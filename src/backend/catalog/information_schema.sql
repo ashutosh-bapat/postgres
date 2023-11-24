@@ -3248,7 +3248,64 @@ GRANT SELECT ON pg_labels TO PUBLIC;
  * PG_PROPERTY_DATA_TYPES view
  */
 
--- TODO
+CREATE VIEW pg_property_data_types AS
+    SELECT DISTINCT
+           CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+           CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
+           CAST(pg.relname AS sql_identifier) AS property_graph_name,
+           CAST(pgp.pgpname AS sql_identifier) AS property_name,
+
+           CAST(
+             CASE WHEN t.typtype = 'd' THEN
+               CASE WHEN bt.typelem <> 0 AND bt.typlen = -1 THEN 'ARRAY'
+                    WHEN nbt.nspname = 'pg_catalog' THEN format_type(t.typbasetype, null)
+                    ELSE 'USER-DEFINED' END
+             ELSE
+               CASE WHEN t.typelem <> 0 AND t.typlen = -1 THEN 'ARRAY'
+                    WHEN nt.nspname = 'pg_catalog' THEN format_type(pgp.pgptypid, null)
+                    ELSE 'USER-DEFINED' END
+             END
+             AS character_data)
+             AS data_type,
+
+           CAST(null AS cardinal_number) AS character_maximum_length,
+           CAST(null AS cardinal_number) AS character_octet_length,
+           CAST(null AS sql_identifier) AS character_set_catalog,
+           CAST(null AS sql_identifier) AS character_set_schema,
+           CAST(null AS sql_identifier) AS character_set_name,
+           CAST(null AS sql_identifier) AS collation_catalog, -- FIXME
+           CAST(null AS sql_identifier) AS collation_schema, -- FIXME
+           CAST(null AS sql_identifier) AS collation_name, -- FIXME
+           CAST(null AS cardinal_number) AS numeric_precision,
+           CAST(null AS cardinal_number) AS numeric_precision_radix,
+           CAST(null AS cardinal_number) AS numeric_scale,
+           CAST(null AS cardinal_number) AS datetime_precision,
+           CAST(null AS character_data) AS interval_type,
+           CAST(null AS cardinal_number) AS interval_precision,
+
+           CAST(current_database() AS sql_identifier) AS user_defined_type_catalog,
+           CAST(coalesce(nbt.nspname, nt.nspname) AS sql_identifier) AS user_defined_type_schema,
+           CAST(coalesce(bt.typname, t.typname) AS sql_identifier) AS user_defined_type_name,
+
+           CAST(null AS sql_identifier) AS scope_catalog,
+           CAST(null AS sql_identifier) AS scope_schema,
+           CAST(null AS sql_identifier) AS scope_name,
+
+           CAST(null AS cardinal_number) AS maximum_cardinality,
+           CAST(pgp.pgpname AS sql_identifier) AS dtd_identifier
+
+    FROM pg_propgraph_property pgp
+         JOIN (pg_class pg JOIN pg_namespace npg ON (pg.relnamespace = npg.oid)) ON pgp.pgppgid = pg.oid
+         JOIN (pg_type t JOIN pg_namespace nt ON (t.typnamespace = nt.oid)) ON pgp.pgptypid = t.oid
+         LEFT JOIN (pg_type bt JOIN pg_namespace nbt ON (bt.typnamespace = nbt.oid))
+           ON (t.typtype = 'd' AND t.typbasetype = bt.oid)
+
+    WHERE pg.relkind = 'g'
+          AND (NOT pg_is_other_temp_schema(npg.oid))
+          AND (pg_has_role(pg.relowner, 'USAGE')
+               OR has_table_privilege(pg.oid, 'SELECT'));
+
+GRANT SELECT ON pg_property_data_types TO PUBLIC;
 
 
 /*

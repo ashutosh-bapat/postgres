@@ -98,6 +98,7 @@ SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph
 SELECT * FROM information_schema.pg_element_table_properties ORDER BY property_graph_name, element_table_alias, property_name;
 SELECT * FROM information_schema.pg_label_properties ORDER BY property_graph_name, label_name, property_name;
 SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
+SELECT * FROM information_schema.pg_property_data_types ORDER BY property_graph_name, property_name;
 SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name;
 
 
