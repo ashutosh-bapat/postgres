@@ -729,6 +729,9 @@ static const struct object_type_map
 		"foreign table", OBJECT_FOREIGN_TABLE
 	},
 	{
+		"property graph", OBJECT_PROPGRAPH
+	},
+	{
 		"table column", OBJECT_COLUMN
 	},
 	{
@@ -4058,13 +4061,13 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 
 		case OCLASS_PROPGRAPH_LABEL:
 			{
-				appendStringInfo(&buffer, "TODO label");
+				appendStringInfo(&buffer, "label %u TODO", object->objectId);
 				break;
 			}
 
 		case OCLASS_PROPGRAPH_PROPERTY:
 			{
-				appendStringInfo(&buffer, "TODO property");
+				appendStringInfo(&buffer, "property %u TODO", object->objectId);
 				break;
 			}
 
@@ -5937,15 +5940,15 @@ getObjectIdentityParts(const ObjectAddress *object,
 			}
 
 		case OCLASS_PROPGRAPH_ELEMENT:
-			elog(ERROR, "TODO2");
+			appendStringInfo(&buffer, "%u TODO", object->objectId);
 			break;
 
 		case OCLASS_PROPGRAPH_LABEL:
-			elog(ERROR, "TODO2");
+			appendStringInfo(&buffer, "%u TODO", object->objectId);
 			break;
 
 		case OCLASS_PROPGRAPH_PROPERTY:
-			elog(ERROR, "TODO2");
+			appendStringInfo(&buffer, "%u TODO", object->objectId);
 			break;
 
 		case OCLASS_PUBLICATION:
