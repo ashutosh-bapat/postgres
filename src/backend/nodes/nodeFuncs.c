@@ -504,7 +504,9 @@ exprTypmod(const Node *expr)
 			return ((const SetToDefault *) expr)->typeMod;
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
-		//TODO: case T_PropertyRef:
+		case T_PropertyRef:
+			/* TODO */
+			return -1;
 		default:
 			break;
 	}
@@ -1005,7 +1007,7 @@ exprCollation(const Node *expr)
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
 		case T_PropertyRef:
-			coll = DEFAULT_COLLATION_OID; // FIXME
+			coll = DEFAULT_COLLATION_OID; /* FIXME */
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
@@ -2731,9 +2733,16 @@ range_table_entry_walker_impl(RangeTblEntry *rte,
 			if (WALK(rte->values_lists))
 				return true;
 			break;
+		case RTE_GRAPH_TABLE:
+#if TODO
+			if (WALK(rte->graph_pattern))
+				return true;
+			if (WALK(rte->graph_table_columns))
+				return true;
+#endif
+			break;
 		case RTE_CTE:
 		case RTE_NAMEDTUPLESTORE:
-		case RTE_GRAPH_TABLE: // TODO
 		case RTE_RESULT:
 			/* nothing to do */
 			break;
@@ -3730,9 +3739,14 @@ range_table_mutator_impl(List *rtable,
 			case RTE_VALUES:
 				MUTATE(newrte->values_lists, rte->values_lists, List *);
 				break;
+			case RTE_GRAPH_TABLE:
+#if TODO
+				MUTATE(newrte->graph_pattern, rte->graph_pattern, List *);
+				MUTATE(newrte->graph_table_columns, rte->graph_table_columns, List *);
+#endif
+				break;
 			case RTE_CTE:
 			case RTE_NAMEDTUPLESTORE:
-			case RTE_GRAPH_TABLE: // TODO
 			case RTE_RESULT:
 				/* nothing to do */
 				break;
@@ -4286,6 +4300,12 @@ raw_expression_tree_walker_impl(Node *node,
 			{
 				RangeGraphTable *rgt = (RangeGraphTable *) node;
 
+#if TODO
+				if (WALK(rgt->graph_pattern))
+					return true;
+				if (WALK(rgt->columns))
+					return true;
+#endif
 				if (WALK(rgt->alias))
 					return true;
 			}
