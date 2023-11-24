@@ -1156,16 +1156,29 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	foreach(lc, rgt->columns)
 	{
 		ResTarget  *rt = lfirst_node(ResTarget, lc);
+		Node	   *colexpr;
 		char	   *colname;
+
+		colexpr = transformExpr(pstate2, rt->val, EXPR_KIND_OTHER);
 
 		if (rt->name)
 			colname = rt->name;
 		else
-			colname = pstrdup("FIXME");
+		{
+			if (IsA(colexpr, PropertyRef))
+				colname = pstrdup(castNode(PropertyRef, colexpr)->propname);
+			else
+			{
+				ereport(ERROR,
+						errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("complex graph table column must specify an explicit column name"),
+						parser_errposition(pstate, rt->location));
+				colname = NULL;
+			}
+		}
 
 		colnames = lappend(colnames, makeString(colname));
-
-		columns = lappend(columns, transformExpr(pstate2, rt->val, EXPR_KIND_OTHER));
+		columns = lappend(columns, colexpr);
 
 		// FIXME
 		coltypes = lappend_oid(coltypes, TEXTOID);

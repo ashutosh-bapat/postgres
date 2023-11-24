@@ -7663,10 +7663,9 @@ get_graph_pattern_def(List *graph_pattern, deparse_context *context)
 		List	   *path_pattern_expr = lfirst_node(List, lc);
 
 		if (!first)
-		{
 			appendStringInfoString(buf, ", ");
+		else
 			first = false;
-		}
 
 		get_path_pattern_expr_def(path_pattern_expr, context);
 	}
@@ -11911,10 +11910,9 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 						deparse_context context = {0};
 
 						if (!first)
-						{
 							appendStringInfoString(buf, ", ");
+						else
 							first = false;
-						}
 
 						context.buf = buf;
 
