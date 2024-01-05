@@ -3,7 +3,7 @@
  * pg_propgraph_label.h
  *	  definition of the "property graph labels" system catalog (pg_propgraph_label)
  *
- * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_propgraph_label.h
