@@ -1,11 +1,11 @@
 
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 
 # This regression test checks the behavior of the btree validation in the
 # presence of breaking sort order changes.
 #
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;

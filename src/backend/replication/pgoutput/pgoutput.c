@@ -3,7 +3,7 @@
  * pgoutput.c
  *		Logical Replication output plugin
  *
- * Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/backend/replication/pgoutput/pgoutput.c
@@ -400,6 +400,16 @@ parse_output_parameters(List *options, PGOutputData *data)
 		else
 			elog(ERROR, "unrecognized pgoutput option: %s", defel->defname);
 	}
+
+	/* Check required options */
+	if (!protocol_version_given)
+		ereport(ERROR,
+				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("proto_version option missing"));
+	if (!publication_names_given)
+		ereport(ERROR,
+				errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("publication_names option missing"));
 }
 
 /*
@@ -448,11 +458,6 @@ pgoutput_startup(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("client sent proto_version=%d but server only supports protocol %d or higher",
 							data->protocol_version, LOGICALREP_PROTO_MIN_VERSION_NUM)));
-
-		if (data->publication_names == NIL)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("publication_names parameter missing")));
 
 		/*
 		 * Decide whether to enable streaming. It is disabled by default, in
@@ -1136,8 +1141,8 @@ init_tuple_slot(PGOutputData *data, Relation relation,
 	 * Create tuple table slots. Create a copy of the TupleDesc as it needs to
 	 * live as long as the cache remains.
 	 */
-	oldtupdesc = CreateTupleDescCopy(RelationGetDescr(relation));
-	newtupdesc = CreateTupleDescCopy(RelationGetDescr(relation));
+	oldtupdesc = CreateTupleDescCopyConstr(RelationGetDescr(relation));
+	newtupdesc = CreateTupleDescCopyConstr(RelationGetDescr(relation));
 
 	entry->old_slot = MakeSingleTupleTableSlot(oldtupdesc, &TTSOpsHeapTuple);
 	entry->new_slot = MakeSingleTupleTableSlot(newtupdesc, &TTSOpsHeapTuple);
@@ -2229,7 +2234,6 @@ cleanup_rel_sync_cache(TransactionId xid, bool is_commit)
 {
 	HASH_SEQ_STATUS hash_seq;
 	RelationSyncEntry *entry;
-	ListCell   *lc;
 
 	Assert(RelationSyncCache != NULL);
 
@@ -2242,15 +2246,15 @@ cleanup_rel_sync_cache(TransactionId xid, bool is_commit)
 		 * corresponding schema and we don't need to send it unless there is
 		 * any invalidation for that relation.
 		 */
-		foreach(lc, entry->streamed_txns)
+		foreach_xid(streamed_txn, entry->streamed_txns)
 		{
-			if (xid == lfirst_xid(lc))
+			if (xid == streamed_txn)
 			{
 				if (is_commit)
 					entry->schema_sent = true;
 
 				entry->streamed_txns =
-					foreach_delete_current(entry->streamed_txns, lc);
+					foreach_delete_current(entry->streamed_txns, streamed_txn);
 				break;
 			}
 		}

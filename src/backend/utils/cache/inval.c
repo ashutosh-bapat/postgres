@@ -98,7 +98,7 @@
  *	support the decoding of the in-progress transactions.  See
  *	CommandEndInvalidationMessages.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -966,13 +966,12 @@ ProcessCommittedInvalidationMessages(SharedInvalidationMessage *msgs,
 	if (nmsgs <= 0)
 		return;
 
-	elog(trace_recovery(DEBUG4), "replaying commit with %d messages%s", nmsgs,
+	elog(DEBUG4, "replaying commit with %d messages%s", nmsgs,
 		 (RelcacheInitFileInval ? " and relcache file invalidation" : ""));
 
 	if (RelcacheInitFileInval)
 	{
-		elog(trace_recovery(DEBUG4), "removing relcache init files for database %u",
-			 dbid);
+		elog(DEBUG4, "removing relcache init files for database %u", dbid);
 
 		/*
 		 * RelationCacheInitFilePreInvalidate, when the invalidation message

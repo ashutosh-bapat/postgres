@@ -4,7 +4,7 @@
  *	  Checks, enables or disables page level checksums for an offline
  *	  cluster
  *
- * Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/bin/pg_checksums/pg_checksums.c
@@ -20,11 +20,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "access/xlog_internal.h"
 #include "common/controldata_utils.h"
 #include "common/file_perm.h"
 #include "common/file_utils.h"
 #include "common/logging.h"
+#include "common/relpath.h"
 #include "fe_utils/option_utils.h"
 #include "getopt_long.h"
 #include "pg_getopt.h"

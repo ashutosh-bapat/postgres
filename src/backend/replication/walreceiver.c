@@ -39,7 +39,7 @@
  * specific parts are in the libpqwalreceiver module. It's loaded
  * dynamically to avoid linking the server with libpq.
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -193,7 +193,7 @@ WalReceiverMain(void)
 	TimeLineID	startpointTLI;
 	TimeLineID	primaryTLI;
 	bool		first_stream;
-	WalRcvData *walrcv = WalRcv;
+	WalRcvData *walrcv;
 	TimestampTz now;
 	char	   *err;
 	char	   *sender_host = NULL;
@@ -203,6 +203,7 @@ WalReceiverMain(void)
 	 * WalRcv should be set up already (if we are a backend, we inherit this
 	 * by fork() or EXEC_BACKEND mechanism from the postmaster).
 	 */
+	walrcv = WalRcv;
 	Assert(walrcv != NULL);
 
 	/*

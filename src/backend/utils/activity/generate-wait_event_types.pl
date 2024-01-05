@@ -7,7 +7,7 @@
 # - wait_event_funcs_data.c (if --code is passed)
 # - wait_event_types.sgml (if --docs is passed)
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/utils/activity/generate-wait_event_types.pl
@@ -15,7 +15,7 @@
 #----------------------------------------------------------------------
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use Getopt::Long;
 
 my $output_path = '.';
@@ -126,7 +126,7 @@ if ($gen_code)
  * %s
  *    Generated wait events infrastructure code
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES

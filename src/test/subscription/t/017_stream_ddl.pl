@@ -1,12 +1,12 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test streaming of large transaction with DDL and subtransactions
 #
 # This file is mainly to test the DDL/DML interaction of the publisher side,
 # so we didn't add a parallel apply version for the tests in this file.
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;

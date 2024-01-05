@@ -3,7 +3,7 @@
  * postgres_fdw.h
  *		  Foreign-data wrapper for remote PostgreSQL servers
  *
- * Portions Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/postgres_fdw.h
@@ -118,6 +118,10 @@ typedef struct PgFdwRelationInfo
 										 * subquery? */
 	Relids		lower_subquery_rels;	/* all relids appearing in lower
 										 * subqueries */
+	Relids		hidden_subquery_rels;	/* relids, which can't be referred to
+										 * from upper relations, used
+										 * internally for equivalence member
+										 * search */
 
 	/*
 	 * Index of the relation.  It is used to create an alias to a subquery

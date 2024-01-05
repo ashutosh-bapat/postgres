@@ -9,7 +9,7 @@
  * context's MemoryContextMethods struct.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1087,44 +1087,6 @@ MemoryContextAllocZero(MemoryContext context, Size size)
 	VALGRIND_MEMPOOL_ALLOC(context, ret, size);
 
 	MemSetAligned(ret, 0, size);
-
-	return ret;
-}
-
-/*
- * MemoryContextAllocZeroAligned
- *		MemoryContextAllocZero where length is suitable for MemSetLoop
- *
- *	This might seem overly specialized, but it's not because newNode()
- *	is so often called with compile-time-constant sizes.
- */
-void *
-MemoryContextAllocZeroAligned(MemoryContext context, Size size)
-{
-	void	   *ret;
-
-	Assert(MemoryContextIsValid(context));
-	AssertNotInCriticalSection(context);
-
-	if (!AllocSizeIsValid(size))
-		elog(ERROR, "invalid memory alloc request size %zu", size);
-
-	context->isReset = false;
-
-	ret = context->methods->alloc(context, size);
-	if (unlikely(ret == NULL))
-	{
-		MemoryContextStats(TopMemoryContext);
-		ereport(ERROR,
-				(errcode(ERRCODE_OUT_OF_MEMORY),
-				 errmsg("out of memory"),
-				 errdetail("Failed on request of size %zu in memory context \"%s\".",
-						   size, context->name)));
-	}
-
-	VALGRIND_MEMPOOL_ALLOC(context, ret, size);
-
-	MemSetLoop(ret, 0, size);
 
 	return ret;
 }

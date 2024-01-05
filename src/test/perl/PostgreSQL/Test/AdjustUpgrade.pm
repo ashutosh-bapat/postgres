@@ -1,5 +1,5 @@
 
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 
 =pod
 
@@ -30,7 +30,7 @@ compare the results of cross-version upgrade tests.
 package PostgreSQL::Test::AdjustUpgrade;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Exporter 'import';
 use PostgreSQL::Version;

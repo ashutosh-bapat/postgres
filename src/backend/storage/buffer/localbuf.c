@@ -4,7 +4,7 @@
  *	  local buffer manager. Fast buffer manager for temporary tables,
  *	  which never need to be WAL-logged or checkpointed, etc.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -94,7 +94,7 @@ PrefetchLocalBuffer(SMgrRelation smgr, ForkNumber forkNum,
 #ifdef USE_PREFETCH
 		/* Not in buffers, so initiate prefetch */
 		if ((io_direct_flags & IO_DIRECT_DATA) == 0 &&
-			smgrprefetch(smgr, forkNum, blockNum))
+			smgrprefetch(smgr, forkNum, blockNum, 1))
 		{
 			result.initiated_io = true;
 		}
@@ -246,7 +246,7 @@ GetLocalVictimBuffer(void)
 
 		PageSetChecksumInplace(localpage, bufHdr->tag.blockNum);
 
-		io_start = pgstat_prepare_io_time();
+		io_start = pgstat_prepare_io_time(track_io_timing);
 
 		/* And write... */
 		smgrwrite(oreln,
@@ -411,7 +411,7 @@ ExtendBufferedRelLocal(BufferManagerRelation bmr,
 		}
 	}
 
-	io_start = pgstat_prepare_io_time();
+	io_start = pgstat_prepare_io_time(track_io_timing);
 
 	/* actually extend relation */
 	smgrzeroextend(bmr.smgr, fork, first_block, extend_by, false);
@@ -705,7 +705,7 @@ check_temp_buffers(int *newval, void **extra, GucSource source)
 	 */
 	if (source != PGC_S_TEST && NLocBuffer && NLocBuffer != *newval)
 	{
-		GUC_check_errdetail("\"temp_buffers\" cannot be changed after any temporary tables have been accessed in the session.");
+		GUC_check_errdetail("temp_buffers cannot be changed after any temporary tables have been accessed in the session.");
 		return false;
 	}
 	return true;

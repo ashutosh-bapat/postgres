@@ -3,7 +3,7 @@
  * fe-protocol3.c
  *	  functions that are specific to frontend/backend protocol version 3
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -240,13 +240,8 @@ pqParseInput3(PGconn *conn)
 					}
 					else
 					{
-						/*
-						 * In simple query protocol, advance the command queue
-						 * (see PQgetResult).
-						 */
-						if (conn->cmd_queue_head &&
-							conn->cmd_queue_head->queryclass == PGQUERY_SIMPLE)
-							pqCommandQueueAdvance(conn);
+						/* Advance the command queue and set us idle */
+						pqCommandQueueAdvance(conn, true, false);
 						conn->asyncStatus = PGASYNC_IDLE;
 					}
 					break;

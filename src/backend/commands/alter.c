@@ -3,7 +3,7 @@
  * alter.c
  *	  Drivers for generic alter commands
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -924,9 +924,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_TSDICTIONARY:
 		case OBJECT_TSCONFIGURATION:
 			{
-				Relation	catalog;
 				Relation	relation;
-				Oid			classId;
 				ObjectAddress address;
 
 				if (stmt->relation)
@@ -945,20 +943,9 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 												 false);
 					Assert(relation == NULL);
 				}
-				classId = address.classId;
 
-				/*
-				 * XXX - get_object_address returns Oid of pg_largeobject
-				 * catalog for OBJECT_LARGEOBJECT because of historical
-				 * reasons.  Fix up it here.
-				 */
-				if (classId == LargeObjectRelationId)
-					classId = LargeObjectMetadataRelationId;
-
-				catalog = table_open(classId, RowExclusiveLock);
-
-				AlterObjectOwner_internal(catalog, address.objectId, newowner);
-				table_close(catalog, RowExclusiveLock);
+				AlterObjectOwner_internal(address.classId, address.objectId,
+										  newowner);
 
 				if (relation)
 					relation_close(relation, NoLock);
@@ -979,24 +966,31 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
  * cases (won't work for tables, nor other cases where we need to do more than
  * change the ownership column of a single catalog entry).
  *
- * rel: catalog relation containing object (RowExclusiveLock'd by caller)
+ * classId: OID of catalog containing object
  * objectId: OID of object to change the ownership of
  * new_ownerId: OID of new object owner
+ *
+ * This will work on large objects, but we have to beware of the fact that
+ * classId isn't the OID of the catalog to modify in that case.
  */
 void
-AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
+AlterObjectOwner_internal(Oid classId, Oid objectId, Oid new_ownerId)
 {
-	Oid			classId = RelationGetRelid(rel);
-	AttrNumber	Anum_oid = get_object_attnum_oid(classId);
-	AttrNumber	Anum_owner = get_object_attnum_owner(classId);
-	AttrNumber	Anum_namespace = get_object_attnum_namespace(classId);
-	AttrNumber	Anum_acl = get_object_attnum_acl(classId);
-	AttrNumber	Anum_name = get_object_attnum_name(classId);
+	/* For large objects, the catalog to modify is pg_largeobject_metadata */
+	Oid			catalogId = (classId == LargeObjectRelationId) ? LargeObjectMetadataRelationId : classId;
+	AttrNumber	Anum_oid = get_object_attnum_oid(catalogId);
+	AttrNumber	Anum_owner = get_object_attnum_owner(catalogId);
+	AttrNumber	Anum_namespace = get_object_attnum_namespace(catalogId);
+	AttrNumber	Anum_acl = get_object_attnum_acl(catalogId);
+	AttrNumber	Anum_name = get_object_attnum_name(catalogId);
+	Relation	rel;
 	HeapTuple	oldtup;
 	Datum		datum;
 	bool		isnull;
 	Oid			old_ownerId;
 	Oid			namespaceId = InvalidOid;
+
+	rel = table_open(catalogId, RowExclusiveLock);
 
 	oldtup = get_catalog_object_by_oid(rel, Anum_oid, objectId);
 	if (oldtup == NULL)
@@ -1045,7 +1039,8 @@ AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
 					snprintf(namebuf, sizeof(namebuf), "%u", objectId);
 					objname = namebuf;
 				}
-				aclcheck_error(ACLCHECK_NOT_OWNER, get_object_type(classId, objectId),
+				aclcheck_error(ACLCHECK_NOT_OWNER,
+							   get_object_type(catalogId, objectId),
 							   objname);
 			}
 			/* Must be able to become new owner */
@@ -1098,8 +1093,6 @@ AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
 		CatalogTupleUpdate(rel, &newtup->t_self, newtup);
 
 		/* Update owner dependency reference */
-		if (classId == LargeObjectMetadataRelationId)
-			classId = LargeObjectRelationId;
 		changeDependencyOnOwner(classId, objectId, new_ownerId);
 
 		/* Release memory */
@@ -1108,5 +1101,8 @@ AlterObjectOwner_internal(Relation rel, Oid objectId, Oid new_ownerId)
 		pfree(replaces);
 	}
 
+	/* Note the post-alter hook gets classId not catalogId */
 	InvokeObjectPostAlterHook(classId, objectId, 0);
+
+	table_close(rel, RowExclusiveLock);
 }

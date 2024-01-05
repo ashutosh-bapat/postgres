@@ -3,7 +3,7 @@
 # pg_proc.dat
 #    Initial contents of the pg_proc system catalog.
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/include/catalog/pg_proc.dat
@@ -5724,6 +5724,21 @@
   proname => 'pg_stat_get_checkpointer_num_requested', provolatile => 's',
   proparallel => 'r', prorettype => 'int8', proargtypes => '',
   prosrc => 'pg_stat_get_checkpointer_num_requested' },
+{ oid => '8743',
+  descr => 'statistics: number of timed restartpoints started by the checkpointer',
+  proname => 'pg_stat_get_checkpointer_restartpoints_timed', provolatile => 's',
+  proparallel => 'r', prorettype => 'int8', proargtypes => '',
+  prosrc => 'pg_stat_get_checkpointer_restartpoints_timed' },
+{ oid => '8744',
+  descr => 'statistics: number of backend requested restartpoints started by the checkpointer',
+  proname => 'pg_stat_get_checkpointer_restartpoints_requested', provolatile => 's',
+  proparallel => 'r', prorettype => 'int8', proargtypes => '',
+  prosrc => 'pg_stat_get_checkpointer_restartpoints_requested' },
+{ oid => '8745',
+  descr => 'statistics: number of backend performed restartpoints',
+  proname => 'pg_stat_get_checkpointer_restartpoints_performed', provolatile => 's',
+  proparallel => 'r', prorettype => 'int8', proargtypes => '',
+  prosrc => 'pg_stat_get_checkpointer_restartpoints_performed' },
 { oid => '2771',
   descr => 'statistics: number of buffers written by the checkpointer',
   proname => 'pg_stat_get_checkpointer_buffers_written', provolatile => 's',
@@ -11103,9 +11118,9 @@
   proname => 'pg_get_replication_slots', prorows => '10', proisstrict => 'f',
   proretset => 't', provolatile => 's', prorettype => 'record',
   proargtypes => '',
-  proallargtypes => '{name,name,text,oid,bool,bool,int4,xid,xid,pg_lsn,pg_lsn,text,int8,bool,bool}',
+  proallargtypes => '{name,name,text,oid,bool,bool,int4,xid,xid,pg_lsn,pg_lsn,text,int8,bool,text}',
   proargmodes => '{o,o,o,o,o,o,o,o,o,o,o,o,o,o,o}',
-  proargnames => '{slot_name,plugin,slot_type,datoid,temporary,active,active_pid,xmin,catalog_xmin,restart_lsn,confirmed_flush_lsn,wal_status,safe_wal_size,two_phase,conflicting}',
+  proargnames => '{slot_name,plugin,slot_type,datoid,temporary,active,active_pid,xmin,catalog_xmin,restart_lsn,confirmed_flush_lsn,wal_status,safe_wal_size,two_phase,conflict_reason}',
   prosrc => 'pg_get_replication_slots' },
 { oid => '3786', descr => 'set up a logical replication slot',
   proname => 'pg_create_logical_replication_slot', provolatile => 'v',
@@ -11395,10 +11410,19 @@
   proparallel => 'u', prorettype => 'void', proargtypes => 'oid',
   prosrc => 'binary_upgrade_set_next_pg_tablespace_oid' },
 { oid => '8046', descr => 'for use by pg_upgrade',
-  proname => 'binary_upgrade_logical_slot_has_caught_up', proisstrict => 'f',
-  provolatile => 'v', proparallel => 'u', prorettype => 'bool',
-  proargtypes => 'name',
+  proname => 'binary_upgrade_logical_slot_has_caught_up', provolatile => 'v',
+  proparallel => 'u', prorettype => 'bool', proargtypes => 'name',
   prosrc => 'binary_upgrade_logical_slot_has_caught_up' },
+{ oid => '8404', descr => 'for use by pg_upgrade (relation for pg_subscription_rel)',
+  proname => 'binary_upgrade_add_sub_rel_state', proisstrict => 'f',
+  provolatile => 'v', proparallel => 'u', prorettype => 'void',
+  proargtypes => 'text oid char pg_lsn',
+  prosrc => 'binary_upgrade_add_sub_rel_state' },
+{ oid => '8405', descr => 'for use by pg_upgrade (remote_lsn for origin)',
+  proname => 'binary_upgrade_replorigin_advance', proisstrict => 'f',
+  provolatile => 'v', proparallel => 'u', prorettype => 'void',
+  proargtypes => 'text pg_lsn',
+  prosrc => 'binary_upgrade_replorigin_advance' },
 
 # conversion functions
 { oid => '4302',
@@ -12102,5 +12126,24 @@
 { oid => '6292', descr => 'aggregate transition function',
   proname => 'any_value_transfn', prorettype => 'anyelement',
   proargtypes => 'anyelement anyelement', prosrc => 'any_value_transfn' },
+
+{ oid => '8436',
+  descr => 'list of available WAL summary files',
+  proname => 'pg_available_wal_summaries', prorows => '100',
+  proretset => 't', provolatile => 'v', proparallel => 's',
+  prorettype => 'record', proargtypes => '',
+  proallargtypes => '{int8,pg_lsn,pg_lsn}',
+  proargmodes => '{o,o,o}',
+  proargnames => '{tli,start_lsn,end_lsn}',
+  prosrc => 'pg_available_wal_summaries' },
+{ oid => '8437',
+  descr => 'contents of a WAL summary file',
+  proname => 'pg_wal_summary_contents', prorows => '100',
+  proretset => 't', provolatile => 'v', proparallel => 's',
+  prorettype => 'record', proargtypes => 'int8 pg_lsn pg_lsn',
+  proallargtypes => '{int8,pg_lsn,pg_lsn,oid,oid,oid,int2,int8,bool}',
+  proargmodes => '{i,i,i,o,o,o,o,o,o}',
+  proargnames => '{tli,start_lsn,end_lsn,relfilenode,reltablespace,reldatabase,relforknumber,relblocknumber,is_limit_block}',
+  prosrc => 'pg_wal_summary_contents' },
 
 ]

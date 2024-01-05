@@ -3,7 +3,7 @@
  * parallel.c
  *	  Infrastructure for launching parallel workers
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,6 +14,7 @@
 
 #include "postgres.h"
 
+#include "access/brin.h"
 #include "access/nbtree.h"
 #include "access/parallel.h"
 #include "access/session.h"
@@ -144,6 +145,9 @@ static const struct
 	},
 	{
 		"_bt_parallel_build_main", _bt_parallel_build_main
+	},
+	{
+		"_brin_parallel_build_main", _brin_parallel_build_main
 	},
 	{
 		"parallel_vacuum_main", parallel_vacuum_main

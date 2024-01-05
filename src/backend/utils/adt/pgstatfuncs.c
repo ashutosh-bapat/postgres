@@ -3,7 +3,7 @@
  * pgstatfuncs.c
  *	  Functions for accessing various forms of statistics data
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1191,6 +1191,24 @@ Datum
 pg_stat_get_checkpointer_num_requested(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->num_requested);
+}
+
+Datum
+pg_stat_get_checkpointer_restartpoints_timed(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_timed);
+}
+
+Datum
+pg_stat_get_checkpointer_restartpoints_requested(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_requested);
+}
+
+Datum
+pg_stat_get_checkpointer_restartpoints_performed(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT64(pgstat_fetch_stat_checkpointer()->restartpoints_performed);
 }
 
 Datum

@@ -2,7 +2,7 @@
  * unicode_category.c
  *		Determine general category of Unicode characters.
  *
- * Portions Copyright (c) 2017-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2017-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/common/unicode_category.c
@@ -28,8 +28,7 @@ unicode_category(pg_wchar ucs)
 	int			mid;
 	int			max = lengthof(unicode_categories) - 1;
 
-	Assert(ucs >= unicode_categories[0].first &&
-		   ucs <= unicode_categories[max].last);
+	Assert(ucs <= 0x10ffff);
 
 	while (max >= min)
 	{
@@ -42,8 +41,7 @@ unicode_category(pg_wchar ucs)
 			return unicode_categories[mid].category;
 	}
 
-	Assert(false);
-	return (pg_unicode_category) - 1;
+	return PG_U_UNASSIGNED;
 }
 
 /*

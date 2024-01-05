@@ -38,7 +38,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/initdb/initdb.c
@@ -227,6 +227,7 @@ static char *extra_options = "";
 static const char *const subdirs[] = {
 	"global",
 	"pg_wal/archive_status",
+	"pg_wal/summaries",
 	"pg_commit_ts",
 	"pg_dynshmem",
 	"pg_notify",

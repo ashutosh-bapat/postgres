@@ -2,7 +2,7 @@
  * relation.c
  *	   PostgreSQL logical replication relation mapping cache
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/relation.c
@@ -657,7 +657,6 @@ logicalrep_partition_open(LogicalRepRelMapEntry *root,
 		int			i;
 
 		/* Remote relation is copied as-is from the root entry. */
-		entry = &part_entry->relmapentry;
 		entry->remoterel.remoteid = remoterel->remoteid;
 		entry->remoterel.nspname = pstrdup(remoterel->nspname);
 		entry->remoterel.relname = pstrdup(remoterel->relname);
@@ -747,11 +746,9 @@ static Oid
 FindUsableIndexForReplicaIdentityFull(Relation localrel, AttrMap *attrmap)
 {
 	List	   *idxlist = RelationGetIndexList(localrel);
-	ListCell   *lc;
 
-	foreach(lc, idxlist)
+	foreach_oid(idxoid, idxlist)
 	{
-		Oid			idxoid = lfirst_oid(lc);
 		bool		isUsableIdx;
 		Relation	idxRel;
 		IndexInfo  *idxInfo;

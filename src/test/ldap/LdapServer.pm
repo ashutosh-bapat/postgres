@@ -5,7 +5,7 @@
 #
 # Module to set up an LDAP server for testing pg_hba.conf ldap authentication
 #
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 #
 ############################################################################
 
@@ -46,7 +46,7 @@ LdapServer - class for an LDAP server for testing pg_hba.conf authentication
 package LdapServer;
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Utils;
 use Test::More;

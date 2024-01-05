@@ -5,7 +5,7 @@
  *
  * See src/backend/utils/misc/README for design notes.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *	  src/include/utils/guc_tables.h
  *
@@ -72,6 +72,7 @@ enum config_group
 	WAL_RECOVERY,
 	WAL_ARCHIVE_RECOVERY,
 	WAL_RECOVERY_TARGET,
+	WAL_SUMMARIZATION,
 	REPLICATION_SENDING,
 	REPLICATION_PRIMARY,
 	REPLICATION_STANDBY,

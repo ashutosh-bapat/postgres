@@ -14,7 +14,7 @@
  *
  *	Initial author: Simon Riggs		simon@2ndquadrant.com
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -807,7 +807,7 @@ HandlePgArchInterrupts(void)
 			 */
 			ereport(LOG,
 					(errmsg("restarting archiver process because value of "
-							"\"archive_library\" was changed")));
+							"archive_library was changed")));
 
 			proc_exit(0);
 		}

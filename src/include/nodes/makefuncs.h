@@ -4,7 +4,7 @@
  *	  prototypes for the creator functions of various nodes
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/makefuncs.h
@@ -116,6 +116,5 @@ extern Node *makeJsonKeyValue(Node *key, Node *value);
 extern Node *makeJsonIsPredicate(Node *expr, JsonFormat *format,
 								 JsonValueType item_type, bool unique_keys,
 								 int location);
-extern JsonEncoding makeJsonEncoding(char *name);
 
 #endif							/* MAKEFUNC_H */

@@ -3,7 +3,7 @@
  * pg_shdepend.c
  *	  routines to support manipulation of the pg_shdepend relation
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1614,20 +1614,9 @@ shdepReassignOwned(List *roleids, Oid newrole)
 				case DatabaseRelationId:
 				case TSConfigRelationId:
 				case TSDictionaryRelationId:
-					{
-						Oid			classId = sdepForm->classid;
-						Relation	catalog;
-
-						if (classId == LargeObjectRelationId)
-							classId = LargeObjectMetadataRelationId;
-
-						catalog = table_open(classId, RowExclusiveLock);
-
-						AlterObjectOwner_internal(catalog, sdepForm->objid,
-												  newrole);
-
-						table_close(catalog, NoLock);
-					}
+					AlterObjectOwner_internal(sdepForm->classid,
+											  sdepForm->objid,
+											  newrole);
 					break;
 
 				default:

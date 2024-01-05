@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 subdir('brin')
 subdir('commit_ts')
@@ -32,3 +32,4 @@ subdir('test_shm_mq')
 subdir('test_slru')
 subdir('unsafe_tests')
 subdir('worker_spi')
+subdir('xid_wraparound')

@@ -4,7 +4,7 @@
  * repl_scanner.l
  *	  a lexical scanner for the replication commands
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -136,6 +136,7 @@ EXPORT_SNAPSHOT		{ return K_EXPORT_SNAPSHOT; }
 NOEXPORT_SNAPSHOT	{ return K_NOEXPORT_SNAPSHOT; }
 USE_SNAPSHOT		{ return K_USE_SNAPSHOT; }
 WAIT				{ return K_WAIT; }
+UPLOAD_MANIFEST		{ return K_UPLOAD_MANIFEST; }
 
 {space}+		{ /* do nothing */ }
 
@@ -303,6 +304,7 @@ replication_scanner_is_replication_command(void)
 		case K_DROP_REPLICATION_SLOT:
 		case K_READ_REPLICATION_SLOT:
 		case K_TIMELINE_HISTORY:
+		case K_UPLOAD_MANIFEST:
 		case K_SHOW:
 			/* Yes; push back the first token so we can parse later. */
 			repl_pushed_back_token = first_token;

@@ -4,7 +4,7 @@
  *	  POSTGRES generalized index access method definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/genam.h
@@ -148,6 +148,8 @@ extern bool index_insert(Relation indexRelation,
 						 IndexUniqueCheck checkUnique,
 						 bool indexUnchanged,
 						 struct IndexInfo *indexInfo);
+extern void index_insert_cleanup(Relation indexRelation,
+								 struct IndexInfo *indexInfo);
 
 extern IndexScanDesc index_beginscan(Relation heapRelation,
 									 Relation indexRelation,

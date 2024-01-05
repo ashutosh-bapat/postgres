@@ -2,7 +2,7 @@
 #
 # Makefile for src/interfaces/libpq library
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/interfaces/libpq/Makefile
@@ -26,9 +26,6 @@ override CPPFLAGS :=  -I$(srcdir) $(CPPFLAGS) -I$(top_builddir)/src/port -I$(top
 ifneq ($(PORTNAME), win32)
 override CFLAGS += $(PTHREAD_CFLAGS)
 endif
-
-# The MSVC build system scrapes OBJS from this file.  If you change any of
-# the conditional additions of files to OBJS, update Mkvcbuild.pm to match.
 
 OBJS = \
 	$(WIN32RES) \

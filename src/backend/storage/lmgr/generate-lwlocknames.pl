@@ -1,10 +1,10 @@
 #!/usr/bin/perl
 #
 # Generate lwlocknames.h and lwlocknames.c from lwlocknames.txt
-# Copyright (c) 2000-2023, PostgreSQL Global Development Group
+# Copyright (c) 2000-2024, PostgreSQL Global Development Group
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use Getopt::Long;
 
 my $output_path = '.';

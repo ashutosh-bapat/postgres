@@ -4,7 +4,7 @@
  *	  WAL replay logic for hash index.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -632,7 +632,7 @@ hash_xlog_squeeze_page(XLogReaderState *record)
 	XLogRecPtr	lsn = record->EndRecPtr;
 	xl_hash_squeeze_page *xldata = (xl_hash_squeeze_page *) XLogRecGetData(record);
 	Buffer		bucketbuf = InvalidBuffer;
-	Buffer		writebuf;
+	Buffer		writebuf = InvalidBuffer;
 	Buffer		ovflbuf;
 	Buffer		prevbuf = InvalidBuffer;
 	Buffer		mapbuf;

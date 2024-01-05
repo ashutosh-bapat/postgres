@@ -3,7 +3,7 @@
  * pg_rewind.c
  *	  Synchronizes a PostgreSQL data directory to a new timeline
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -1130,7 +1130,6 @@ static void
 ensureCleanShutdown(const char *argv0)
 {
 	int			ret;
-#define MAXCMDLEN (2 * MAXPGPATH)
 	char		exec_path[MAXPGPATH];
 	PQExpBuffer postgres_cmd;
 

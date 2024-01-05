@@ -3,7 +3,7 @@
  * walreceiver.h
  *	  Exports from replication/walreceiverfuncs.c.
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * src/include/replication/walreceiver.h
  *
@@ -13,7 +13,6 @@
 #define _WALRECEIVER_H
 
 #include <netdb.h>
-#include <sys/socket.h>
 
 #include "access/xlog.h"
 #include "access/xlogdefs.h"

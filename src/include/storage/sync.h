@@ -3,7 +3,7 @@
  * sync.h
  *	  File synchronization management code.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/sync.h
@@ -52,7 +52,7 @@ typedef struct FileTag
 	int16		handler;		/* SyncRequestHandler value, saving space */
 	int16		forknum;		/* ForkNumber, saving space */
 	RelFileLocator rlocator;
-	uint32		segno;
+	uint64		segno;
 } FileTag;
 
 extern void InitSync(void);

@@ -3,7 +3,7 @@
  * indexam.c
  *	  general index access method routines
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -194,6 +194,21 @@ index_insert(Relation indexRelation,
 											 heap_t_ctid, heapRelation,
 											 checkUnique, indexUnchanged,
 											 indexInfo);
+}
+
+/* -------------------------
+ *		index_insert_cleanup - clean up after all index inserts are done
+ * -------------------------
+ */
+void
+index_insert_cleanup(Relation indexRelation,
+					 IndexInfo *indexInfo)
+{
+	RELATION_CHECKS;
+	Assert(indexInfo);
+
+	if (indexRelation->rd_indam->aminsertcleanup && indexInfo->ii_AmCache)
+		indexRelation->rd_indam->aminsertcleanup(indexInfo);
 }
 
 /*

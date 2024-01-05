@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 pgport_sources = [
   'bsearch_arg.c',
@@ -66,8 +66,6 @@ replace_funcs_neg = [
   ['getpeereid'],
   ['inet_aton'],
   ['mkdtemp'],
-  ['preadv', 'HAVE_DECL_PREADV'],
-  ['pwritev', 'HAVE_DECL_PWRITEV'],
   ['strlcat'],
   ['strlcpy'],
   ['strnlen'],

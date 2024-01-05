@@ -3,7 +3,7 @@
  * basebackup.h
  *	  Exports from replication/basebackup.c.
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * src/include/backup/basebackup.h
  *
@@ -34,6 +34,9 @@ typedef struct
 	int64		size;			/* total size as sent; -1 if not known */
 } tablespaceinfo;
 
-extern void SendBaseBackup(BaseBackupCmd *cmd);
+struct IncrementalBackupInfo;
+
+extern void SendBaseBackup(BaseBackupCmd *cmd,
+						   struct IncrementalBackupInfo *ib);
 
 #endif							/* _BASEBACKUP_H */

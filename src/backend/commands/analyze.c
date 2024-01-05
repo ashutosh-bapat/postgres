@@ -3,7 +3,7 @@
  * analyze.c
  *	  the Postgres statistics generator
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -634,7 +634,10 @@ do_analyze_rel(Relation onerel, VacuumParams *params,
 	{
 		BlockNumber relallvisible;
 
-		visibilitymap_count(onerel, &relallvisible, NULL);
+		if (RELKIND_HAS_STORAGE(onerel->rd_rel->relkind))
+			visibilitymap_count(onerel, &relallvisible, NULL);
+		else
+			relallvisible = 0;
 
 		/* Update pg_class for table relation */
 		vac_update_relstats(onerel,

@@ -12,7 +12,7 @@
  * example.  For the most part, however, code outside the core planner
  * should not need to include any optimizer/ header except this one.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/optimizer.h
@@ -90,6 +90,7 @@ extern PGDLLIMPORT double recursive_worktable_factor;
 extern PGDLLIMPORT int effective_cache_size;
 
 extern double clamp_row_est(double nrows);
+extern int32 clamp_width_est(int64 tuple_width);
 extern long clamp_cardinality_to_long(Cardinality x);
 
 /* in path/indxpath.c: */

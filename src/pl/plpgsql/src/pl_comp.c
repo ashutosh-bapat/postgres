@@ -3,7 +3,7 @@
  * pl_comp.c		- Compiler part of the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2206,6 +2206,33 @@ build_datatype(HeapTuple typeTup, int32 typmod,
 	}
 
 	return typ;
+}
+
+/*
+ * Build an array type for the element type specified as argument.
+ */
+PLpgSQL_type *
+plpgsql_build_datatype_arrayof(PLpgSQL_type *dtype)
+{
+	Oid			array_typeid;
+
+	/*
+	 * If it's already an array type, use it as-is: Postgres doesn't do nested
+	 * arrays.
+	 */
+	if (dtype->typisarray)
+		return dtype;
+
+	array_typeid = get_array_type(dtype->typoid);
+	if (!OidIsValid(array_typeid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("could not find array type for data type %s",
+						format_type_be(dtype->typoid))));
+
+	/* Note we inherit typmod and collation, if any, from the element type */
+	return plpgsql_build_datatype(array_typeid, dtype->atttypmod,
+								  dtype->collation, NULL);
 }
 
 /*

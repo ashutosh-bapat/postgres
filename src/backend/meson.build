@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 backend_build_deps = [backend_code]
 backend_sources = []
@@ -72,7 +72,7 @@ postgres_lib = static_library('postgres_lib',
 
 if cc.get_id() == 'msvc'
   postgres_def = custom_target('postgres.def',
-    command: [perl, files('../tools/msvc/gendef.pl'),
+    command: [perl, files('../tools/msvc_gendef.pl'),
               '--arch', host_cpu,
               '--tempdir', '@PRIVATE_DIR@',
               '--deffile', '@OUTPUT@',

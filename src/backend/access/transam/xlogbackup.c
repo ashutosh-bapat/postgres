@@ -3,7 +3,7 @@
  * xlogbackup.c
  *		Internal routines for base backups.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -75,6 +75,16 @@ build_backup_content(BackupState *state, bool ishistoryfile)
 
 		appendStringInfo(result, "STOP TIME: %s\n", stopstrfbuf);
 		appendStringInfo(result, "STOP TIMELINE: %u\n", state->stoptli);
+	}
+
+	/* either both istartpoint and istarttli should be set, or neither */
+	Assert(XLogRecPtrIsInvalid(state->istartpoint) == (state->istarttli == 0));
+	if (!XLogRecPtrIsInvalid(state->istartpoint))
+	{
+		appendStringInfo(result, "INCREMENTAL FROM LSN: %X/%X\n",
+						 LSN_FORMAT_ARGS(state->istartpoint));
+		appendStringInfo(result, "INCREMENTAL FROM TLI: %u\n",
+						 state->istarttli);
 	}
 
 	data = result->data;

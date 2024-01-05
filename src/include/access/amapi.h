@@ -3,7 +3,7 @@
  * amapi.h
  *	  API for Postgres index access methods.
  *
- * Copyright (c) 2015-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2015-2024, PostgreSQL Global Development Group
  *
  * src/include/access/amapi.h
  *
@@ -112,6 +112,9 @@ typedef bool (*aminsert_function) (Relation indexRelation,
 								   IndexUniqueCheck checkUnique,
 								   bool indexUnchanged,
 								   struct IndexInfo *indexInfo);
+
+/* cleanup after insert */
+typedef void (*aminsertcleanup_function) (struct IndexInfo *indexInfo);
 
 /* bulk delete */
 typedef IndexBulkDeleteResult *(*ambulkdelete_function) (IndexVacuumInfo *info,
@@ -240,6 +243,8 @@ typedef struct IndexAmRoutine
 	bool		ampredlocks;
 	/* does AM support parallel scan? */
 	bool		amcanparallel;
+	/* does AM support parallel build? */
+	bool		amcanbuildparallel;
 	/* does AM support columns included with clause INCLUDE? */
 	bool		amcaninclude;
 	/* does AM use maintenance_work_mem? */
@@ -261,6 +266,7 @@ typedef struct IndexAmRoutine
 	ambuild_function ambuild;
 	ambuildempty_function ambuildempty;
 	aminsert_function aminsert;
+	aminsertcleanup_function aminsertcleanup;
 	ambulkdelete_function ambulkdelete;
 	amvacuumcleanup_function amvacuumcleanup;
 	amcanreturn_function amcanreturn;	/* can be NULL */

@@ -1,11 +1,11 @@
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # This test case aims to verify that client-side backup compression work
 # properly, and it also aims to verify that pg_verifybackup can verify a base
 # backup that didn't start out in plain format.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use File::Path qw(rmtree);
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;

@@ -8,7 +8,7 @@
 # - readfuncs
 # - outfuncs
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/nodes/gen_node_support.pl
@@ -16,7 +16,7 @@
 #----------------------------------------------------------------------
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use File::Basename;
 use Getopt::Long;
@@ -585,7 +585,7 @@ my $header_comment =
  * %s
  *    Generated node infrastructure code
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES

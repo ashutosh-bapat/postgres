@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Sets up a KDC and then runs a variety of tests to make sure that the
 # GSSAPI/Kerberos authentication and encryption are working properly,
@@ -18,7 +18,7 @@
 # See the README for additional information.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Utils;
 use PostgreSQL::Test::Cluster;
 use Test::More;
@@ -28,7 +28,7 @@ if ($ENV{with_gssapi} ne 'yes')
 {
 	plan skip_all => 'GSSAPI/Kerberos not supported by this build';
 }
-elsif ($ENV{PG_TEST_EXTRA} !~ /\bkerberos\b/)
+elsif (!$ENV{PG_TEST_EXTRA} || $ENV{PG_TEST_EXTRA} !~ /\bkerberos\b/)
 {
 	plan skip_all =>
 	  'Potentially unsafe test GSSAPI/Kerberos not enabled in PG_TEST_EXTRA';
@@ -203,7 +203,7 @@ system_or_bail $krb5kdc, '-P', $kdc_pidfile;
 
 END
 {
-	kill 'INT', `cat $kdc_pidfile` if -f $kdc_pidfile;
+	kill 'INT', `cat $kdc_pidfile` if defined($kdc_pidfile) && -f $kdc_pidfile;
 }
 
 note "setting up PostgreSQL instance";

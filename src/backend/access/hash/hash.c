@@ -3,7 +3,7 @@
  * hash.c
  *	  Implementation of Margo Seltzer's Hashing package for postgres.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -73,6 +73,7 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = true;
 	amroutine->amcanparallel = false;
+	amroutine->amcanbuildparallel = false;
 	amroutine->amcaninclude = false;
 	amroutine->amusemaintenanceworkmem = false;
 	amroutine->amsummarizing = false;
@@ -83,6 +84,7 @@ hashhandler(PG_FUNCTION_ARGS)
 	amroutine->ambuild = hashbuild;
 	amroutine->ambuildempty = hashbuildempty;
 	amroutine->aminsert = hashinsert;
+	amroutine->aminsertcleanup = NULL;
 	amroutine->ambulkdelete = hashbulkdelete;
 	amroutine->amvacuumcleanup = hashvacuumcleanup;
 	amroutine->amcanreturn = NULL;

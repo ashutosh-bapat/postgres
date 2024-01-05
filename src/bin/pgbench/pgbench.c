@@ -5,7 +5,7 @@
  * Originally written by Tatsuo Ishii and enhanced by many contributors.
  *
  * src/bin/pgbench/pgbench.c
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -4908,7 +4908,7 @@ initPopulateTable(PGconn *con, const char *table, int64 base,
 				  initRowMethod init_row)
 {
 	int			n;
-	int			k;
+	int64		k;
 	int			chars = 0;
 	PGresult   *res;
 	PQExpBufferData sql;

@@ -16,7 +16,7 @@
  *		relevant database in turn.  The former keeps running after the
  *		initial prewarm is complete to update the dump file periodically.
  *
- *	Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  *	IDENTIFICATION
  *		contrib/pg_prewarm/autoprewarm.c
@@ -877,7 +877,7 @@ apw_start_database_worker(void)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 				 errmsg("registering dynamic bgworker autoprewarm failed"),
-				 errhint("Consider increasing configuration parameter \"max_worker_processes\".")));
+				 errhint("Consider increasing configuration parameter max_worker_processes.")));
 
 	/*
 	 * Ignore return value; if it fails, postmaster has died, but we have

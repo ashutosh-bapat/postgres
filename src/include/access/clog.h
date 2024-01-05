@@ -3,7 +3,7 @@
  *
  * PostgreSQL transaction-commit-log manager
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/clog.h
@@ -31,7 +31,7 @@ typedef int XidStatus;
 
 typedef struct xl_clog_truncate
 {
-	int			pageno;
+	int64		pageno;
 	TransactionId oldestXact;
 	Oid			oldestXactDb;
 } xl_clog_truncate;

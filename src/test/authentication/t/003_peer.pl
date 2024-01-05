@@ -1,12 +1,12 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Tests for peer authentication and user name map.
 # The test is skipped if the platform does not support peer authentication,
 # and is only able to run with Unix-domain sockets.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;

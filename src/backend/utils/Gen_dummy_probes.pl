@@ -1,13 +1,13 @@
 #-------------------------------------------------------------------------
 # Perl script to create dummy probes.h file when dtrace is not available
 #
-# Copyright (c) 2008-2023, PostgreSQL Global Development Group
+# Copyright (c) 2008-2024, PostgreSQL Global Development Group
 #
 # src/backend/utils/Gen_dummy_probes.pl
 #-------------------------------------------------------------------------
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 m/^\s*probe / || next;
 s/^\s*probe ([^(]*)(.*);/$1$2/;

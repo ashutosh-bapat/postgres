@@ -4,7 +4,7 @@
  *		Routines for handling specialized SET variables.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -717,7 +717,7 @@ check_client_encoding(char **newval, void **extra, GucSource source)
 		else
 		{
 			/* Provide a useful complaint */
-			GUC_check_errdetail("Cannot change \"client_encoding\" now.");
+			GUC_check_errdetail("Cannot change client_encoding now.");
 		}
 		return false;
 	}

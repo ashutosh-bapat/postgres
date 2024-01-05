@@ -2,7 +2,7 @@
  * applyparallelworker.c
  *	   Support routines for applying xact by parallel apply worker
  *
- * Copyright (c) 2023, PostgreSQL Global Development Group
+ * Copyright (c) 2023-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/applyparallelworker.c
@@ -509,7 +509,6 @@ pa_allocate_worker(TransactionId xid)
 	winfo->in_use = true;
 	winfo->serialize_changes = false;
 	entry->winfo = winfo;
-	entry->xid = xid;
 }
 
 /*

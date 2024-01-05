@@ -9,7 +9,7 @@
  *	  more likely to break across PostgreSQL releases than code that uses
  *	  only the official API.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/libpq-int.h
@@ -698,7 +698,8 @@ extern void pqSaveMessageField(PGresult *res, char code,
 extern void pqSaveParameterStatus(PGconn *conn, const char *name,
 								  const char *value);
 extern int	pqRowProcessor(PGconn *conn, const char **errmsgp);
-extern void pqCommandQueueAdvance(PGconn *conn);
+extern void pqCommandQueueAdvance(PGconn *conn, bool isReadyForQuery,
+								  bool gotSync);
 extern int	PQsendQueryContinue(PGconn *conn, const char *query);
 
 /* === in fe-protocol3.c === */

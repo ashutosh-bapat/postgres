@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 package RewindTest;
 
@@ -32,7 +32,7 @@ package RewindTest;
 # to run psql against the primary and standby servers, respectively.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 use Carp;
 use Exporter 'import';

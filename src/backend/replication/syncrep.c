@@ -63,7 +63,7 @@
  * the standbys which are considered as synchronous at that moment
  * will release waiters from the queue.
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/syncrep.c
@@ -416,7 +416,7 @@ SyncRepInitConfig(void)
 		SpinLockRelease(&MyWalSnd->mutex);
 
 		ereport(DEBUG1,
-				(errmsg_internal("standby \"%s\" now has synchronous standby priority %u",
+				(errmsg_internal("standby \"%s\" now has synchronous standby priority %d",
 								 application_name, priority)));
 	}
 }
@@ -483,7 +483,7 @@ SyncRepReleaseWaiters(void)
 
 		if (SyncRepConfig->syncrep_method == SYNC_REP_PRIORITY)
 			ereport(LOG,
-					(errmsg("standby \"%s\" is now a synchronous standby with priority %u",
+					(errmsg("standby \"%s\" is now a synchronous standby with priority %d",
 							application_name, MyWalSnd->sync_standby_priority)));
 		else
 			ereport(LOG,

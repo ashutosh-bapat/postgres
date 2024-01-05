@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 docs = []
 installdocs = []
@@ -179,43 +179,6 @@ if docs_dep.found()
     )
     alldocs += postgres_txt
   endif
-endif
-
-
-#
-# INSTALL in html, text
-#
-if docs_dep.found()
-  # Depend on postgres_full_xml, so validity errors are raised in one place,
-  # and so dependencies don't need to be re-specified.
-  install_xml = custom_target('INSTALL.xml',
-    input: ['standalone-profile.xsl', 'standalone-install.xml'],
-    output: 'INSTALL.xml',
-    depfile: 'INSTALL.xml.d',
-    depends: postgres_full_xml,
-    command: [xsltproc, '-o', '@OUTPUT@', xsltproc_flags, '--xinclude', '@INPUT@'],
-    build_by_default: false,
-  )
-  install_html = custom_target('INSTALL.html',
-    input: ['stylesheet-text.xsl', install_xml],
-    output: 'INSTALL.html',
-    depfile: 'INSTALL.html.d',
-    command: [xsltproc, '-o', '@OUTPUT@', xsltproc_html_flags, '@INPUT@'],
-    build_by_default: false,
-  )
-  alldocs += install_html
-
-  if pandoc.found()
-    # XXX: Makefile does an iconv translit here, but unclear why?
-    install = custom_target('INSTALL',
-      input: [install_html],
-      output: 'INSTALL',
-      command: [pandoc, '-t', 'plain', '-o', '@OUTPUT@', '@INPUT@'],
-      build_by_default: false,
-    )
-    alldocs += install
-  endif
-
 endif
 
 

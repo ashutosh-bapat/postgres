@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 pg_stat_statements_sources = files(
   'pg_stat_statements.c',
@@ -49,6 +49,7 @@ tests += {
       'planning',
       'user_activity',
       'wal',
+      'entry_timestamp',
       'cleanup',
       'oldextversions',
     ],
@@ -57,5 +58,10 @@ tests += {
     # "shared_preload_libraries=pg_stat_statements", which typical
     # runningcheck users do not have (e.g. buildfarm clients).
     'runningcheck': false,
+  },
+  'tap': {
+    'tests': [
+      't/010_restart.pl',
+    ],
   },
 }

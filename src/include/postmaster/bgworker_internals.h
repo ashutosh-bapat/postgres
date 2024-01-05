@@ -2,7 +2,7 @@
  * bgworker_internals.h
  *		POSTGRES pluggable background workers internals
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -56,9 +56,5 @@ extern void ResetBackgroundWorkerCrashTimes(void);
 
 /* Entry point for background worker processes */
 extern void BackgroundWorkerMain(void) pg_attribute_noreturn();
-
-#ifdef EXEC_BACKEND
-extern BackgroundWorker *BackgroundWorkerEntry(int slotno);
-#endif
 
 #endif							/* BGWORKER_INTERNALS_H */
