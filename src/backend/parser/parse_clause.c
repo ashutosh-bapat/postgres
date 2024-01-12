@@ -964,7 +964,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 	table_close(rel, NoLock);
 
-	return addRangeTableEntryForGraphTable(pstate, graphid, (List *) gp, columns, colnames, rgt->alias, false, true);
+	return addRangeTableEntryForGraphTable(pstate, graphid, castNode(GraphPattern, gp), columns, colnames, rgt->alias, false, true);
 }
 
 /*

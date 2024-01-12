@@ -14,6 +14,7 @@
 #ifndef PARSE_GRAPHTABLE_H
 #define PARSE_GRAPHTABLE_H
 
+#include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 
 typedef struct GraphTableParseState
@@ -25,6 +26,6 @@ typedef struct GraphTableParseState
 
 extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref);
 
-Node *transformGraphPattern(GraphTableParseState *gpstate, List *graph_pattern);
+Node *transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern);
 
 #endif							/* PARSE_GRAPHTABLE_H */

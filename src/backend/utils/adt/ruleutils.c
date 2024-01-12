@@ -7659,15 +7659,13 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 }
 
 static void
-get_graph_pattern_def(List *graph_pattern, deparse_context *context)
+get_graph_pattern_def(GraphPattern *graph_pattern, deparse_context *context)
 {
 	StringInfo	buf = context->buf;
-	List	   *path_pattern_list = linitial_node(List, graph_pattern);
-	Node	   *where_clause = lsecond(graph_pattern);
 	ListCell   *lc;
 	bool		first = true;
 
-	foreach(lc, path_pattern_list)
+	foreach(lc, graph_pattern->path_pattern_list)
 	{
 		List	   *path_pattern_expr = lfirst_node(List, lc);
 
@@ -7679,10 +7677,10 @@ get_graph_pattern_def(List *graph_pattern, deparse_context *context)
 		get_path_pattern_expr_def(path_pattern_expr, context);
 	}
 
-	if (where_clause)
+	if (graph_pattern->whereClause)
 	{
 		appendStringInfoString(buf, "WHERE ");
-		get_rule_expr(where_clause, context, false);
+		get_rule_expr(graph_pattern->whereClause, context, false);
 	}
 }
 

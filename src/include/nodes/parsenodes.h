@@ -676,7 +676,7 @@ typedef struct RangeGraphTable
 {
 	NodeTag		type;
 	RangeVar   *graph_name;
-	List	   *graph_pattern;
+	struct GraphPattern *graph_pattern;
 	List	   *columns;
 	Alias	   *alias;			/* table alias & optional column aliases */
 	int			location;		/* token location, or -1 if unknown */
@@ -952,6 +952,13 @@ typedef struct PartitionCmd
  * Nodes for graph pattern
  */
 
+typedef struct GraphPattern
+{
+	NodeTag		type;
+	List	   *path_pattern_list;
+	Node	   *whereClause;
+} GraphPattern;
+
 typedef enum ElementPatternKind
 {
 	VERTEX_PATTERN,
@@ -1187,7 +1194,7 @@ typedef struct RangeTblEntry
 	/*
 	 * Fields valid for a graph table RTE (else NULL):
 	 */
-	List	   *graph_pattern;
+	GraphPattern *graph_pattern;
 	List	   *graph_table_columns;
 
 	/*

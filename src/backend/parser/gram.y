@@ -676,13 +676,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				add_label
 %type <ival>	vertex_or_edge
 
-%type <list>	graph_pattern
-				opt_graph_pattern_quantifier
+%type <list>	opt_graph_pattern_quantifier
 				path_pattern_list
 				path_pattern
 				path_pattern_expression
 				path_term
-%type <node>	path_factor
+%type <node>	graph_pattern
+				path_factor
 				path_primary
 				opt_is_label_expression
 				label_expression
@@ -13845,7 +13845,7 @@ table_ref:	relation_expr opt_alias_clause
 				{
 					RangeGraphTable *n = makeNode(RangeGraphTable);
 					n->graph_name = $3;
-					n->graph_pattern = $5;
+					n->graph_pattern = castNode(GraphPattern, $5);
 					n->columns = $8;
 					n->alias = $11;
 					n->location = @1;
@@ -17144,7 +17144,14 @@ json_array_aggregate_order_by_clause_opt:
  *****************************************************************************/
 
 graph_pattern:
-			path_pattern_list where_clause			{ $$ = list_make2($1, $2); }
+			path_pattern_list where_clause
+				{
+					GraphPattern *gp = makeNode(GraphPattern);
+
+					gp->path_pattern_list = $1;
+					gp->whereClause = $2;
+					$$ = (Node *) gp;
+				}
 		;
 
 path_pattern_list:

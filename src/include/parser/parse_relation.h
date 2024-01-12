@@ -83,7 +83,7 @@ extern ParseNamespaceItem *addRangeTableEntryForTableFunc(ParseState *pstate,
 														  bool inFromCl);
 extern ParseNamespaceItem *addRangeTableEntryForGraphTable(ParseState *pstate,
 														   Oid graphid,
-														   List *graph_pattern,
+														   GraphPattern *graph_pattern,
 														   List *columns,
 														   List *colnames,
 														   Alias *alias,

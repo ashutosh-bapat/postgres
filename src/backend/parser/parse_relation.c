@@ -2130,7 +2130,7 @@ addRangeTableEntryForTableFunc(ParseState *pstate,
 ParseNamespaceItem *
 addRangeTableEntryForGraphTable(ParseState *pstate,
 								Oid graphid,
-								List *graph_pattern,
+								GraphPattern *graph_pattern,
 								List *columns,
 								List *colnames,
 								Alias *alias,

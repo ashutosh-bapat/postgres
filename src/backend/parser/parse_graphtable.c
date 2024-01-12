@@ -232,18 +232,16 @@ transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
 }
 
 Node *
-transformGraphPattern(GraphTableParseState *gpstate, List *graph_pattern)
+transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern)
 {
-	Node *path_pattern_list = linitial(graph_pattern);
-	Node *where_clause = lsecond(graph_pattern);
 	ParseState *pstate2;
 
 	pstate2 = make_parsestate(NULL);
 	pstate2->p_pre_columnref_hook = graph_table_property_reference;
 	pstate2->p_ref_hook_state = gpstate;
 
-	path_pattern_list = transformPathPatternList(gpstate, (List *) path_pattern_list);
-	where_clause = transformExpr(pstate2, where_clause, EXPR_KIND_OTHER);
+	graph_pattern->path_pattern_list = (List *) transformPathPatternList(gpstate, graph_pattern->path_pattern_list);
+	graph_pattern->whereClause = transformExpr(pstate2, graph_pattern->whereClause, EXPR_KIND_OTHER);
 
-	return (Node *) list_make2(path_pattern_list, where_clause);
+	return (Node *) graph_pattern;
 }
