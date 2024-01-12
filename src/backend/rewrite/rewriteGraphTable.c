@@ -13,10 +13,16 @@
  */
 #include "postgres.h"
 
+#include "access/genam.h"
+#include "access/table.h"
+#include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
 #include "nodes/makefuncs.h"
 #include "nodes/parsenodes.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteGraphTable.h"
+#include "rewrite/rewriteHandler.h"
+#include "utils/syscache.h"
 
 /*  XXX */
 #include "catalog/namespace.h"
@@ -27,6 +33,10 @@
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
+
+
+static List *get_elements_for_label(Oid graphid, const char *labelname);
+static Oid get_table_for_element(Oid elid);
 
 
 /*
@@ -48,16 +58,13 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	{
 		RangeTblEntry *r;
 		Oid			relid;
-		RangeVar   *rv;
 		RTEPermissionInfo *rpi;
 
 		r = makeNode(RangeTblEntry);
 		r->alias = makeAlias("c", NIL);
 		r->eref = makeAlias("c", list_make3(makeString("customer_id"), makeString("name"), makeString("address")));
 		r->rtekind = RTE_RELATION;
-		rv = makeNode(RangeVar);
-		rv->relname = "customers";
-		relid = RangeVarGetRelid(rv, AccessShareLock, false);
+		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "customers")));
 		r->relid = relid;
 		r->relkind = get_rel_relkind(relid);
 		r->rellockmode = AccessShareLock;
@@ -74,9 +81,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		r->alias = makeAlias("_co", NIL);
 		r->eref = makeAlias("_co", list_make3(makeString("customer_orders_id"), makeString("customer_id"), makeString("order_id")));
 		r->rtekind = RTE_RELATION;
-		rv = makeNode(RangeVar);
-		rv->relname = "customer_orders";
-		relid = RangeVarGetRelid(rv, AccessShareLock, false);
+		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "customer_orders")));
 		r->relid = relid;
 		r->relkind = get_rel_relkind(relid);
 		r->rellockmode = AccessShareLock;
@@ -93,9 +98,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		r->alias = makeAlias("o", NIL);
 		r->eref = makeAlias("o", list_make2(makeString("order_id"), makeString("ordered_when")));
 		r->rtekind = RTE_RELATION;
-		rv = makeNode(RangeVar);
-		rv->relname = "orders";
-		relid = RangeVarGetRelid(rv, AccessShareLock, false);
+		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "orders")));
 		r->relid = relid;
 		r->relkind = get_rel_relkind(relid);
 		r->rellockmode = AccessShareLock;
@@ -163,8 +166,54 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 
 	newsubquery->targetList = list_make1(makeTargetEntry((Expr *) makeVar(1, 2, VARCHAROID, -1, DEFAULT_COLLATION_OID, 0), 1, "customer_name", false));
 
+	AcquireRewriteLocks(newsubquery, true, false);
+
 	rte->rtekind = RTE_SUBQUERY;
 	rte->subquery = newsubquery;
 
 	return parsetree;
+}
+
+static List *
+get_elements_for_label(Oid graphid, const char *labelname)
+{
+	Relation	rel;
+	SysScanDesc	scan;
+	ScanKeyData	key[1];
+	HeapTuple	tup;
+	List	   *result = NIL;
+
+	rel = table_open(PropgraphLabelRelationId, RowShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pgllabel,
+				BTEqualStrategyNumber,
+				F_NAMEEQ, CStringGetDatum(labelname));
+
+	// FIXME: needs index
+	// XXX: maybe pg_propgraph_label should include the graph OID
+	scan = systable_beginscan(rel, InvalidOid,
+							  true, NULL, 1, key);
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Oid elid;
+		Oid pgepgid;
+
+		elid = ((Form_pg_propgraph_label) GETSTRUCT(tup))->pglelid;
+		pgepgid = GetSysCacheOid1(PROPGRAPHELOID, Anum_pg_propgraph_element_pgepgid, ObjectIdGetDatum(elid));
+
+		if (pgepgid == graphid)
+			result = lappend_oid(result, elid);
+	}
+
+	systable_endscan(scan);
+	table_close(rel, RowShareLock);
+
+	return result;
+}
+
+pg_attribute_unused()
+static Oid
+get_table_for_element(Oid elid)
+{
+	return GetSysCacheOid1(PROPGRAPHELOID, Anum_pg_propgraph_element_pgerelid, ObjectIdGetDatum(elid));
 }
