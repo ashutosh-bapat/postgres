@@ -21,6 +21,7 @@
 #include "catalog/pg_propgraph_property.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_graphtable.h"
 #include "parser/parse_node.h"
@@ -194,6 +195,7 @@ transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
 
 	gpstate->localvar = ep->variable;
 	ep->whereClause = transformExpr(pstate2, ep->whereClause, EXPR_KIND_OTHER);
+	assign_expr_collations(pstate2, ep->whereClause);
 	gpstate->localvar = NULL;
 
 	return (Node *) ep;
@@ -242,6 +244,7 @@ transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern
 
 	graph_pattern->path_pattern_list = (List *) transformPathPatternList(gpstate, graph_pattern->path_pattern_list);
 	graph_pattern->whereClause = transformExpr(pstate2, graph_pattern->whereClause, EXPR_KIND_OTHER);
+	assign_expr_collations(pstate2, graph_pattern->whereClause);
 
 	return (Node *) graph_pattern;
 }

@@ -17,11 +17,14 @@
 #include "access/table.h"
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
 #include "nodes/parsenodes.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteGraphTable.h"
 #include "rewrite/rewriteHandler.h"
+#include "rewrite/rewriteManip.h"
 #include "utils/syscache.h"
 
 /*  XXX */
@@ -35,8 +38,10 @@
 #include "utils/lsyscache.h"
 
 
+static Oid get_labelid(Oid graphid, const char *labelname);
 static List *get_elements_for_label(Oid graphid, const char *labelname);
 static Oid get_table_for_element(Oid elid);
+static Node *replace_property_refs(Node *node, Oid labelid, int rt_index);
 
 
 /*
@@ -66,6 +71,13 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	foreach(lc, element_patterns)
 	{
 		ElementPattern *ep = lfirst_node(ElementPattern, lc);
+		Oid		labelid = InvalidOid;
+
+		if (!(ep->kind == VERTEX_PATTERN || ep->kind == EDGE_PATTERN_LEFT || ep->kind == EDGE_PATTERN_RIGHT || ep->kind == EDGE_PATTERN_ANY))
+			elog(ERROR, "unsupported element pattern kind: %u", ep->kind);
+
+		if (ep->quantifier)
+			elog(ERROR, "element pattern quantifier not supported yet");
 
 		if (IsA(ep->labelexpr, GraphLabelRef))
 		{
@@ -78,6 +90,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			r = makeNode(RangeTblEntry);
 			r->rtekind = RTE_RELATION;
 			relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, glr->labelname)));
+			labelid = get_labelid(rte->relid, glr->labelname);
 			r->relid = relid;
 			r->relkind = get_rel_relkind(relid);
 			r->rellockmode = AccessShareLock;
@@ -98,6 +111,15 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		}
 		else
 			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(ep->labelexpr));
+
+		if (ep->whereClause)
+		{
+			Node *tr;
+
+			tr = replace_property_refs(ep->whereClause, labelid, list_length(newsubquery->rtable));
+
+			qual_exprs = lappend(qual_exprs, tr);
+		}
 	}
 
 	{
@@ -118,16 +140,6 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		op->opresulttype = BOOLOID;
 		op->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(3, 1, INT4OID, -1, 0, 0));
 		qual_exprs = lappend(qual_exprs, op);
-
-		op = makeNode(OpExpr);
-		op->location = -1;
-		op->opno = TextEqualOperator;
-		op->opfuncid = F_TEXTEQ;
-		op->opresulttype = BOOLOID;
-		op->inputcollid = DEFAULT_COLLATION_OID;
-		op->args = list_make2(makeRelabelType((Expr *) makeVar(1, 3, VARCHAROID, -1, DEFAULT_COLLATION_OID, 0), TEXTOID, -1, DEFAULT_COLLATION_OID, 2),
-							  makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1, PointerGetDatum(cstring_to_text("US")), false, false));
-		qual_exprs = lappend(qual_exprs, op);
 	}
 
 	newsubquery->jointree = makeFromExpr(fromlist, (Node *) makeBoolExpr(AND_EXPR, qual_exprs, -1));
@@ -140,6 +152,37 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	rte->subquery = newsubquery;
 
 	return parsetree;
+}
+
+static Oid
+get_labelid(Oid graphid, const char *labelname)
+{
+	Relation	rel;
+	SysScanDesc	scan;
+	ScanKeyData	key[1];
+	HeapTuple	tup;
+	Oid			result;
+
+	rel = table_open(PropgraphLabelRelationId, RowShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pgllabel,
+				BTEqualStrategyNumber,
+				F_NAMEEQ, CStringGetDatum(labelname));
+
+	// FIXME: needs index
+	// XXX: maybe pg_propgraph_label should include the graph OID
+	scan = systable_beginscan(rel, InvalidOid,
+							  true, NULL, 1, key);
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		result = ((Form_pg_propgraph_label) GETSTRUCT(tup))->oid;
+		break;
+	}
+
+	systable_endscan(scan);
+	table_close(rel, RowShareLock);
+
+	return result;
 }
 
 static List *
@@ -179,9 +222,50 @@ get_elements_for_label(Oid graphid, const char *labelname)
 	return result;
 }
 
-pg_attribute_unused()
 static Oid
 get_table_for_element(Oid elid)
 {
 	return GetSysCacheOid1(PROPGRAPHELOID, Anum_pg_propgraph_element_pgerelid, ObjectIdGetDatum(elid));
+}
+
+struct replace_property_refs_context
+{
+	Oid labelid;
+	int rt_index;
+};
+
+static Node *
+replace_property_refs_mutator(Node *node, struct replace_property_refs_context *context)
+{
+	if (node == NULL)
+		return NULL;
+	if (IsA(node, PropertyRef))
+	{
+		PropertyRef *pr = (PropertyRef *) node;
+		HeapTuple tup;
+		Node *n;
+
+		tup = SearchSysCache2(PROPGRAPHPROPNAME, CStringGetDatum(pr->propname), ObjectIdGetDatum(context->labelid));
+		if (!tup)
+			elog(ERROR, "property %s/%u not found", pr->propname, context->labelid);
+
+		n = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHPROPNAME, tup, Anum_pg_propgraph_property_pgpexpr)));
+		ChangeVarNodes(n, 1, context->rt_index, 0);
+
+		ReleaseSysCache(tup);
+
+		return n;
+	}
+	return expression_tree_mutator(node, replace_property_refs_mutator, context);
+}
+
+static Node *
+replace_property_refs(Node *node, Oid labelid, int rt_index)
+{
+	struct replace_property_refs_context context;
+
+	context.labelid = labelid;
+	context.rt_index = rt_index;
+
+	return expression_tree_mutator(node, replace_property_refs_mutator, &context);
 }
