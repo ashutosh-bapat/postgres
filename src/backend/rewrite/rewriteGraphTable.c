@@ -161,7 +161,7 @@ get_labelid(Oid graphid, const char *labelname)
 	SysScanDesc	scan;
 	ScanKeyData	key[1];
 	HeapTuple	tup;
-	Oid			result;
+	Oid			result = InvalidOid;
 
 	rel = table_open(PropgraphLabelRelationId, RowShareLock);
 	ScanKeyInit(&key[0],
