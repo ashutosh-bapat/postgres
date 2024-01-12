@@ -48,62 +48,50 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 {
 	RangeTblEntry *rte;
 	Query	   *newsubquery;
+	ListCell   *lc;
+	List	   *element_patterns;
 
 	rte = rt_fetch(rt_index, parsetree->rtable);
 
 	newsubquery = makeNode(Query);
 	newsubquery->commandType = CMD_SELECT;
 
+	if (list_length(rte->graph_pattern->path_pattern_list) != 1)
+		elog(ERROR, "unsupported path pattern list length");
+
+	element_patterns = linitial(rte->graph_pattern->path_pattern_list);
+
 	/* rtable */
+	foreach(lc, element_patterns)
 	{
-		RangeTblEntry *r;
-		Oid			relid;
-		RTEPermissionInfo *rpi;
+		ElementPattern *ep = lfirst_node(ElementPattern, lc);
 
-		r = makeNode(RangeTblEntry);
-		r->rtekind = RTE_RELATION;
-		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "customers")));
-		r->relid = relid;
-		r->relkind = get_rel_relkind(relid);
-		r->rellockmode = AccessShareLock;
-		r->inh = true;
-		newsubquery->rtable = lappend(newsubquery->rtable, r);
-		rpi = makeNode(RTEPermissionInfo);
-		rpi->relid = relid;
-		rpi->checkAsUser = 0;
-		rpi->requiredPerms = ACL_SELECT;
-		newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, rpi);
-		r->perminfoindex = list_length(newsubquery->rteperminfos);
+		if (IsA(ep->labelexpr, GraphLabelRef))
+		{
+			GraphLabelRef *glr = castNode(GraphLabelRef, ep->labelexpr);
+			RangeTblEntry *r;
+			Oid			relid;
+			RTEPermissionInfo *rpi;
 
-		r = makeNode(RangeTblEntry);
-		r->rtekind = RTE_RELATION;
-		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "customer_orders")));
-		r->relid = relid;
-		r->relkind = get_rel_relkind(relid);
-		r->rellockmode = AccessShareLock;
-		r->inh = true;
-		newsubquery->rtable = lappend(newsubquery->rtable, r);
-		rpi = makeNode(RTEPermissionInfo);
-		rpi->relid = relid;
-		rpi->checkAsUser = 0;
-		rpi->requiredPerms = ACL_SELECT;
-		newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, rpi);
-		r->perminfoindex = list_length(newsubquery->rteperminfos);
+			r = makeNode(RangeTblEntry);
+			r->rtekind = RTE_RELATION;
+			relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, glr->labelname)));
+			r->relid = relid;
+			r->relkind = get_rel_relkind(relid);
+			r->rellockmode = AccessShareLock;
+			r->inh = true;
+			newsubquery->rtable = lappend(newsubquery->rtable, r);
 
-		r = makeNode(RangeTblEntry);
-		r->rtekind = RTE_RELATION;
-		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "orders")));
-		r->relid = relid;
-		r->relkind = get_rel_relkind(relid);
-		r->rellockmode = AccessShareLock;
-		r->inh = true;
-		newsubquery->rtable = lappend(newsubquery->rtable, r);
-		rpi = makeNode(RTEPermissionInfo);
-		rpi->relid = relid;
-		rpi->checkAsUser = 0;
-		rpi->requiredPerms = ACL_SELECT;
-		newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, rpi);
-		r->perminfoindex = list_length(newsubquery->rteperminfos);
+			rpi = makeNode(RTEPermissionInfo);
+			rpi->relid = relid;
+			rpi->checkAsUser = 0;
+			rpi->requiredPerms = ACL_SELECT;
+			newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, rpi);
+
+			r->perminfoindex = list_length(newsubquery->rteperminfos);
+		}
+		else
+			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(ep->labelexpr));
 	}
 
 	/* jointree */
