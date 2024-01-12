@@ -16,6 +16,7 @@
 
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
+#include "parser/parse_node.h"
 
 typedef struct GraphTableParseState
 {
