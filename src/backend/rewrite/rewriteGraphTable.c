@@ -61,8 +61,6 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		RTEPermissionInfo *rpi;
 
 		r = makeNode(RangeTblEntry);
-		r->alias = makeAlias("c", NIL);
-		r->eref = makeAlias("c", list_make3(makeString("customer_id"), makeString("name"), makeString("address")));
 		r->rtekind = RTE_RELATION;
 		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "customers")));
 		r->relid = relid;
@@ -78,8 +76,6 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		r->perminfoindex = list_length(newsubquery->rteperminfos);
 
 		r = makeNode(RangeTblEntry);
-		r->alias = makeAlias("_co", NIL);
-		r->eref = makeAlias("_co", list_make3(makeString("customer_orders_id"), makeString("customer_id"), makeString("order_id")));
 		r->rtekind = RTE_RELATION;
 		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "customer_orders")));
 		r->relid = relid;
@@ -95,8 +91,6 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		r->perminfoindex = list_length(newsubquery->rteperminfos);
 
 		r = makeNode(RangeTblEntry);
-		r->alias = makeAlias("o", NIL);
-		r->eref = makeAlias("o", list_make2(makeString("order_id"), makeString("ordered_when")));
 		r->rtekind = RTE_RELATION;
 		relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, "orders")));
 		r->relid = relid;
