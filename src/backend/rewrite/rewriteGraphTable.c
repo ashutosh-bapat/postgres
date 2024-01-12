@@ -50,6 +50,8 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	Query	   *newsubquery;
 	ListCell   *lc;
 	List	   *element_patterns;
+	List	   *fromlist = NIL;
+	List	   *qual_exprs = NIL;
 
 	rte = rt_fetch(rt_index, parsetree->rtable);
 
@@ -61,7 +63,6 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 
 	element_patterns = linitial(rte->graph_pattern->path_pattern_list);
 
-	/* rtable */
 	foreach(lc, element_patterns)
 	{
 		ElementPattern *ep = lfirst_node(ElementPattern, lc);
@@ -72,6 +73,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			RangeTblEntry *r;
 			Oid			relid;
 			RTEPermissionInfo *rpi;
+			RangeTblRef *rtr;
 
 			r = makeNode(RangeTblEntry);
 			r->rtekind = RTE_RELATION;
@@ -89,62 +91,46 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, rpi);
 
 			r->perminfoindex = list_length(newsubquery->rteperminfos);
+
+			rtr = makeNode(RangeTblRef);
+			rtr->rtindex = list_length(newsubquery->rtable);
+			fromlist = lappend(fromlist, rtr);
 		}
 		else
 			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(ep->labelexpr));
 	}
 
-	/* jointree */
 	{
-		List	   *fromlist = NIL;
-		Node	   *quals;
-		RangeTblRef *rtr;
+		OpExpr	   *op;
 
-		rtr = makeNode(RangeTblRef);
-		rtr->rtindex = 1;
-		fromlist = lappend(fromlist, rtr);
+		op = makeNode(OpExpr);
+		op->location = -1;
+		op->opno = Int4EqualOperator;
+		op->opfuncid = F_INT4EQ;
+		op->opresulttype = BOOLOID;
+		op->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(1, 1, INT4OID, -1, 0, 0));
+		qual_exprs = lappend(qual_exprs, op);
 
-		rtr = makeNode(RangeTblRef);
-		rtr->rtindex = 2;
-		fromlist = lappend(fromlist, rtr);
+		op = makeNode(OpExpr);
+		op->location = -1;
+		op->opno = Int4EqualOperator;
+		op->opfuncid = F_INT4EQ;
+		op->opresulttype = BOOLOID;
+		op->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(3, 1, INT4OID, -1, 0, 0));
+		qual_exprs = lappend(qual_exprs, op);
 
-		rtr = makeNode(RangeTblRef);
-		rtr->rtindex = 3;
-		fromlist = lappend(fromlist, rtr);
-
-		{
-			OpExpr	   *op1,
-					   *op2,
-					   *op3;
-
-			op1 = makeNode(OpExpr);
-			op1->location = -1;
-			op1->opno = Int4EqualOperator;
-			op1->opfuncid = F_INT4EQ;
-			op1->opresulttype = BOOLOID;
-			op1->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(1, 1, INT4OID, -1, 0, 0));
-
-			op2 = makeNode(OpExpr);
-			op2->location = -1;
-			op2->opno = Int4EqualOperator;
-			op2->opfuncid = F_INT4EQ;
-			op2->opresulttype = BOOLOID;
-			op2->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(3, 1, INT4OID, -1, 0, 0));
-
-			op3 = makeNode(OpExpr);
-			op3->location = -1;
-			op3->opno = TextEqualOperator;
-			op3->opfuncid = F_TEXTEQ;
-			op3->opresulttype = BOOLOID;
-			op3->inputcollid = DEFAULT_COLLATION_OID;
-			op3->args = list_make2(makeRelabelType((Expr *) makeVar(1, 3, VARCHAROID, -1, DEFAULT_COLLATION_OID, 0), TEXTOID, -1, DEFAULT_COLLATION_OID, 2),
-								   makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1, PointerGetDatum(cstring_to_text("US")), false, false));
-
-			quals = (Node *) makeBoolExpr(AND_EXPR, list_make3(op1, op2, op3), -1);
-		}
-
-		newsubquery->jointree = makeFromExpr(fromlist, quals);
+		op = makeNode(OpExpr);
+		op->location = -1;
+		op->opno = TextEqualOperator;
+		op->opfuncid = F_TEXTEQ;
+		op->opresulttype = BOOLOID;
+		op->inputcollid = DEFAULT_COLLATION_OID;
+		op->args = list_make2(makeRelabelType((Expr *) makeVar(1, 3, VARCHAROID, -1, DEFAULT_COLLATION_OID, 0), TEXTOID, -1, DEFAULT_COLLATION_OID, 2),
+							  makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1, PointerGetDatum(cstring_to_text("US")), false, false));
+		qual_exprs = lappend(qual_exprs, op);
 	}
+
+	newsubquery->jointree = makeFromExpr(fromlist, (Node *) makeBoolExpr(AND_EXPR, qual_exprs, -1));
 
 	newsubquery->targetList = list_make1(makeTargetEntry((Expr *) makeVar(1, 2, VARCHAROID, -1, DEFAULT_COLLATION_OID, 0), 1, "customer_name", false));
 
