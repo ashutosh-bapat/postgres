@@ -1405,7 +1405,6 @@ LPVOID
 LPWSTR
 LSEG
 LUID
-LVPagePruneState
 LVRelState
 LVSavedErrInfo
 LWLock
@@ -4039,3 +4038,6 @@ cb_tablespace_mapping
 manifest_data
 manifest_writer
 rfile
+ws_options
+ws_file_info
+CopySaveErrorToChoice

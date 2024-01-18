@@ -292,6 +292,7 @@
    &pgtesttiming;
    &pgupgrade;
    &pgwaldump;
+   &pgwalsummary;
    &postgres;
 
  </reference>
