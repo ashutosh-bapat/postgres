@@ -55,6 +55,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	Query	   *newsubquery;
 	ListCell   *lc;
 	List	   *element_patterns;
+	List	   *element_ids = NIL;
 	List	   *fromlist = NIL;
 	List	   *qual_exprs = NIL;
 
@@ -73,7 +74,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		ElementPattern *ep = lfirst_node(ElementPattern, lc);
 		Oid		labelid = InvalidOid;
 
-		if (!(ep->kind == VERTEX_PATTERN || ep->kind == EDGE_PATTERN_LEFT || ep->kind == EDGE_PATTERN_RIGHT || ep->kind == EDGE_PATTERN_ANY))
+		if (!(ep->kind == VERTEX_PATTERN || ep->kind == EDGE_PATTERN_LEFT || ep->kind == EDGE_PATTERN_RIGHT))
 			elog(ERROR, "unsupported element pattern kind: %u", ep->kind);
 
 		if (ep->quantifier)
@@ -83,13 +84,16 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		{
 			GraphLabelRef *glr = castNode(GraphLabelRef, ep->labelexpr);
 			RangeTblEntry *r;
+			Oid			elid;
 			Oid			relid;
 			RTEPermissionInfo *rpi;
 			RangeTblRef *rtr;
 
 			r = makeNode(RangeTblEntry);
 			r->rtekind = RTE_RELATION;
-			relid = get_table_for_element(linitial_oid(get_elements_for_label(rte->relid, glr->labelname)));
+			elid = linitial_oid(get_elements_for_label(rte->relid, glr->labelname));
+			element_ids = lappend_oid(element_ids, elid);
+			relid = get_table_for_element(elid);
 			labelid = get_labelid(rte->relid, glr->labelname);
 			r->relid = relid;
 			r->relkind = get_rel_relkind(relid);
@@ -122,24 +126,93 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		}
 	}
 
+	/* Iterate over edges only */
+	for (int k = 1; k < list_length(element_ids); k+=2)
 	{
-		OpExpr	   *op;
+		Oid			elid = list_nth_oid(element_ids, k);
+		HeapTuple	tuple;
+		Form_pg_propgraph_element pgeform;
 
-		op = makeNode(OpExpr);
-		op->location = -1;
-		op->opno = Int4EqualOperator;
-		op->opfuncid = F_INT4EQ;
-		op->opresulttype = BOOLOID;
-		op->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(1, 1, INT4OID, -1, 0, 0));
-		qual_exprs = lappend(qual_exprs, op);
+		tuple = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(elid));
+		if (!tuple)
+			elog(ERROR, "cache lookup failed for property graph element %u", elid);
+		pgeform = ((Form_pg_propgraph_element) GETSTRUCT(tuple));
 
-		op = makeNode(OpExpr);
-		op->location = -1;
-		op->opno = Int4EqualOperator;
-		op->opfuncid = F_INT4EQ;
-		op->opresulttype = BOOLOID;
-		op->args = list_make2(makeVar(2, 2, INT4OID, -1, 0, 0), makeVar(3, 1, INT4OID, -1, 0, 0));
-		qual_exprs = lappend(qual_exprs, op);
+		/*
+		 * source link
+		 */
+		if (pgeform->pgesrcvertexid != list_nth_oid(element_ids, k - 1))
+		{
+			qual_exprs = lappend(qual_exprs, makeBoolConst(false, false));
+		}
+		else
+		{
+			Datum		datum;
+			Datum	   *d1, *d2;
+			int			n1, n2;
+
+			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgesrckey);
+			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d1, NULL, &n1);
+
+			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgesrcref);
+			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d2, NULL, &n2);
+
+			if (n1 != n2)
+				elog(ERROR, "array size pgesrckey vs pgesrcref mismatch for element ID %u", elid);
+
+			for (int i = 0; i < n1; i++)
+			{
+				int rti = k + 1;
+				OpExpr	   *op;
+
+				op = makeNode(OpExpr);
+				op->location = -1;
+				op->opno = Int4EqualOperator;
+				op->opfuncid = F_INT4EQ;
+				op->opresulttype = BOOLOID;
+				op->args = list_make2(makeVar(rti, DatumGetInt16(d1[i]), INT4OID, -1, 0, 0), makeVar(rti - 1, DatumGetInt16(d2[i]), INT4OID, -1, 0, 0));
+				qual_exprs = lappend(qual_exprs, op);
+			}
+		}
+
+		/*
+		 * dest link
+		 */
+		if (pgeform->pgedestvertexid != list_nth_oid(element_ids, k + 1))
+		{
+			qual_exprs = lappend(qual_exprs, makeBoolConst(false, false));
+		}
+		else
+		{
+			Datum		datum;
+			Datum	   *d1, *d2;
+			int			n1, n2;
+
+			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgedestkey);
+			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d1, NULL, &n1);
+
+			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgedestref);
+			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d2, NULL, &n2);
+
+			if (n1 != n2)
+				elog(ERROR, "array size pgedestkey vs pgedestref mismatch for element ID %u", elid);
+
+			for (int i = 0; i < n1; i++)
+			{
+				int rti = k + 1;
+				OpExpr	   *op;
+
+				op = makeNode(OpExpr);
+				op->location = -1;
+				op->opno = Int4EqualOperator;
+				op->opfuncid = F_INT4EQ;
+				op->opresulttype = BOOLOID;
+				op->args = list_make2(makeVar(rti, DatumGetInt16(d1[i]), INT4OID, -1, 0, 0), makeVar(rti + 1, DatumGetInt16(d2[i]), INT4OID, -1, 0, 0));
+				qual_exprs = lappend(qual_exprs, op);
+			}
+		}
+
+		ReleaseSysCache(tuple);
 	}
 
 	newsubquery->jointree = makeFromExpr(fromlist, (Node *) makeBoolExpr(AND_EXPR, qual_exprs, -1));
