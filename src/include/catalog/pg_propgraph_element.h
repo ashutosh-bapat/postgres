@@ -49,29 +49,29 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
 
 #ifdef CATALOG_VARLEN			/* variable-length fields start here */
 	/* element key (column numbers in pgerelid relation) */
-	int2vector	pgekey BKI_FORCE_NOT_NULL;
+	int16		pgekey[1] BKI_FORCE_NOT_NULL;
 
 	/*
 	 * for edges: source vertex key (column numbers in pgerelid relation)
 	 */
-	int2vector	pgesrckey;
+	int16		pgesrckey[1];
 
 	/*
 	 * for edges: source vertex table referenced columns (column numbers in
 	 * relation reached via pgesrcvertexid)
 	 */
-	int2vector	pgesrcref;
+	int16		pgesrcref[1];
 
 	/*
 	 * for edges: destination vertex key (column numbers in pgerelid relation)
 	 */
-	int2vector	pgedestkey;
+	int16		pgedestkey[1];
 
 	/*
 	 * for edges: destination vertex table referenced columns (column numbers
 	 * in relation reached via pgedestvertexid)
 	 */
-	int2vector	pgedestref;
+	int16		pgedestref[1];
 #endif
 } FormData_pg_propgraph_element;
 
@@ -81,6 +81,8 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
  * ----------------
  */
 typedef FormData_pg_propgraph_element *Form_pg_propgraph_element;
+
+DECLARE_TOAST(pg_propgraph_element, 8312, 8313);
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_element_oid_index, 8300, PropgraphElementObjectIndexId, pg_propgraph_element, btree(oid oid_ops));
 DECLARE_UNIQUE_INDEX(pg_propgraph_element_alias_index, 8301, PropgraphElementAliasIndexId, pg_propgraph_element, btree(pgepgid oid_ops, pgealias name_ops));

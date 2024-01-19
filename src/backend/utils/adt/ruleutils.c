@@ -1618,22 +1618,6 @@ pg_get_propgraphdef(PG_FUNCTION_ARGS)
 }
 
 static void
-make_int2vector_column_list(StringInfo buf, const int2vector *v, Oid relid)
-{
-	appendStringInfoString(buf, "(");
-	for (int i = 0; i < v->dim1; i++)
-	{
-		char	   *attname;
-
-		if (i > 0)
-			appendStringInfoString(buf, ", ");
-		attname = get_attname(relid, v->values[i], false);
-		appendStringInfoString(buf, quote_identifier(attname));
-	}
-	appendStringInfoString(buf, ")");
-}
-
-static void
 make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 {
 	Relation	pgerel;
@@ -1658,7 +1642,6 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 		char	   *relname;
 		Datum		datum;
 		bool		isnull;
-		int2vector *ekey;
 
 		if (pgeform->pgekind != pgekind)
 			continue;
@@ -1681,29 +1664,32 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 							 NameStr(pgeform->pgealias));
 
 		datum = heap_getattr(tup, Anum_pg_propgraph_element_pgekey, RelationGetDescr(pgerel), &isnull);
-		ekey = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
-
-		Assert(ekey);
-		appendStringInfoString(buf, " KEY ");
-		make_int2vector_column_list(buf, ekey, pgeform->pgerelid);
+		if (!isnull)
+		{
+			appendStringInfoString(buf, " KEY (");
+			decompile_column_index_array(datum, pgeform->pgerelid, buf);
+			appendStringInfoString(buf, ")");
+		}
+		else
+			elog(ERROR, "null pgekey for element %u", pgeform->oid);
 
 		if (pgekind == PGEKIND_EDGE)
 		{
-			int2vector *srckey;
-			int2vector *srcref;
-			int2vector *destkey;
-			int2vector *destref;
+			Datum		srckey;
+			Datum		srcref;
+			Datum		destkey;
+			Datum		destref;
 			HeapTuple	tup2;
 			Form_pg_propgraph_element pgeform2;
 
 			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgesrckey, RelationGetDescr(pgerel), &isnull);
-			srckey = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			srckey = isnull ? 0 : datum;
 			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgesrcref, RelationGetDescr(pgerel), &isnull);
-			srcref = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			srcref = isnull ? 0 : datum;
 			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgedestkey, RelationGetDescr(pgerel), &isnull);
-			destkey = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			destkey = isnull ? 0 : datum;
 			datum = heap_getattr(tup, Anum_pg_propgraph_element_pgedestref, RelationGetDescr(pgerel), &isnull);
-			destref = isnull ? NULL : (int2vector *) DatumGetPointer(datum);
+			destref = isnull ? 0 : datum;
 
 			appendStringInfoString(buf, " SOURCE");
 			tup2 = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(pgeform->pgesrcvertexid));
@@ -1712,10 +1698,11 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 			pgeform2 = (Form_pg_propgraph_element) GETSTRUCT(tup2);
 			if (srckey)
 			{
-				appendStringInfoString(buf, " KEY ");
-				make_int2vector_column_list(buf, srckey, pgeform->pgerelid);
-				appendStringInfo(buf, " REFERENCES %s ", NameStr(pgeform2->pgealias));
-				make_int2vector_column_list(buf, srcref, pgeform2->pgerelid);
+				appendStringInfoString(buf, " KEY (");
+				decompile_column_index_array(srckey, pgeform->pgerelid, buf);
+				appendStringInfo(buf, ") REFERENCES %s (", NameStr(pgeform2->pgealias));
+				decompile_column_index_array(srcref, pgeform2->pgerelid, buf);
+				appendStringInfoString(buf, ")");
 			}
 			else
 				appendStringInfo(buf, " %s ", NameStr(pgeform2->pgealias));
@@ -1728,10 +1715,11 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 			pgeform2 = (Form_pg_propgraph_element) GETSTRUCT(tup2);
 			if (destkey)
 			{
-				appendStringInfoString(buf, " KEY ");
-				make_int2vector_column_list(buf, destkey, pgeform->pgerelid);
-				appendStringInfo(buf, " REFERENCES %s ", NameStr(pgeform2->pgealias));
-				make_int2vector_column_list(buf, destref, pgeform2->pgerelid);
+				appendStringInfoString(buf, " KEY (");
+				decompile_column_index_array(destkey, pgeform->pgerelid, buf);
+				appendStringInfo(buf, ") REFERENCES %s (", NameStr(pgeform2->pgealias));
+				decompile_column_index_array(destref, pgeform2->pgerelid, buf);
+				appendStringInfoString(buf, ")");
 			}
 			else
 				appendStringInfo(buf, " %s", NameStr(pgeform2->pgealias));

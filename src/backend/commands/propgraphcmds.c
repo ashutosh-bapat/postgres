@@ -28,6 +28,7 @@
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
@@ -41,24 +42,24 @@ struct element_info
 	char	kind;
 	Oid		relid;
 	char   *aliasname;
-	int2vector *key;
+	ArrayType *key;
 
 	char   *srcvertex;
 	Oid		srcvertexid;
-	int2vector *srckey;
-	int2vector *srcref;
+	ArrayType *srckey;
+	ArrayType *srcref;
 
 	char   *destvertex;
 	Oid		destvertexid;
-	int2vector *destkey;
-	int2vector *destref;
+	ArrayType *destkey;
+	ArrayType *destref;
 
 	List   *labels;
 };
 
 
-static int2vector *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
-static int2vector *int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
+static ArrayType *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
+static ArrayType *array_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid insert_label_record(Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProperties *properties);
@@ -209,10 +210,10 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 							einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		einfo->srckey = int2vector_from_column_list(pstate, edge->esrckey, edge->location, rel);
-		einfo->srcref = int2vector_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
-		einfo->destkey = int2vector_from_column_list(pstate, edge->edestkey, edge->location, rel);
-		einfo->destref = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+		einfo->srckey = array_from_column_list(pstate, edge->esrckey, edge->location, rel);
+		einfo->srcref = array_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
+		einfo->destkey = array_from_column_list(pstate, edge->edestkey, edge->location, rel);
+		einfo->destref = array_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
 		// TODO: various consistency checks
 
@@ -282,10 +283,10 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	return pgaddress;
 }
 
-static int2vector *
+static ArrayType *
 propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel)
 {
-	int2vector *iv;
+	ArrayType *a;
 
 	if (key_clause == NIL)
 	{
@@ -299,30 +300,36 @@ propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Re
 		else
 		{
 			Relation	indexDesc;
+			int			numattrs;
+			Datum	   *attnumsd;
 
 			indexDesc = index_open(pkidx, AccessShareLock);
-			iv = buildint2vector(indexDesc->rd_index->indkey.values, indexDesc->rd_index->indkey.dim1);
+			numattrs = indexDesc->rd_index->indkey.dim1;
+			attnumsd = palloc_array(Datum, numattrs);
+			for (int i = 0; i < numattrs; i++)
+				attnumsd[i] = Int16GetDatum(indexDesc->rd_index->indkey.values[i]);
+			a = construct_array_builtin(attnumsd, numattrs, INT2OID);
 			index_close(indexDesc, NoLock);
 		}
 	}
 	else
 	{
-		iv = int2vector_from_column_list(pstate, key_clause, location, element_rel);
+		a = array_from_column_list(pstate, key_clause, location, element_rel);
 	}
 
-	return iv;
+	return a;
 }
 
-static int2vector *
-int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel)
+static ArrayType *
+array_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel)
 {
 	int			numattrs;
-	int16	   *attnums;
+	Datum	   *attnumsd;
 	int			i;
 	ListCell   *lc;
 
 	numattrs = list_length(colnames);
-	attnums = palloc(numattrs * sizeof(int16));
+	attnumsd = palloc_array(Datum, numattrs);
 
 	i = 0;
 	foreach(lc, colnames)
@@ -338,14 +345,14 @@ int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Re
 					 errmsg("column \"%s\" of relation \"%s\" does not exist",
 							colname, get_rel_name(relid)),
 					 parser_errposition(pstate, location)));
-		attnums[i++] = attnum;
+		attnumsd[i++] = Int16GetDatum(attnum);
 	}
 
 	for (int j = 0; j < numattrs; j++)
 	{
 		for (int k = j + 1; k < numattrs; k++)
 		{
-			if (attnums[j] == attnums[k])
+			if (DatumGetInt16(attnumsd[j]) == DatumGetInt16(attnumsd[k]))
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 						 errmsg("graph key columns list must not contain duplicates"),
@@ -353,7 +360,7 @@ int2vector_from_column_list(ParseState *pstate, List *colnames, int location, Re
 		}
 	}
 
-	return buildint2vector(attnums, numattrs);
+	return construct_array_builtin(attnumsd, numattrs, INT2OID);
 }
 
 static void
@@ -722,10 +729,10 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 							einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		einfo->srckey = int2vector_from_column_list(pstate, edge->esrckey, edge->location, rel);
-		einfo->srcref = int2vector_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
-		einfo->destkey = int2vector_from_column_list(pstate, edge->edestkey, edge->location, rel);
-		einfo->destref = int2vector_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+		einfo->srckey = array_from_column_list(pstate, edge->esrckey, edge->location, rel);
+		einfo->srcref = array_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
+		einfo->destkey = array_from_column_list(pstate, edge->edestkey, edge->location, rel);
+		einfo->destref = array_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
 		// TODO: various consistency checks
 
