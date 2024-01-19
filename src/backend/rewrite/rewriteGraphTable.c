@@ -42,6 +42,7 @@ static Oid get_labelid(Oid graphid, const char *labelname);
 static List *get_elements_for_label(Oid graphid, const char *labelname);
 static Oid get_table_for_element(Oid elid);
 static Node *replace_property_refs(Node *node, Oid labelid, int rt_index);
+static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber keyattnum, AttrNumber refattnum);
 
 
 /*
@@ -147,32 +148,9 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		}
 		else
 		{
-			Datum		datum;
-			Datum	   *d1, *d2;
-			int			n1, n2;
-
-			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgesrckey);
-			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d1, NULL, &n1);
-
-			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgesrcref);
-			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d2, NULL, &n2);
-
-			if (n1 != n2)
-				elog(ERROR, "array size pgesrckey vs pgesrcref mismatch for element ID %u", elid);
-
-			for (int i = 0; i < n1; i++)
-			{
-				int rti = k + 1;
-				OpExpr	   *op;
-
-				op = makeNode(OpExpr);
-				op->location = -1;
-				op->opno = Int4EqualOperator;
-				op->opfuncid = F_INT4EQ;
-				op->opresulttype = BOOLOID;
-				op->args = list_make2(makeVar(rti, DatumGetInt16(d1[i]), INT4OID, -1, 0, 0), makeVar(rti - 1, DatumGetInt16(d2[i]), INT4OID, -1, 0, 0));
-				qual_exprs = lappend(qual_exprs, op);
-			}
+			qual_exprs = list_concat(qual_exprs,
+									 build_edge_vertex_link_quals(tuple, k + 1, k,
+																  Anum_pg_propgraph_element_pgesrckey, Anum_pg_propgraph_element_pgesrcref));
 		}
 
 		/*
@@ -184,32 +162,9 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		}
 		else
 		{
-			Datum		datum;
-			Datum	   *d1, *d2;
-			int			n1, n2;
-
-			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgedestkey);
-			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d1, NULL, &n1);
-
-			datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, tuple, Anum_pg_propgraph_element_pgedestref);
-			deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d2, NULL, &n2);
-
-			if (n1 != n2)
-				elog(ERROR, "array size pgedestkey vs pgedestref mismatch for element ID %u", elid);
-
-			for (int i = 0; i < n1; i++)
-			{
-				int rti = k + 1;
-				OpExpr	   *op;
-
-				op = makeNode(OpExpr);
-				op->location = -1;
-				op->opno = Int4EqualOperator;
-				op->opfuncid = F_INT4EQ;
-				op->opresulttype = BOOLOID;
-				op->args = list_make2(makeVar(rti, DatumGetInt16(d1[i]), INT4OID, -1, 0, 0), makeVar(rti + 1, DatumGetInt16(d2[i]), INT4OID, -1, 0, 0));
-				qual_exprs = lappend(qual_exprs, op);
-			}
+			qual_exprs = list_concat(qual_exprs,
+									 build_edge_vertex_link_quals(tuple, k + 1, k + 2,
+																  Anum_pg_propgraph_element_pgedestkey, Anum_pg_propgraph_element_pgedestref));
 		}
 
 		ReleaseSysCache(tuple);
@@ -341,4 +296,37 @@ replace_property_refs(Node *node, Oid labelid, int rt_index)
 	context.rt_index = rt_index;
 
 	return expression_tree_mutator(node, replace_property_refs_mutator, &context);
+}
+
+static List *
+build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber keyattnum, AttrNumber refattnum)
+{
+	List	   *quals = NIL;
+	Datum		datum;
+	Datum	   *d1, *d2;
+	int			n1, n2;
+
+	datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, edgetup, keyattnum);
+	deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d1, NULL, &n1);
+
+	datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, edgetup, refattnum);
+	deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d2, NULL, &n2);
+
+	if (n1 != n2)
+		elog(ERROR, "array size key (%d) vs ref (%d) mismatch for element ID %u", keyattnum, refattnum, ((Form_pg_propgraph_element) GETSTRUCT(edgetup))->oid);
+
+	for (int i = 0; i < n1; i++)
+	{
+		OpExpr	   *op;
+
+		op = makeNode(OpExpr);
+		op->location = -1;
+		op->opno = Int4EqualOperator;
+		op->opfuncid = F_INT4EQ;
+		op->opresulttype = BOOLOID;
+		op->args = list_make2(makeVar(edgerti, DatumGetInt16(d1[i]), INT4OID, -1, 0, 0), makeVar(refrti, DatumGetInt16(d2[i]), INT4OID, -1, 0, 0));
+		quals = lappend(quals, op);
+	}
+
+	return quals;
 }
