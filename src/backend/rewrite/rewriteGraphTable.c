@@ -133,37 +133,53 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		Oid			elid = list_nth_oid(element_ids, k);
 		HeapTuple	tuple;
 		Form_pg_propgraph_element pgeform;
+		ElementPattern *ep = list_nth_node(ElementPattern, element_patterns, k);
+		int			srcvertexoffset;
+		int			destvertexoffset;
 
 		tuple = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(elid));
 		if (!tuple)
 			elog(ERROR, "cache lookup failed for property graph element %u", elid);
 		pgeform = ((Form_pg_propgraph_element) GETSTRUCT(tuple));
 
+		if (ep->kind == EDGE_PATTERN_RIGHT)
+		{
+			srcvertexoffset = -1;
+			destvertexoffset = +1;
+		}
+		else if (ep->kind == EDGE_PATTERN_LEFT)
+		{
+			srcvertexoffset = +1;
+			destvertexoffset = -1;
+		}
+		else
+			Assert(false);
+
 		/*
 		 * source link
 		 */
-		if (pgeform->pgesrcvertexid != list_nth_oid(element_ids, k - 1))
+		if (pgeform->pgesrcvertexid != list_nth_oid(element_ids, k + srcvertexoffset))
 		{
 			qual_exprs = lappend(qual_exprs, makeBoolConst(false, false));
 		}
 		else
 		{
 			qual_exprs = list_concat(qual_exprs,
-									 build_edge_vertex_link_quals(tuple, k + 1, k,
+									 build_edge_vertex_link_quals(tuple, k + 1, k + 1 + srcvertexoffset,
 																  Anum_pg_propgraph_element_pgesrckey, Anum_pg_propgraph_element_pgesrcref));
 		}
 
 		/*
 		 * dest link
 		 */
-		if (pgeform->pgedestvertexid != list_nth_oid(element_ids, k + 1))
+		if (pgeform->pgedestvertexid != list_nth_oid(element_ids, k + destvertexoffset))
 		{
 			qual_exprs = lappend(qual_exprs, makeBoolConst(false, false));
 		}
 		else
 		{
 			qual_exprs = list_concat(qual_exprs,
-									 build_edge_vertex_link_quals(tuple, k + 1, k + 2,
+									 build_edge_vertex_link_quals(tuple, k + 1, k + 1 + destvertexoffset,
 																  Anum_pg_propgraph_element_pgedestkey, Anum_pg_propgraph_element_pgedestref));
 		}
 
