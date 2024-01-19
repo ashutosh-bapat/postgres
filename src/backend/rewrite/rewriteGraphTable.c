@@ -42,7 +42,7 @@ static Oid get_labelid(Oid graphid, const char *labelname);
 static List *get_elements_for_label(Oid graphid, const char *labelname);
 static Oid get_table_for_element(Oid elid);
 static Node *replace_property_refs(Node *node, Oid labelid, int rt_index);
-static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber keyattnum, AttrNumber refattnum);
+static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber catalog_key_attnum, AttrNumber catalog_ref_attnum);
 
 
 /*
@@ -315,32 +315,46 @@ replace_property_refs(Node *node, Oid labelid, int rt_index)
 }
 
 static List *
-build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber keyattnum, AttrNumber refattnum)
+build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber catalog_key_attnum, AttrNumber catalog_ref_attnum)
 {
 	List	   *quals = NIL;
+	Form_pg_propgraph_element pgeform;
 	Datum		datum;
 	Datum	   *d1, *d2;
 	int			n1, n2;
 
-	datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, edgetup, keyattnum);
+	pgeform = (Form_pg_propgraph_element) GETSTRUCT(edgetup);
+
+	datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, edgetup, catalog_key_attnum);
 	deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d1, NULL, &n1);
 
-	datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, edgetup, refattnum);
+	datum = SysCacheGetAttrNotNull(PROPGRAPHELOID, edgetup, catalog_ref_attnum);
 	deconstruct_array_builtin(DatumGetArrayTypeP(datum), INT2OID, &d2, NULL, &n2);
 
 	if (n1 != n2)
-		elog(ERROR, "array size key (%d) vs ref (%d) mismatch for element ID %u", keyattnum, refattnum, ((Form_pg_propgraph_element) GETSTRUCT(edgetup))->oid);
+		elog(ERROR, "array size key (%d) vs ref (%d) mismatch for element ID %u", catalog_key_attnum, catalog_ref_attnum, pgeform->oid);
 
 	for (int i = 0; i < n1; i++)
 	{
+		AttrNumber	keyattn = DatumGetInt16(d1[i]);
+		AttrNumber	refattn = DatumGetInt16(d2[i]);
+		Oid			atttypid;
+		TypeCacheEntry *typentry;
 		OpExpr	   *op;
+
+		/*
+		 * TODO: Assumes types the same on both sides; no collations yet.
+		 * Some of this could probably be shared with foreign key triggers.
+		 */
+		atttypid = get_atttype(pgeform->pgerelid, keyattn);
+		typentry = lookup_type_cache(atttypid, TYPECACHE_EQ_OPR);
 
 		op = makeNode(OpExpr);
 		op->location = -1;
-		op->opno = Int4EqualOperator;
-		op->opfuncid = F_INT4EQ;
+		op->opno = typentry->eq_opr;
 		op->opresulttype = BOOLOID;
-		op->args = list_make2(makeVar(edgerti, DatumGetInt16(d1[i]), INT4OID, -1, 0, 0), makeVar(refrti, DatumGetInt16(d2[i]), INT4OID, -1, 0, 0));
+		op->args = list_make2(makeVar(edgerti, keyattn, atttypid, -1, 0, 0),
+							  makeVar(refrti, refattn, atttypid, -1, 0, 0));
 		quals = lappend(quals, op);
 	}
 
