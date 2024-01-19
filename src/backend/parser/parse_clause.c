@@ -915,6 +915,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	List	   *columns = NIL;
 	List	   *colnames = NIL;
 	ListCell   *lc;
+	int			resno = 0;
 
 	rel = parserOpenTable(pstate, rgt->graph_name, AccessShareLock);
 	if (rel->rd_rel->relkind != RELKIND_PROPGRAPH)
@@ -938,6 +939,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	{
 		ResTarget  *rt = lfirst_node(ResTarget, lc);
 		Node	   *colexpr;
+		TargetEntry *te;
 		char	   *colname;
 
 		colexpr = transformExpr(pstate2, rt->val, EXPR_KIND_OTHER);
@@ -959,7 +961,9 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 		}
 
 		colnames = lappend(colnames, makeString(colname));
-		columns = lappend(columns, colexpr);
+
+		te = makeTargetEntry((Expr *) colexpr, ++resno, colname, false);
+		columns = lappend(columns, te);
 	}
 
 	table_close(rel, NoLock);

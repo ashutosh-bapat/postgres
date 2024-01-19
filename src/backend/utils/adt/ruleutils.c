@@ -11895,13 +11895,12 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				get_graph_pattern_def(rte->graph_pattern, context);
 				appendStringInfoString(buf, " COLUMNS (");
 				{
-					ListCell   *lc1, *lc2;
+					ListCell   *lc;
 					bool		first = true;
 
-					forboth(lc1, rte->graph_table_columns, lc2, rte->eref->colnames)
+					foreach(lc, rte->graph_table_columns)
 					{
-						Node	   *n = lfirst(lc1);
-						char	   *colname = strVal(lfirst(lc2));
+						TargetEntry *te = lfirst_node(TargetEntry, lc);
 						deparse_context context = {0};
 
 						if (!first)
@@ -11911,9 +11910,9 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 
 						context.buf = buf;
 
-						get_rule_expr(n, &context, false);
+						get_rule_expr((Node *) te->expr, &context, false);
 						appendStringInfoString(buf, " AS ");
-						appendStringInfoString(buf, quote_identifier(colname));
+						appendStringInfoString(buf, quote_identifier(te->resname));
 					}
 				}
 				appendStringInfoString(buf, ")");
