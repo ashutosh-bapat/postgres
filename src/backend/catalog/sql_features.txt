@@ -426,28 +426,28 @@ G900	GRAPH_TABLE			YES	WIP REQ
 G901	GRAPH_TABLE: ONE ROW PER VERTEX			NO	
 G902	GRAPH_TABLE: ONE ROW PER STEP			NO	
 G903	GRAPH_TABLE: explicit ONE ROW PER MATCH keywords			NO	
-G904	All properties reference			YES	WIP
+G904	All properties reference			NO	
 G905	GRAPH_TABLE: optional COLUMNS clause			NO	
 G906	GRAPH_TABLE: explicit EXPORT ALL			NO	
 G907	GRAPH_TABLE: EXPORT ALL EXCEPT			NO	
 G908	GRAPH_TABLE: EXPORT SINGLETONS list			NO	
 G909	GRAPH_TABLE: explicit EXPORT NO SINGLETONS			NO	
 G910	GRAPH_TABLE: ‘in paths clause’			NO	
-G920	DDL-based SQL-property graphs			YES	REQ
+G920	DDL-based SQL-property graphs			YES	
 G921	Empty SQL-property graph			YES	
 G922	Views as element tables			YES	
 G923	In-line views as element tables			NO	
-G924	Explicit key clause for element tables			YES	REQ
-G925	Explicit label and properties clause for element tables			YES	WIP REQ
-G926	More than one label for vertex tables			YES	WIP
-G927	More than one label for edge tables			YES	WIP
-G928	Value expressions as properties and renaming of properties			NO	
+G924	Explicit key clause for element tables			YES	
+G925	Explicit label and properties clause for element tables			YES	
+G926	More than one label for vertex tables			YES	
+G927	More than one label for edge tables			YES	
+G928	Value expressions as properties and renaming of properties			YES	
 G929	Labels and properties: EXCEPT list			NO	
 G940	Multi-sourced/destined edges			NO	XXX
 G941	Implicit removal of incomplete edges			NO	XXX
 G950	Alter property graph statement: ADD/DROP element table			YES	
-G960	Alter element table definition: ADD/DROP LABEL			NO	WIP
-G970	Alter element table definition: ALTER LABEL			NO	WIP
+G960	Alter element table definition: ADD/DROP LABEL			YES	
+G970	Alter element table definition: ALTER LABEL			YES	
 G980	DROP PROPERTY GRAPH: CASCADE drop behavior			YES	
 R010	Row pattern recognition: FROM clause			NO	
 R020	Row pattern recognition: WINDOW clause			NO	
