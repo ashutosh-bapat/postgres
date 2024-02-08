@@ -123,7 +123,7 @@ CATALOG_HEADERS := \
 	pg_propgraph_label.h \
 	pg_propgraph_property.h
 
-GENERATED_HEADERS := $(CATALOG_HEADERS:%.h=%_d.h) schemapg.h system_fk_info.h
+GENERATED_HEADERS := $(CATALOG_HEADERS:%.h=%_d.h) schemapg.h syscache_ids.h syscache_info.h system_fk_info.h
 
 POSTGRES_BKI_SRCS := $(addprefix $(top_srcdir)/src/include/catalog/, $(CATALOG_HEADERS))
 
@@ -186,8 +186,8 @@ $(top_builddir)/src/include/catalog/header-stamp: bki-stamp
 # Note: installation of generated headers is handled elsewhere
 .PHONY: install-data
 install-data: bki-stamp installdirs
-	$(INSTALL_DATA) $(call vpathsearch,postgres.bki) '$(DESTDIR)$(datadir)/postgres.bki'
-	$(INSTALL_DATA) $(call vpathsearch,system_constraints.sql) '$(DESTDIR)$(datadir)/system_constraints.sql'
+	$(INSTALL_DATA) postgres.bki '$(DESTDIR)$(datadir)/postgres.bki'
+	$(INSTALL_DATA) system_constraints.sql '$(DESTDIR)$(datadir)/system_constraints.sql'
 	$(INSTALL_DATA) $(srcdir)/system_functions.sql '$(DESTDIR)$(datadir)/system_functions.sql'
 	$(INSTALL_DATA) $(srcdir)/system_views.sql '$(DESTDIR)$(datadir)/system_views.sql'
 	$(INSTALL_DATA) $(srcdir)/information_schema.sql '$(DESTDIR)$(datadir)/information_schema.sql'

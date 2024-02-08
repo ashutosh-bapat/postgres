@@ -492,8 +492,16 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 				return false;
 			}
 
-			*operators = lappend_oid(*operators, hasheqoperator);
-			*param_exprs = lappend(*param_exprs, expr);
+			/*
+			 * 'expr' may already exist as a parameter from a previous item in
+			 * ppi_clauses.  No need to include it again, however we'd better
+			 * ensure we do switch into binary mode if required.  See below.
+			 */
+			if (!list_member(*param_exprs, expr))
+			{
+				*operators = lappend_oid(*operators, hasheqoperator);
+				*param_exprs = lappend(*param_exprs, expr);
+			}
 
 			/*
 			 * When the join operator is not hashable then it's possible that
@@ -536,8 +544,16 @@ paraminfo_get_equal_hashops(PlannerInfo *root, ParamPathInfo *param_info,
 			return false;
 		}
 
-		*operators = lappend_oid(*operators, typentry->eq_opr);
-		*param_exprs = lappend(*param_exprs, expr);
+		/*
+		 * 'expr' may already exist as a parameter from the ppi_clauses.  No
+		 * need to include it again, however we'd better ensure we do switch
+		 * into binary mode.
+		 */
+		if (!list_member(*param_exprs, expr))
+		{
+			*operators = lappend_oid(*operators, typentry->eq_opr);
+			*param_exprs = lappend(*param_exprs, expr);
+		}
 
 		/*
 		 * We must go into binary mode as we don't have too much of an idea of
@@ -635,7 +651,7 @@ get_memoize_path(PlannerInfo *root, RelOptInfo *innerrel,
 	 */
 	if (extra->inner_unique &&
 		(inner_path->param_info == NULL ||
-		 list_length(inner_path->param_info->ppi_clauses) <
+		 bms_num_members(inner_path->param_info->ppi_serials) <
 		 list_length(extra->restrictlist)))
 		return NULL;
 

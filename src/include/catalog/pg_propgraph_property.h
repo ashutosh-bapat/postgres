@@ -69,4 +69,6 @@ DECLARE_UNIQUE_INDEX(pg_propgraph_property_name_index, 8308, PropgraphPropertyNa
 
 DECLARE_INDEX(pg_propgraph_property_graph_name_index, 8311, PropgraphPropertyGraphNameIndexId, pg_propgraph_property, btree(pgppgid oid_ops, pgpname name_ops));
 
+MAKE_SYSCACHE(PROPGRAPHPROPNAME, pg_propgraph_property_name_index, 128);
+
 #endif							/* PG_PROPGRAPH_PROPERTY_H */
