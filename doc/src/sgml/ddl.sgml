@@ -5478,7 +5478,7 @@ SELECT ... FROM GRAPH_TABLE (myshop MATCH (:person WHERE name = '...')-[]->... C
 </programlisting>
    This would automatically consider both the <literal>customers</literal> and
    the <literal>employees</literal> tables when looking for an edge with the
-   <literal>name</literal> label.
+   <literal>person</literal> label.
   </para>
 
   <para>
