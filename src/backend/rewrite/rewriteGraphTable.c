@@ -214,6 +214,12 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	return parsetree;
 }
 
+/*
+ * Get label OID from graph OID and label name.
+ *
+ * TODO: This could match more than one entry.  Right now it only returns the
+ * first one.
+ */
 static Oid
 get_labelid(Oid graphid, const char *labelname)
 {
@@ -248,6 +254,9 @@ get_labelid(Oid graphid, const char *labelname)
 	return result;
 }
 
+/*
+ * Get list of element OIDs that have a given label.
+ */
 static List *
 get_elements_for_label(Oid graphid, const char *labelname)
 {
@@ -281,11 +290,18 @@ get_elements_for_label(Oid graphid, const char *labelname)
 	return result;
 }
 
+/*
+ * Get the element table OID for a given element.
+ */
 static Oid
 get_table_for_element(Oid elid)
 {
 	return GetSysCacheOid1(PROPGRAPHELOID, Anum_pg_propgraph_element_pgerelid, ObjectIdGetDatum(elid));
 }
+
+/*
+ * Mutating property references into table variables
+ */
 
 struct replace_property_refs_context
 {
@@ -342,6 +358,9 @@ replace_property_refs(Node *node, const List *mappings)
 	return expression_tree_mutator(node, replace_property_refs_mutator, &context);
 }
 
+/*
+ * Build join qualification expressions between edge and vertex tables.
+ */
 static List *
 build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber catalog_key_attnum, AttrNumber catalog_ref_attnum)
 {

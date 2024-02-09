@@ -28,6 +28,10 @@
 #include "utils/fmgroids.h"
 #include "utils/relcache.h"
 
+
+/*
+ * Get the type of a property.
+ */
 static Oid
 get_property_type(Oid graphid, const char *propname)
 {
@@ -67,6 +71,9 @@ get_property_type(Oid graphid, const char *propname)
 	return result;
 }
 
+/*
+ * Resolve a property reference.
+ */
 Node *
 graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 {
@@ -103,6 +110,9 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 	return (Node *) gpr;
 }
 
+/*
+ * Transform a label expression.
+ */
 static Node *
 transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 {
@@ -160,6 +170,9 @@ transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 	return result;
 }
 
+/*
+ * Transform a GraphElementPattern.
+ */
 static Node *
 transformGraphElementPattern(GraphTableParseState *gpstate, GraphElementPattern *gep)
 {
@@ -180,6 +193,9 @@ transformGraphElementPattern(GraphTableParseState *gpstate, GraphElementPattern 
 	return (Node *) gep;
 }
 
+/*
+ * Transform a path term (list of GraphElementPattern's).
+ */
 static Node *
 transformPathTerm(GraphTableParseState *gpstate, List *path_term)
 {
@@ -196,6 +212,9 @@ transformPathTerm(GraphTableParseState *gpstate, List *path_term)
 	return (Node *) result;
 }
 
+/*
+ * Transform a path pattern list (list of path terms).
+ */
 static Node *
 transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
 {
@@ -212,6 +231,9 @@ transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
 	return (Node *) result;
 }
 
+/*
+ * Transform a GraphPattern.
+ */
 Node *
 transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern)
 {

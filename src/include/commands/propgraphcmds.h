@@ -17,7 +17,7 @@
 #include "catalog/objectaddress.h"
 #include "parser/parse_node.h"
 
-extern ObjectAddress CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt);
-extern ObjectAddress AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt);
+extern ObjectAddress CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt);
+extern ObjectAddress AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt);
 
 #endif							/* PROPGRAPHCMDS_H */

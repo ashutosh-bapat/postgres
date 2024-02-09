@@ -1617,6 +1617,11 @@ pg_get_propgraphdef(PG_FUNCTION_ARGS)
 	PG_RETURN_TEXT_P(string_to_text(buf.data));
 }
 
+/*
+ * Generates a VERTEX TABLES (...) or EDGE TABLES (...) clause.  Pass in the
+ * property graph relation OID and the element kind (vertex or edge).  Result
+ * is appended to buf.
+ */
 static void
 make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 {
@@ -1735,6 +1740,10 @@ make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind)
 	table_close(pgerel, AccessShareLock);
 }
 
+/*
+ * Generates label and properties list.  Pass in the element OID, the element
+ * alias, and the graph relation OID.  Result is append to buf.
+ */
 static void
 make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elrelid)
 {
@@ -1789,6 +1798,11 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 	table_close(pglrel, AccessShareLock);
 }
 
+/*
+ * Generates element table properties clause (PROPERTIES (...) or NO
+ * PROPERTIES).  Pass in label ODI and element table OID.  Result is appended
+ * to buf.
+ */
 static void
 make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid)
 {
@@ -7519,6 +7533,9 @@ get_utility_query_def(Query *query, deparse_context *context)
 }
 
 
+/*
+ * Parse back a graph label expression
+ */
 static void
 get_graph_label_expr(Node *label_expr, deparse_context *context)
 {
@@ -7565,6 +7582,9 @@ get_graph_label_expr(Node *label_expr, deparse_context *context)
 	}
 }
 
+/*
+ * Parse back a path pattern expression
+ */
 static void
 get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 {
@@ -7648,6 +7668,9 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 	}
 }
 
+/*
+ * Parse back a graph pattern
+ */
 static void
 get_graph_pattern_def(GraphPattern *graph_pattern, deparse_context *context)
 {

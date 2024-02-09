@@ -58,19 +58,22 @@ struct element_info
 };
 
 
-static ArrayType *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
-static ArrayType *array_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
+static ArrayType *propgraph_element_get_key(ParseState *pstate, const List *key_clause, int location, Relation element_rel);
+static ArrayType *array_from_column_list(ParseState *pstate, const List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid insert_label_record(Oid graphid, Oid peoid, const char *label);
-static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProperties *properties);
-static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *expr);
+static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
+static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr);
 static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid get_element_relid(Oid peid);
 
 
+/*
+ * CREATE PROPERTY GRAPH
+ */
 ObjectAddress
-CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
+CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 {
 	CreateStmt *cstmt = makeNode(CreateStmt);
 	char		components_persistence;
@@ -283,8 +286,13 @@ CreatePropGraph(ParseState *pstate, CreatePropGraphStmt *stmt)
 	return pgaddress;
 }
 
+/*
+ * Process the key clause specified for an element.  If key_clause is non-NIL,
+ * then it is a list of column names.  Otherwise, the primary key of the
+ * relation is used.  The return value is an array of column numbers.
+ */
 static ArrayType *
-propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel)
+propgraph_element_get_key(ParseState *pstate, const List *key_clause, int location, Relation element_rel)
 {
 	ArrayType *a;
 
@@ -320,8 +328,12 @@ propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Re
 	return a;
 }
 
+/*
+ * Convert list of column names in the specified relation into an array of
+ * column numbers.
+ */
 static ArrayType *
-array_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel)
+array_from_column_list(ParseState *pstate, const List *colnames, int location, Relation element_rel)
 {
 	int			numattrs;
 	Datum	   *attnumsd;
@@ -363,6 +375,10 @@ array_from_column_list(ParseState *pstate, List *colnames, int location, Relatio
 	return construct_array_builtin(attnumsd, numattrs, INT2OID);
 }
 
+/*
+ * Insert a record for an element into the pg_propgraph_element catalog.  Also
+ * inserts labels and properties into their respective catalogs.
+ */
 static void
 insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 {
@@ -464,6 +480,9 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	}
 }
 
+/*
+ * Insert a record for a label into the pg_propgraph_label catalog.
+ */
 static Oid
 insert_label_record(Oid graphid, Oid peoid, const char *label)
 {
@@ -500,8 +519,11 @@ insert_label_record(Oid graphid, Oid peoid, const char *label)
 	return labeloid;
 }
 
+/*
+ * Insert records for properties into the pg_propgraph_property catalog.
+ */
 static void
-insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProperties *properties)
+insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties)
 {
 	List	   *proplist = NIL;
 	ParseState *pstate;
@@ -587,8 +609,11 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProper
 	}
 }
 
+/*
+ * Insert one record for a property into the pg_propgraph_property catalog.
+ */
 static void
-insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *expr)
+insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr)
 {
 	Relation	rel;
 	NameData	propnamedata;
@@ -606,7 +631,7 @@ insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *ex
 	values[Anum_pg_propgraph_property_pgppgid - 1] = ObjectIdGetDatum(graphid);
 	namestrcpy(&propnamedata, propname);
 	values[Anum_pg_propgraph_property_pgpname - 1] = NameGetDatum(&propnamedata);
-	values[Anum_pg_propgraph_property_pgptypid - 1] = ObjectIdGetDatum(exprType((Node *) expr));
+	values[Anum_pg_propgraph_property_pgptypid - 1] = ObjectIdGetDatum(exprType((const Node *) expr));
 	values[Anum_pg_propgraph_property_pgplabelid - 1] = ObjectIdGetDatum(labeloid);
 	values[Anum_pg_propgraph_property_pgpexpr - 1] = CStringGetTextDatum(nodeToString(expr));
 
@@ -623,8 +648,11 @@ insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *ex
 	table_close(rel, NoLock);
 }
 
+/*
+ * ALTER PROPERTY GRAPH
+ */
 ObjectAddress
-AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
+AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 {
 	Oid			pgrelid;
 	ListCell   *lc;
@@ -888,6 +916,10 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 	return pgaddress;
 }
 
+/*
+ * Get OID of vertex from graph OID and element alias.  Element must be a
+ * vertex, otherwise error.
+ */
 static Oid
 get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location)
 {
@@ -916,6 +948,10 @@ get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location)
 	return peoid;
 }
 
+/*
+ * Get OID of edge from graph OID and element alias.  Element must be an edge,
+ * otherwise error.
+ */
 static Oid
 get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location)
 {
@@ -944,6 +980,9 @@ get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location)
 	return peoid;
 }
 
+/*
+ * Get the element table relation OID from the OID of the element.
+ */
 static Oid
 get_element_relid(Oid peid)
 {
