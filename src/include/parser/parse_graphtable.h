@@ -22,7 +22,6 @@ typedef struct GraphTableParseState
 {
 	Oid graphid;
 	List *variables;
-	const char *localvar;
 } GraphTableParseState;
 
 extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref);

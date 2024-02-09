@@ -2759,7 +2759,7 @@ SELECT * FROM t;
     Consider this example from <xref linkend="ddl-property-graphs"/>:
 <programlisting>
 -- get list of customers active today
-SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers)-[IS customer_orders]->(o IS orders WHERE ordered_when = current_date) COLUMNS (c.name AS customer_name));
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers)-[IS customer_orders]->(o IS orders WHERE o.ordered_when = current_date) COLUMNS (c.name AS customer_name));
 </programlisting>
     The graph query part happens inside the <literal>GRAPH_TABLE</literal>
     construct.  As far as the rest of the query is concerned, this acts like a

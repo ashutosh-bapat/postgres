@@ -95,25 +95,6 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 		pr->propname = propname;
 
 	}
-	else if (list_length(cref->fields) == 1 &&
-		gpstate->localvar)
-	{
-		Node	   *field = linitial(cref->fields);
-		char	   *elvarname;
-		char       *propname;
-
-		elvarname = pstrdup(gpstate->localvar);
-		propname = strVal(field);
-
-		if (!list_member(gpstate->variables, makeString(elvarname)))
-			ereport(ERROR,
-					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("graph pattern variable \"%s\" does not exist", elvarname),
-					parser_errposition(pstate, cref->location));
-
-		pr->elvarname = elvarname;
-		pr->propname = propname;
-	}
 	else
 		elog(ERROR, "invalid property reference");
 
@@ -193,10 +174,8 @@ transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
 
 	ep->labelexpr = transformLabelExpr(gpstate, ep->labelexpr);
 
-	gpstate->localvar = ep->variable;
 	ep->whereClause = transformExpr(pstate2, ep->whereClause, EXPR_KIND_OTHER);
 	assign_expr_collations(pstate2, ep->whereClause);
-	gpstate->localvar = NULL;
 
 	return (Node *) ep;
 }

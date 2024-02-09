@@ -47,10 +47,10 @@ CREATE PROPERTY GRAPH myshop
             DESTINATION KEY (order_id) REFERENCES orders (order_id)
     );
 
-SELECT customer_name FROM GRAPH_TABLE (xxx MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- error
-SELECT customer_name FROM GRAPH_TABLE (pg_class MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- error
-SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (cx.name AS customer_name));  -- error
-SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.namex AS customer_name));  -- error
+SELECT customer_name FROM GRAPH_TABLE (xxx MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- error
+SELECT customer_name FROM GRAPH_TABLE (pg_class MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- error
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (cx.name AS customer_name));  -- error
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.namex AS customer_name));  -- error
 
 INSERT INTO products VALUES
     (1, 'product1', 10),
@@ -72,7 +72,7 @@ INSERT INTO customer_orders (customer_orders_id, customer_id, order_id) VALUES
     (1, 1, 1),
     (2, 2, 2);
 
-SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- TODO
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- TODO
 
 -- TODO: should approximately match this query:
 SET debug_print_parse = on;
@@ -85,7 +85,7 @@ SELECT customer_name FROM (
 ) myshop;
 RESET debug_print_parse;
 
-CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
+CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
 
 SELECT pg_get_viewdef('customers_us'::regclass);
 
