@@ -265,8 +265,8 @@ exprType(const Node *expr)
 		case T_PlaceHolderVar:
 			type = exprType((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
-		case T_PropertyRef:
-			type = ((const PropertyRef *) expr)->typeId;
+		case T_GraphPropertyRef:
+			type = ((const GraphPropertyRef *) expr)->typeId;
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
@@ -504,7 +504,7 @@ exprTypmod(const Node *expr)
 			return ((const SetToDefault *) expr)->typeMod;
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
-		case T_PropertyRef:
+		case T_GraphPropertyRef:
 			/* TODO */
 			return -1;
 		default:
@@ -1006,7 +1006,7 @@ exprCollation(const Node *expr)
 		case T_PlaceHolderVar:
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
-		case T_PropertyRef:
+		case T_GraphPropertyRef:
 			coll = DEFAULT_COLLATION_OID; /* FIXME */
 			break;
 		default:
@@ -2044,7 +2044,7 @@ expression_tree_walker_impl(Node *node,
 		case T_RangeTblRef:
 		case T_SortGroupClause:
 		case T_CTESearchClause:
-		case T_PropertyRef:
+		case T_GraphPropertyRef:
 			/* primitive node types with no expression subnodes */
 			break;
 		case T_WithCheckOption:
@@ -2545,13 +2545,13 @@ expression_tree_walker_impl(Node *node,
 					return true;
 			}
 			break;
-		case T_ElementPattern:
+		case T_GraphElementPattern:
 			{
-				ElementPattern *ep = (ElementPattern *) node;
+				GraphElementPattern *gep = (GraphElementPattern *) node;
 
-				if (WALK(ep->subexpr))
+				if (WALK(gep->subexpr))
 					return true;
-				if (WALK(ep->whereClause))
+				if (WALK(gep->whereClause))
 					return true;
 			}
 			break;

@@ -948,8 +948,8 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 			colname = rt->name;
 		else
 		{
-			if (IsA(colexpr, PropertyRef))
-				colname = pstrdup(castNode(PropertyRef, colexpr)->propname);
+			if (IsA(colexpr, GraphPropertyRef))
+				colname = pstrdup(castNode(GraphPropertyRef, colexpr)->propname);
 			else
 			{
 				ereport(ERROR,

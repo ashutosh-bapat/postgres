@@ -17194,102 +17194,102 @@ path_term:
 path_factor:
 			path_primary opt_graph_pattern_quantifier
 				{
-					ElementPattern *ep = (ElementPattern *) $1;
+					GraphElementPattern *gep = (GraphElementPattern *) $1;
 
-					ep->quantifier = $2;
+					gep->quantifier = $2;
 				}
 		;
 
 path_primary:
 			'(' opt_colid opt_is_label_expression where_clause ')'
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = VERTEX_PATTERN;
-					ep->variable = $2;
-					ep->labelexpr = $3;
-					ep->whereClause = $4;
-					ep->location = @1;
+					gep->kind = VERTEX_PATTERN;
+					gep->variable = $2;
+					gep->labelexpr = $3;
+					gep->whereClause = $4;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			/* full edge pointing left: <-[ xxx ]- */
 			| LEFT_ARROW_BRACKET opt_colid opt_is_label_expression where_clause RIGHT_BRACKET_MINUS
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = EDGE_PATTERN_LEFT;
-					ep->variable = $2;
-					ep->labelexpr = $3;
-					ep->whereClause = $4;
-					ep->location = @1;
+					gep->kind = EDGE_PATTERN_LEFT;
+					gep->variable = $2;
+					gep->labelexpr = $3;
+					gep->whereClause = $4;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			/* full edge pointing right: -[ xxx ]-> */
 			| MINUS_LEFT_BRACKET opt_colid opt_is_label_expression where_clause BRACKET_RIGHT_ARROW
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = EDGE_PATTERN_RIGHT;
-					ep->variable = $2;
-					ep->labelexpr = $3;
-					ep->whereClause = $4;
-					ep->location = @1;
+					gep->kind = EDGE_PATTERN_RIGHT;
+					gep->variable = $2;
+					gep->labelexpr = $3;
+					gep->whereClause = $4;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			/* full edge any direction: -[ xxx ]- */
 			| MINUS_LEFT_BRACKET opt_colid opt_is_label_expression where_clause RIGHT_BRACKET_MINUS
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = EDGE_PATTERN_ANY;
-					ep->variable = $2;
-					ep->labelexpr = $3;
-					ep->whereClause = $4;
-					ep->location = @1;
+					gep->kind = EDGE_PATTERN_ANY;
+					gep->variable = $2;
+					gep->labelexpr = $3;
+					gep->whereClause = $4;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			/* abbreviated edge patterns */
 			| LEFT_ARROW
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = EDGE_PATTERN_LEFT;
-					ep->location = @1;
+					gep->kind = EDGE_PATTERN_LEFT;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			| RIGHT_ARROW
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = EDGE_PATTERN_RIGHT;
-					ep->location = @1;
+					gep->kind = EDGE_PATTERN_RIGHT;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			| '-'
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = EDGE_PATTERN_ANY;
-					ep->location = @1;
+					gep->kind = EDGE_PATTERN_ANY;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 			| '(' path_pattern_expression where_clause ')'
 				{
-					ElementPattern *ep = makeNode(ElementPattern);
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
-					ep->kind = PAREN_EXPR;
-					ep->subexpr = $2;
-					ep->whereClause = $3;
-					ep->location = @1;
+					gep->kind = PAREN_EXPR;
+					gep->subexpr = $2;
+					gep->whereClause = $3;
+					gep->location = @1;
 
-					$$ = (Node *) ep;
+					$$ = (Node *) gep;
 				}
 		;
 

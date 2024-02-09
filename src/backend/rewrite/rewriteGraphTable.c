@@ -72,19 +72,19 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 
 	foreach(lc, element_patterns)
 	{
-		ElementPattern *ep = lfirst_node(ElementPattern, lc);
+		GraphElementPattern *gep = lfirst_node(GraphElementPattern, lc);
 		Oid		labelid = InvalidOid;
 		struct elvar_rt_mapping *erm;
 
-		if (!(ep->kind == VERTEX_PATTERN || ep->kind == EDGE_PATTERN_LEFT || ep->kind == EDGE_PATTERN_RIGHT))
-			elog(ERROR, "unsupported element pattern kind: %u", ep->kind);
+		if (!(gep->kind == VERTEX_PATTERN || gep->kind == EDGE_PATTERN_LEFT || gep->kind == EDGE_PATTERN_RIGHT))
+			elog(ERROR, "unsupported element pattern kind: %u", gep->kind);
 
-		if (ep->quantifier)
+		if (gep->quantifier)
 			elog(ERROR, "element pattern quantifier not supported yet");
 
-		if (IsA(ep->labelexpr, GraphLabelRef))
+		if (IsA(gep->labelexpr, GraphLabelRef))
 		{
-			GraphLabelRef *glr = castNode(GraphLabelRef, ep->labelexpr);
+			GraphLabelRef *glr = castNode(GraphLabelRef, gep->labelexpr);
 			RangeTblEntry *r;
 			Oid			elid;
 			Oid			relid;
@@ -116,21 +116,21 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			fromlist = lappend(fromlist, rtr);
 		}
 		else
-			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(ep->labelexpr));
+			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(gep->labelexpr));
 
 		erm = palloc0_object(struct elvar_rt_mapping);
 
-		erm->elvarname = ep->variable;
+		erm->elvarname = gep->variable;
 		erm->labelid = labelid;
 		erm->rt_index = list_length(newsubquery->rtable);
 
 		elvar_rt_mappings = lappend(elvar_rt_mappings, erm);
 
-		if (ep->whereClause)
+		if (gep->whereClause)
 		{
 			Node *tr;
 
-			tr = replace_property_refs(ep->whereClause, list_make1(erm));
+			tr = replace_property_refs(gep->whereClause, list_make1(erm));
 
 			qual_exprs = lappend(qual_exprs, tr);
 		}
@@ -142,7 +142,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		Oid			elid = list_nth_oid(element_ids, k);
 		HeapTuple	tuple;
 		Form_pg_propgraph_element pgeform;
-		ElementPattern *ep = list_nth_node(ElementPattern, element_patterns, k);
+		GraphElementPattern *gep = list_nth_node(GraphElementPattern, element_patterns, k);
 		int			srcvertexoffset;
 		int			destvertexoffset;
 
@@ -151,12 +151,12 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			elog(ERROR, "cache lookup failed for property graph element %u", elid);
 		pgeform = ((Form_pg_propgraph_element) GETSTRUCT(tuple));
 
-		if (ep->kind == EDGE_PATTERN_RIGHT)
+		if (gep->kind == EDGE_PATTERN_RIGHT)
 		{
 			srcvertexoffset = -1;
 			destvertexoffset = +1;
 		}
-		else if (ep->kind == EDGE_PATTERN_LEFT)
+		else if (gep->kind == EDGE_PATTERN_LEFT)
 		{
 			srcvertexoffset = +1;
 			destvertexoffset = -1;
@@ -297,9 +297,9 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 {
 	if (node == NULL)
 		return NULL;
-	if (IsA(node, PropertyRef))
+	if (IsA(node, GraphPropertyRef))
 	{
-		PropertyRef *pr = (PropertyRef *) node;
+		GraphPropertyRef *gpr = (GraphPropertyRef *) node;
 		HeapTuple tup;
 		Node *n;
 		ListCell *lc;
@@ -309,18 +309,18 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 		{
 			struct elvar_rt_mapping *m = lfirst(lc);
 
-			if (m->elvarname && strcmp(pr->elvarname, m->elvarname) == 0)
+			if (m->elvarname && strcmp(gpr->elvarname, m->elvarname) == 0)
 			{
 				found_mapping = m;
 				break;
 			}
 		}
 		if (!found_mapping)
-			elog(ERROR, "undefined element variable \"%s\"", pr->elvarname);
+			elog(ERROR, "undefined element variable \"%s\"", gpr->elvarname);
 
-		tup = SearchSysCache2(PROPGRAPHPROPNAME, ObjectIdGetDatum(found_mapping->labelid), CStringGetDatum(pr->propname));
+		tup = SearchSysCache2(PROPGRAPHPROPNAME, ObjectIdGetDatum(found_mapping->labelid), CStringGetDatum(gpr->propname));
 		if (!tup)
-			elog(ERROR, "property \"%s\" of label %u not found", pr->propname, found_mapping->labelid);
+			elog(ERROR, "property \"%s\" of label %u not found", gpr->propname, found_mapping->labelid);
 
 		n = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHPROPNAME, tup, Anum_pg_propgraph_property_pgpexpr)));
 		ChangeVarNodes(n, 1, found_mapping->rt_index, 0);

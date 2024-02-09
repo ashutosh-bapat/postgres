@@ -959,26 +959,26 @@ typedef struct GraphPattern
 	Node	   *whereClause;
 } GraphPattern;
 
-typedef enum ElementPatternKind
+typedef enum GraphElementPatternKind
 {
 	VERTEX_PATTERN,
 	EDGE_PATTERN_LEFT,
 	EDGE_PATTERN_RIGHT,
 	EDGE_PATTERN_ANY,
 	PAREN_EXPR,
-} ElementPatternKind;
+} GraphElementPatternKind;
 
-typedef struct ElementPattern
+typedef struct GraphElementPattern
 {
 	NodeTag		type;
-	ElementPatternKind kind;
+	GraphElementPatternKind kind;
 	const char *variable;
 	Node	   *labelexpr;
 	List	   *subexpr;
 	Node	   *whereClause;
 	List	   *quantifier;
 	int			location;
-} ElementPattern;
+} GraphElementPattern;
 
 /****************************************************************************
  *	Nodes for a Query tree

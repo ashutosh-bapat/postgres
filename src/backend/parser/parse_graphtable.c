@@ -71,9 +71,9 @@ Node *
 graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 {
 	GraphTableParseState *gpstate = pstate->p_ref_hook_state;
-	PropertyRef *pr = makeNode(PropertyRef);
+	GraphPropertyRef *gpr = makeNode(GraphPropertyRef);
 
-	pr->location = cref->location;
+	gpr->location = cref->location;
 
 	if (list_length(cref->fields) == 2)
 	{
@@ -91,16 +91,16 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 					errmsg("graph pattern variable \"%s\" does not exist", elvarname),
 					parser_errposition(pstate, cref->location));
 
-		pr->elvarname = elvarname;
-		pr->propname = propname;
+		gpr->elvarname = elvarname;
+		gpr->propname = propname;
 
 	}
 	else
 		elog(ERROR, "invalid property reference");
 
-	pr->typeId = get_property_type(gpstate->graphid, pr->propname);
+	gpr->typeId = get_property_type(gpstate->graphid, gpr->propname);
 
-	return (Node *) pr;
+	return (Node *) gpr;
 }
 
 static Node *
@@ -161,7 +161,7 @@ transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 }
 
 static Node *
-transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
+transformGraphElementPattern(GraphTableParseState *gpstate, GraphElementPattern *gep)
 {
 	ParseState *pstate2;
 
@@ -169,15 +169,15 @@ transformElementPattern(GraphTableParseState *gpstate, ElementPattern *ep)
 	pstate2->p_pre_columnref_hook = graph_table_property_reference;
 	pstate2->p_ref_hook_state = gpstate;
 
-	if (ep->variable)
-		gpstate->variables = lappend(gpstate->variables, makeString(pstrdup(ep->variable)));
+	if (gep->variable)
+		gpstate->variables = lappend(gpstate->variables, makeString(pstrdup(gep->variable)));
 
-	ep->labelexpr = transformLabelExpr(gpstate, ep->labelexpr);
+	gep->labelexpr = transformLabelExpr(gpstate, gep->labelexpr);
 
-	ep->whereClause = transformExpr(pstate2, ep->whereClause, EXPR_KIND_OTHER);
-	assign_expr_collations(pstate2, ep->whereClause);
+	gep->whereClause = transformExpr(pstate2, gep->whereClause, EXPR_KIND_OTHER);
+	assign_expr_collations(pstate2, gep->whereClause);
 
-	return (Node *) ep;
+	return (Node *) gep;
 }
 
 static Node *
@@ -188,7 +188,7 @@ transformPathTerm(GraphTableParseState *gpstate, List *path_term)
 
 	foreach(lc, path_term)
 	{
-		Node *n = transformElementPattern(gpstate, lfirst_node(ElementPattern, lc));
+		Node *n = transformGraphElementPattern(gpstate, lfirst_node(GraphElementPattern, lc));
 
 		result = lappend(result, n);
 	}

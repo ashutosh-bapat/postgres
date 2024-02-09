@@ -1871,16 +1871,16 @@ typedef struct GraphLabelRef
 } GraphLabelRef;
 
 /*
- * PropertyRef - property reference inside GRAPH_TABLE clause
+ * GraphPropertyRef - property reference inside GRAPH_TABLE clause
  */
-typedef struct PropertyRef
+typedef struct GraphPropertyRef
 {
 	Expr		xpr;
 	const char *elvarname;
 	const char *propname;
 	Oid			typeId;
 	int			location;
-} PropertyRef;
+} GraphPropertyRef;
 
 /*--------------------
  * TargetEntry -

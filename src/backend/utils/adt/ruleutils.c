@@ -7573,10 +7573,10 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 
 	foreach(lc, path_pattern_expr)
 	{
-		ElementPattern *ep = lfirst_node(ElementPattern, lc);
+		GraphElementPattern *gep = lfirst_node(GraphElementPattern, lc);
 		const char *sep = "";
 
-		switch (ep->kind)
+		switch (gep->kind)
 		{
 			case VERTEX_PATTERN:
 				appendStringInfoString(buf, "(");
@@ -7593,35 +7593,35 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 				break;
 		}
 
-		if (ep->variable)
+		if (gep->variable)
 		{
-			appendStringInfoString(buf, ep->variable);
+			appendStringInfoString(buf, gep->variable);
 			sep = " ";
 		}
 
-		if (ep->labelexpr)
+		if (gep->labelexpr)
 		{
 			appendStringInfoString(buf, sep);
 			appendStringInfoString(buf, "IS ");
-			get_graph_label_expr(ep->labelexpr, context);
+			get_graph_label_expr(gep->labelexpr, context);
 			sep = " ";
 		}
 
-		if (ep->subexpr)
+		if (gep->subexpr)
 		{
 			appendStringInfoString(buf, sep);
-			get_path_pattern_expr_def(ep->subexpr, context);
+			get_path_pattern_expr_def(gep->subexpr, context);
 			sep = " ";
 		}
 
-		if (ep->whereClause)
+		if (gep->whereClause)
 		{
 			appendStringInfoString(buf, sep);
 			appendStringInfoString(buf, "WHERE ");
-			get_rule_expr(ep->whereClause, context, false);
+			get_rule_expr(gep->whereClause, context, false);
 		}
 
-		switch (ep->kind)
+		switch (gep->kind)
 		{
 			case VERTEX_PATTERN:
 				appendStringInfoString(buf, ")");
@@ -7638,10 +7638,10 @@ get_path_pattern_expr_def(List *path_pattern_expr, deparse_context *context)
 				break;
 		}
 
-		if (ep->quantifier)
+		if (gep->quantifier)
 		{
-			int			lower = linitial_int(ep->quantifier);
-			int			upper = lsecond_int(ep->quantifier);
+			int			lower = linitial_int(gep->quantifier);
+			int			upper = lsecond_int(gep->quantifier);
 
 			appendStringInfo(buf, "{%d,%d}", lower, upper);
 		}
@@ -10256,11 +10256,11 @@ get_rule_expr(Node *node, deparse_context *context,
 			get_tablefunc((TableFunc *) node, context, showimplicit);
 			break;
 
-		case T_PropertyRef:
+		case T_GraphPropertyRef:
 			{
-				PropertyRef *pr = (PropertyRef *) node;
+				GraphPropertyRef *gpr = (GraphPropertyRef *) node;
 
-				appendStringInfo(buf, "%s.%s", quote_identifier(pr->elvarname), quote_identifier(pr->propname));
+				appendStringInfo(buf, "%s.%s", quote_identifier(gpr->elvarname), quote_identifier(gpr->propname));
 				break;
 			}
 
