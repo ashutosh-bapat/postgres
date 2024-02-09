@@ -4489,6 +4489,26 @@ raw_expression_tree_walker_impl(Node *node,
 					return true;
 			}
 			break;
+		case T_GraphElementPattern:
+			{
+				GraphElementPattern *gep = (GraphElementPattern *) node;
+
+				if (WALK(gep->subexpr))
+					return true;
+				if (WALK(gep->whereClause))
+					return true;
+			}
+			break;
+		case T_GraphPattern:
+			{
+				GraphPattern *gp = (GraphPattern *) node;
+
+				if (WALK(gp->path_pattern_list))
+					return true;
+				if (WALK(gp->whereClause))
+					return true;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));

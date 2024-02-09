@@ -215,6 +215,13 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	rte->rtekind = RTE_SUBQUERY;
 	rte->subquery = newsubquery;
 
+	/*
+	 * Reset no longer applicable fields, to appease
+	 * WRITE_READ_PARSE_PLAN_TREES.
+	 */
+	rte->graph_pattern = NULL;
+	rte->graph_table_columns = NIL;
+
 	return parsetree;
 }
 
