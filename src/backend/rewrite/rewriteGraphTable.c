@@ -41,8 +41,15 @@
 static Oid get_labelid(Oid graphid, const char *labelname);
 static List *get_elements_for_label(Oid graphid, const char *labelname);
 static Oid get_table_for_element(Oid elid);
-static Node *replace_property_refs(Node *node, Oid labelid, int rt_index);
+static Node *replace_property_refs(Node *node, const List *mappings);
 static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber catalog_key_attnum, AttrNumber catalog_ref_attnum);
+
+struct elvar_rt_mapping
+{
+	const char *elvarname;
+	Oid labelid;
+	int rt_index;
+};
 
 
 /*
@@ -59,6 +66,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	List	   *element_ids = NIL;
 	List	   *fromlist = NIL;
 	List	   *qual_exprs = NIL;
+	List	   *elvar_rt_mappings = NIL;
 
 	rte = rt_fetch(rt_index, parsetree->rtable);
 
@@ -74,6 +82,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	{
 		ElementPattern *ep = lfirst_node(ElementPattern, lc);
 		Oid		labelid = InvalidOid;
+		struct elvar_rt_mapping *erm;
 
 		if (!(ep->kind == VERTEX_PATTERN || ep->kind == EDGE_PATTERN_LEFT || ep->kind == EDGE_PATTERN_RIGHT))
 			elog(ERROR, "unsupported element pattern kind: %u", ep->kind);
@@ -117,11 +126,19 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		else
 			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(ep->labelexpr));
 
+		erm = palloc0_object(struct elvar_rt_mapping);
+
+		erm->elvarname = ep->variable;
+		erm->labelid = labelid;
+		erm->rt_index = list_length(newsubquery->rtable);
+
+		elvar_rt_mappings = lappend(elvar_rt_mappings, erm);
+
 		if (ep->whereClause)
 		{
 			Node *tr;
 
-			tr = replace_property_refs(ep->whereClause, labelid, list_length(newsubquery->rtable));
+			tr = replace_property_refs(ep->whereClause, list_make1(erm));
 
 			qual_exprs = lappend(qual_exprs, tr);
 		}
@@ -188,7 +205,14 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 
 	newsubquery->jointree = makeFromExpr(fromlist, (Node *) makeBoolExpr(AND_EXPR, qual_exprs, -1));
 
-	newsubquery->targetList = list_make1(makeTargetEntry((Expr *) makeVar(1, 2, VARCHAROID, -1, DEFAULT_COLLATION_OID, 0), 1, "customer_name", false));
+	foreach(lc, rte->graph_table_columns)
+	{
+		TargetEntry *te = lfirst_node(TargetEntry, lc);
+		Node *nte;
+
+		nte = replace_property_refs((Node *) te, elvar_rt_mappings);
+		newsubquery->targetList = lappend(newsubquery->targetList, nte);
+	}
 
 	AcquireRewriteLocks(newsubquery, true, false);
 
@@ -274,8 +298,7 @@ get_table_for_element(Oid elid)
 
 struct replace_property_refs_context
 {
-	Oid labelid;
-	int rt_index;
+	const List *mappings;
 };
 
 static Node *
@@ -288,13 +311,28 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 		PropertyRef *pr = (PropertyRef *) node;
 		HeapTuple tup;
 		Node *n;
+		ListCell *lc;
+		struct elvar_rt_mapping *found_mapping = NULL;
 
-		tup = SearchSysCache2(PROPGRAPHPROPNAME, CStringGetDatum(pr->propname), ObjectIdGetDatum(context->labelid));
+		foreach(lc, context->mappings)
+		{
+			struct elvar_rt_mapping *m = lfirst(lc);
+
+			if (m->elvarname && strcmp(pr->elvarname, m->elvarname) == 0)
+			{
+				found_mapping = m;
+				break;
+			}
+		}
+		if (!found_mapping)
+			elog(ERROR, "undefined element variable \"%s\"", pr->elvarname);
+
+		tup = SearchSysCache2(PROPGRAPHPROPNAME, CStringGetDatum(pr->propname), ObjectIdGetDatum(found_mapping->labelid));
 		if (!tup)
-			elog(ERROR, "property %s/%u not found", pr->propname, context->labelid);
+			elog(ERROR, "property \"%s\" of label %u not found", pr->propname, found_mapping->labelid);
 
 		n = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHPROPNAME, tup, Anum_pg_propgraph_property_pgpexpr)));
-		ChangeVarNodes(n, 1, context->rt_index, 0);
+		ChangeVarNodes(n, 1, found_mapping->rt_index, 0);
 
 		ReleaseSysCache(tup);
 
@@ -304,12 +342,11 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 }
 
 static Node *
-replace_property_refs(Node *node, Oid labelid, int rt_index)
+replace_property_refs(Node *node, const List *mappings)
 {
 	struct replace_property_refs_context context;
 
-	context.labelid = labelid;
-	context.rt_index = rt_index;
+	context.mappings = mappings;
 
 	return expression_tree_mutator(node, replace_property_refs_mutator, &context);
 }
