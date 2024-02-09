@@ -72,7 +72,10 @@ INSERT INTO customer_orders (customer_orders_id, customer_id, order_id) VALUES
     (1, 1, 1),
     (2, 2, 2);
 
-SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- TODO
+SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
+SELECT * FROM GRAPH_TABLE (myshop MATCH (c:customers)-[co:customer_orders]->(o:orders WHERE o.ordered_when = '2024-01-02') COLUMNS (c.name, c.address));
+SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)-[IS customer_orders]->(c IS customers) COLUMNS (c.name, o.ordered_when));
+SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)<-[IS customer_orders]-(c IS customers) COLUMNS (c.name, o.ordered_when));
 
 -- TODO: should approximately match this query:
 SET debug_print_parse = on;

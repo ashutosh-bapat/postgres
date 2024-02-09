@@ -71,11 +71,29 @@ INSERT INTO order_items (order_items_id, order_id, product_no, quantity) VALUES
 INSERT INTO customer_orders (customer_orders_id, customer_id, order_id) VALUES
     (1, 1, 1),
     (2, 2, 2);
-SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- TODO
+SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
  customer_name 
 ---------------
  customer1
 (1 row)
+
+SELECT * FROM GRAPH_TABLE (myshop MATCH (c:customers)-[co:customer_orders]->(o:orders WHERE o.ordered_when = '2024-01-02') COLUMNS (c.name, c.address));
+   name    | address 
+-----------+---------
+ customer2 | CA
+(1 row)
+
+SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)-[IS customer_orders]->(c IS customers) COLUMNS (c.name, o.ordered_when));
+ name | ordered_when 
+------+--------------
+(0 rows)
+
+SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)<-[IS customer_orders]-(c IS customers) COLUMNS (c.name, o.ordered_when));
+   name    | ordered_when 
+-----------+--------------
+ customer1 | 01-01-2024
+ customer2 | 01-02-2024
+(2 rows)
 
 -- TODO: should approximately match this query:
 SET debug_print_parse = on;
