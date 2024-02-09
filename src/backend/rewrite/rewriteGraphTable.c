@@ -219,20 +219,23 @@ get_labelid(Oid graphid, const char *labelname)
 {
 	Relation	rel;
 	SysScanDesc	scan;
-	ScanKeyData	key[1];
+	ScanKeyData	key[2];
 	HeapTuple	tup;
 	Oid			result = InvalidOid;
 
 	rel = table_open(PropgraphLabelRelationId, RowShareLock);
 	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pglpgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
 				Anum_pg_propgraph_label_pgllabel,
 				BTEqualStrategyNumber,
 				F_NAMEEQ, CStringGetDatum(labelname));
 
-	// FIXME: needs index
-	// XXX: maybe pg_propgraph_label should include the graph OID
-	scan = systable_beginscan(rel, InvalidOid,
-							  true, NULL, 1, key);
+	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId,
+							  true, NULL, 2, key);
+
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
 		result = ((Form_pg_propgraph_label) GETSTRUCT(tup))->oid;
@@ -250,30 +253,26 @@ get_elements_for_label(Oid graphid, const char *labelname)
 {
 	Relation	rel;
 	SysScanDesc	scan;
-	ScanKeyData	key[1];
+	ScanKeyData	key[2];
 	HeapTuple	tup;
 	List	   *result = NIL;
 
 	rel = table_open(PropgraphLabelRelationId, RowShareLock);
 	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pglpgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
 				Anum_pg_propgraph_label_pgllabel,
 				BTEqualStrategyNumber,
 				F_NAMEEQ, CStringGetDatum(labelname));
 
-	// FIXME: needs index
-	// XXX: maybe pg_propgraph_label should include the graph OID
-	scan = systable_beginscan(rel, InvalidOid,
-							  true, NULL, 1, key);
+	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId,
+							  true, NULL, 2, key);
+
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-		Oid elid;
-		Oid pgepgid;
-
-		elid = ((Form_pg_propgraph_label) GETSTRUCT(tup))->pglelid;
-		pgepgid = GetSysCacheOid1(PROPGRAPHELOID, Anum_pg_propgraph_element_pgepgid, ObjectIdGetDatum(elid));
-
-		if (pgepgid == graphid)
-			result = lappend_oid(result, elid);
+		result = lappend_oid(result, ((Form_pg_propgraph_label) GETSTRUCT(tup))->pglelid);
 	}
 
 	systable_endscan(scan);

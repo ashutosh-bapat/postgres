@@ -61,7 +61,7 @@ struct element_info
 static ArrayType *propgraph_element_get_key(ParseState *pstate, List *key_clause, int location, Relation element_rel);
 static ArrayType *array_from_column_list(ParseState *pstate, List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
-static Oid insert_label_record(Oid peoid, const char *label);
+static Oid insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, PropGraphProperties *properties);
 static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, Expr *expr);
 static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
@@ -445,9 +445,9 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 			Oid			labeloid;
 
 			if (lp->label)
-				labeloid = insert_label_record(peoid, lp->label);
+				labeloid = insert_label_record(graphid, peoid, lp->label);
 			else
-				labeloid = insert_label_record(peoid, einfo->aliasname);
+				labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
 			insert_property_records(graphid, labeloid, einfo->relid, lp->properties);
 		}
 	}
@@ -459,13 +459,13 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		pr->all = true;
 		pr->location = -1;
 
-		labeloid = insert_label_record(peoid, einfo->aliasname);
+		labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
 		insert_property_records(graphid, labeloid, einfo->relid, pr);
 	}
 }
 
 static Oid
-insert_label_record(Oid peoid, const char *label)
+insert_label_record(Oid graphid, Oid peoid, const char *label)
 {
 	Relation	rel;
 	NameData	labelname;
@@ -480,6 +480,7 @@ insert_label_record(Oid peoid, const char *label)
 
 	labeloid = GetNewOidWithIndex(rel, PropgraphLabelObjectIndexId, Anum_pg_propgraph_label_oid);
 	values[Anum_pg_propgraph_label_oid - 1] = ObjectIdGetDatum(labeloid);
+	values[Anum_pg_propgraph_label_pglpgid - 1] = ObjectIdGetDatum(graphid);
 	namestrcpy(&labelname, label);
 	values[Anum_pg_propgraph_label_pgllabel - 1] = NameGetDatum(&labelname);
 	values[Anum_pg_propgraph_label_pglelid - 1] = ObjectIdGetDatum(peoid);
@@ -784,7 +785,7 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 
 		pgerelid = get_element_relid(peoid);
 
-		labeloid = insert_label_record(peoid, lp->label);
+		labeloid = insert_label_record(pgrelid, peoid, lp->label);
 		insert_property_records(pgrelid, labeloid, pgerelid, lp->properties);
 	}
 
