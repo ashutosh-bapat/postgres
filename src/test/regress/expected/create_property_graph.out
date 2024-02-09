@@ -315,7 +315,7 @@ CREATE PROPERTY GRAPH create_property_graph_tests.g2
     )
     EDGE TABLES (
         e1 KEY (a, i) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (i) REFERENCES t2 (i) PROPERTIES (a, i, t),
-        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y) PROPERTIES (a, x, t)
+        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y) PROPERTIES (a, t, x)
     )
 SELECT pg_get_propgraphdef('g3'::regclass);
 CREATE PROPERTY GRAPH create_property_graph_tests.g3
@@ -332,7 +332,7 @@ CREATE PROPERTY GRAPH create_property_graph_tests.g4
     )
     EDGE TABLES (
         e1 KEY (a, i) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (i) REFERENCES t2 (i) PROPERTIES (a, i, t),
-        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y) PROPERTIES (a, x, t)
+        e2 KEY (a, x) SOURCE KEY (a) REFERENCES t1 (a) DESTINATION KEY (x, t) REFERENCES t3 (x, y) PROPERTIES (a, t, x)
     )
 SELECT pg_get_propgraphdef('pg_type'::regclass);  -- error
 ERROR:  "pg_type" is not a property graph

@@ -65,7 +65,7 @@ typedef FormData_pg_propgraph_property *Form_pg_propgraph_property;
 DECLARE_TOAST(pg_propgraph_property, 8309, 8310);
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_property_oid_index, 8307, PropgraphPropertyObjectIndexId, pg_propgraph_property, btree(oid oid_ops));
-DECLARE_UNIQUE_INDEX(pg_propgraph_property_name_index, 8308, PropgraphPropertyNameIndexId, pg_propgraph_property, btree(pgpname name_ops, pgplabelid oid_ops));
+DECLARE_UNIQUE_INDEX(pg_propgraph_property_name_index, 8308, PropgraphPropertyNameIndexId, pg_propgraph_property, btree(pgplabelid oid_ops, pgpname name_ops));
 
 DECLARE_INDEX(pg_propgraph_property_graph_name_index, 8311, PropgraphPropertyGraphNameIndexId, pg_propgraph_property, btree(pgppgid oid_ops, pgpname name_ops));
 

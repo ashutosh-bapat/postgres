@@ -1809,10 +1809,10 @@ make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid)
 				ObjectIdGetDatum(labelid));
 
 	/*
-	 * TODO: Should use an index here, maybe PropgraphPropertyNameIndexId.
-	 * Also should make sure properties are put out in a deterministic order.
+	 * Note: Use of index on property name also ensures that properties are
+	 * put out in a deterministic order.
 	 */
-	scan = systable_beginscan(pgprel, InvalidOid, true, NULL, 1, scankey);
+	scan = systable_beginscan(pgprel, PropgraphPropertyNameIndexId, true, NULL, 1, scankey);
 
 	first = true;
 	while ((tup = systable_getnext(scan)))

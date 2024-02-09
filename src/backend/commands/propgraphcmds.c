@@ -870,8 +870,8 @@ AlterPropGraph(ParseState *pstate, AlterPropGraphStmt *stmt)
 
 			propoid = GetSysCacheOid2(PROPGRAPHPROPNAME,
 									  Anum_pg_propgraph_property_oid,
-									  CStringGetDatum(propname),
-									  ObjectIdGetDatum(labeloid));
+									  ObjectIdGetDatum(labeloid),
+									  CStringGetDatum(propname));
 			if (!propoid)
 				ereport(ERROR,
 					errcode(ERRCODE_UNDEFINED_OBJECT),

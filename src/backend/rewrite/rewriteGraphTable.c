@@ -319,7 +319,7 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 		if (!found_mapping)
 			elog(ERROR, "undefined element variable \"%s\"", pr->elvarname);
 
-		tup = SearchSysCache2(PROPGRAPHPROPNAME, CStringGetDatum(pr->propname), ObjectIdGetDatum(found_mapping->labelid));
+		tup = SearchSysCache2(PROPGRAPHPROPNAME, ObjectIdGetDatum(found_mapping->labelid), CStringGetDatum(pr->propname));
 		if (!tup)
 			elog(ERROR, "property \"%s\" of label %u not found", pr->propname, found_mapping->labelid);
 
