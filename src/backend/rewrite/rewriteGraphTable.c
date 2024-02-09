@@ -162,7 +162,11 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			destvertexoffset = -1;
 		}
 		else
+		{
 			Assert(false);
+			srcvertexoffset = 0;
+			destvertexoffset = 0;
+		}
 
 		/*
 		 * source link
