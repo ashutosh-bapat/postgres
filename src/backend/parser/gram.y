@@ -9777,6 +9777,7 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 			| ALTER PROPERTY GRAPH qualified_name RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
+
 					n->renameType = OBJECT_PROPGRAPH;
 					n->relation = $4;
 					n->newname = $7;
@@ -10411,6 +10412,7 @@ AlterObjectSchemaStmt:
 			| ALTER PROPERTY GRAPH qualified_name SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
+
 					n->objectType = OBJECT_PROPGRAPH;
 					n->relation = $4;
 					n->newschema = $7;
@@ -10420,6 +10422,7 @@ AlterObjectSchemaStmt:
 			| ALTER PROPERTY GRAPH IF_P EXISTS qualified_name SET SCHEMA name
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
+
 					n->objectType = OBJECT_PROPGRAPH;
 					n->relation = $6;
 					n->newschema = $9;
@@ -13857,6 +13860,7 @@ table_ref:	relation_expr opt_alias_clause
 			| GRAPH_TABLE '(' qualified_name MATCH graph_pattern COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
 				{
 					RangeGraphTable *n = makeNode(RangeGraphTable);
+
 					n->graph_name = $3;
 					n->graph_pattern = castNode(GraphPattern, $5);
 					n->columns = $8;
