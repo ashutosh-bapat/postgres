@@ -572,7 +572,7 @@ assign_collations_walker(Node *node, assign_collations_context *context)
 			break;
 
 		case T_GraphPropertyRef:
-			// FIXME
+			/* FIXME */
 			collation = DEFAULT_COLLATION_OID;
 			strength = COLLATE_IMPLICIT;
 			location = -1;

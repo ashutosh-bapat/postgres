@@ -188,7 +188,7 @@ static const Oid object_classes[] = {
 	EventTriggerRelationId,		/* OCLASS_EVENT_TRIGGER */
 	ParameterAclRelationId,		/* OCLASS_PARAMETER_ACL */
 	PolicyRelationId,			/* OCLASS_POLICY */
-	PropgraphElementRelationId,	/* OCLASS_PROPGRAPH_ELEMENT */
+	PropgraphElementRelationId, /* OCLASS_PROPGRAPH_ELEMENT */
 	PropgraphLabelRelationId,	/* OCLASS_PROPGRAPH_LABEL */
 	PropgraphPropertyRelationId,	/* OCLASS_PROPGRAPH_PROPERTY */
 	PublicationNamespaceRelationId, /* OCLASS_PUBLICATION_NAMESPACE */

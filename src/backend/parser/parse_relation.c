@@ -2184,7 +2184,7 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 	foreach(lc, columns)
 	{
 		TargetEntry *te = lfirst_node(TargetEntry, lc);
-		Node *colexpr = (Node *) te->expr;
+		Node	   *colexpr = (Node *) te->expr;
 
 		coltypes = lappend_oid(coltypes, exprType(colexpr));
 		coltypmods = lappend_int(coltypmods, exprTypmod(colexpr));

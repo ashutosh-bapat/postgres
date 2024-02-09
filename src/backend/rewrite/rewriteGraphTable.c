@@ -30,17 +30,17 @@
 #include "utils/syscache.h"
 
 
-static Oid get_labelid(Oid graphid, const char *labelname);
+static Oid	get_labelid(Oid graphid, const char *labelname);
 static List *get_elements_for_label(Oid graphid, const char *labelname);
-static Oid get_table_for_element(Oid elid);
+static Oid	get_table_for_element(Oid elid);
 static Node *replace_property_refs(Node *node, const List *mappings);
 static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber catalog_key_attnum, AttrNumber catalog_ref_attnum);
 
 struct elvar_rt_mapping
 {
 	const char *elvarname;
-	Oid labelid;
-	int rt_index;
+	Oid			labelid;
+	int			rt_index;
 };
 
 
@@ -73,7 +73,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	foreach(lc, element_patterns)
 	{
 		GraphElementPattern *gep = lfirst_node(GraphElementPattern, lc);
-		Oid		labelid = InvalidOid;
+		Oid			labelid = InvalidOid;
 		struct elvar_rt_mapping *erm;
 
 		if (!(gep->kind == VERTEX_PATTERN || gep->kind == EDGE_PATTERN_LEFT || gep->kind == EDGE_PATTERN_RIGHT))
@@ -128,7 +128,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 
 		if (gep->whereClause)
 		{
-			Node *tr;
+			Node	   *tr;
 
 			tr = replace_property_refs(gep->whereClause, list_make1(erm));
 
@@ -137,7 +137,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	}
 
 	/* Iterate over edges only */
-	for (int k = 1; k < list_length(element_ids); k+=2)
+	for (int k = 1; k < list_length(element_ids); k += 2)
 	{
 		Oid			elid = list_nth_oid(element_ids, k);
 		HeapTuple	tuple;
@@ -200,7 +200,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	foreach(lc, rte->graph_table_columns)
 	{
 		TargetEntry *te = lfirst_node(TargetEntry, lc);
-		Node *nte;
+		Node	   *nte;
 
 		nte = replace_property_refs((Node *) te, elvar_rt_mappings);
 		newsubquery->targetList = lappend(newsubquery->targetList, nte);
@@ -224,8 +224,8 @@ static Oid
 get_labelid(Oid graphid, const char *labelname)
 {
 	Relation	rel;
-	SysScanDesc	scan;
-	ScanKeyData	key[2];
+	SysScanDesc scan;
+	ScanKeyData key[2];
 	HeapTuple	tup;
 	Oid			result = InvalidOid;
 
@@ -261,8 +261,8 @@ static List *
 get_elements_for_label(Oid graphid, const char *labelname)
 {
 	Relation	rel;
-	SysScanDesc	scan;
-	ScanKeyData	key[2];
+	SysScanDesc scan;
+	ScanKeyData key[2];
 	HeapTuple	tup;
 	List	   *result = NIL;
 
@@ -316,9 +316,9 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 	if (IsA(node, GraphPropertyRef))
 	{
 		GraphPropertyRef *gpr = (GraphPropertyRef *) node;
-		HeapTuple tup;
-		Node *n;
-		ListCell *lc;
+		HeapTuple	tup;
+		Node	   *n;
+		ListCell   *lc;
 		struct elvar_rt_mapping *found_mapping = NULL;
 
 		foreach(lc, context->mappings)
@@ -367,8 +367,10 @@ build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNum
 	List	   *quals = NIL;
 	Form_pg_propgraph_element pgeform;
 	Datum		datum;
-	Datum	   *d1, *d2;
-	int			n1, n2;
+	Datum	   *d1,
+			   *d2;
+	int			n1,
+				n2;
 
 	pgeform = (Form_pg_propgraph_element) GETSTRUCT(edgetup);
 
@@ -390,8 +392,8 @@ build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNum
 		OpExpr	   *op;
 
 		/*
-		 * TODO: Assumes types the same on both sides; no collations yet.
-		 * Some of this could probably be shared with foreign key triggers.
+		 * TODO: Assumes types the same on both sides; no collations yet. Some
+		 * of this could probably be shared with foreign key triggers.
 		 */
 		atttypid = get_atttype(pgeform->pgerelid, keyattn);
 		typentry = lookup_type_cache(atttypid, TYPECACHE_EQ_OPR);

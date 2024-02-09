@@ -33,7 +33,7 @@ CATALOG(pg_propgraph_property,8306,PropgraphPropertyRelationId)
 	 * OID of the property graph relation.  This can also be found out by
 	 * chasing via pgplabelid, but having it here is more efficient.
 	 */
-	Oid         pgppgid BKI_LOOKUP(pg_class);
+	Oid			pgppgid BKI_LOOKUP(pg_class);
 
 	/* property name */
 	NameData	pgpname;

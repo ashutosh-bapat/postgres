@@ -15918,17 +15918,17 @@ dumpTableSchema(Archive *fout, const TableInfo *tbinfo)
 		{
 			if (PQntuples(res) < 1)
 				pg_fatal("query to obtain definition of property graph \"%s\" returned no data",
-					  tbinfo->dobj.name);
+						 tbinfo->dobj.name);
 			else
 				pg_fatal("query to obtain definition of property graph \"%s\" returned more than one definition",
-					  tbinfo->dobj.name);
+						 tbinfo->dobj.name);
 		}
 
 		len = PQgetlength(res, 0, 0);
 
 		if (len == 0)
 			pg_fatal("definition of property graph \"%s\" appears to be empty (length zero)",
-				  tbinfo->dobj.name);
+					 tbinfo->dobj.name);
 
 		appendPQExpBufferStr(q, PQgetvalue(res, 0, 0));
 

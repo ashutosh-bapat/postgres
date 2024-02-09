@@ -3165,7 +3165,7 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH(",", ")");
 	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(") &&
 			 TailMatches(")"))
-		COMPLETE_WITH("EDGE"); /* FIXME: doesn't seem to work */
+		COMPLETE_WITH("EDGE");	/* FIXME: doesn't seem to work */
 	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
 			 TailMatches("EDGE|RELATIONSHIP"))
 		COMPLETE_WITH("TABLES");

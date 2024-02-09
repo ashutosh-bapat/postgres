@@ -33,7 +33,7 @@ CATALOG(pg_propgraph_label,8303,PropgraphLabelRelationId)
 	 * OID of the property graph relation.  This can also be found out by
 	 * chasing via pglelid, but having it here is more efficient.
 	 */
-	Oid         pglpgid BKI_LOOKUP(pg_class);
+	Oid			pglpgid BKI_LOOKUP(pg_class);
 
 	/* label name */
 	NameData	pgllabel;

@@ -36,8 +36,8 @@ static Oid
 get_property_type(Oid graphid, const char *propname)
 {
 	Relation	rel;
-	SysScanDesc	scan;
-	ScanKeyData	key[2];
+	SysScanDesc scan;
+	ScanKeyData key[2];
 	HeapTuple	tuple;
 	Oid			result = InvalidOid;
 
@@ -87,7 +87,7 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 		Node	   *field1 = linitial(cref->fields);
 		Node	   *field2 = lsecond(cref->fields);
 		char	   *elvarname;
-		char       *propname;
+		char	   *propname;
 
 		elvarname = strVal(field1);
 		propname = strVal(field2);
@@ -116,7 +116,7 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 static Node *
 transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 {
-	Node *result;
+	Node	   *result;
 
 	if (labelexpr == NULL)
 		return NULL;
@@ -127,7 +127,7 @@ transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 	{
 		case T_ColumnRef:
 			{
-				ColumnRef *cref = (ColumnRef *) labelexpr;
+				ColumnRef  *cref = (ColumnRef *) labelexpr;
 				const char *labelname;
 				GraphLabelRef *lref;
 
@@ -144,8 +144,8 @@ transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 
 		case T_BoolExpr:
 			{
-				BoolExpr *be = (BoolExpr *) labelexpr;
-				ListCell *lc;
+				BoolExpr   *be = (BoolExpr *) labelexpr;
+				ListCell   *lc;
 				List	   *args = NIL;
 
 				foreach(lc, be->args)
@@ -199,12 +199,12 @@ transformGraphElementPattern(GraphTableParseState *gpstate, GraphElementPattern 
 static Node *
 transformPathTerm(GraphTableParseState *gpstate, List *path_term)
 {
-	List *result = NIL;
-	ListCell *lc;
+	List	   *result = NIL;
+	ListCell   *lc;
 
 	foreach(lc, path_term)
 	{
-		Node *n = transformGraphElementPattern(gpstate, lfirst_node(GraphElementPattern, lc));
+		Node	   *n = transformGraphElementPattern(gpstate, lfirst_node(GraphElementPattern, lc));
 
 		result = lappend(result, n);
 	}
@@ -218,12 +218,12 @@ transformPathTerm(GraphTableParseState *gpstate, List *path_term)
 static Node *
 transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
 {
-	List *result = NIL;
-	ListCell *lc;
+	List	   *result = NIL;
+	ListCell   *lc;
 
 	foreach(lc, path_pattern)
 	{
-		Node *n = transformPathTerm(gpstate, lfirst(lc));
+		Node	   *n = transformPathTerm(gpstate, lfirst(lc));
 
 		result = lappend(result, n);
 	}

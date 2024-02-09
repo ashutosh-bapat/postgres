@@ -1007,7 +1007,7 @@ exprCollation(const Node *expr)
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
 		case T_GraphPropertyRef:
-			coll = DEFAULT_COLLATION_OID; /* FIXME */
+			coll = DEFAULT_COLLATION_OID;	/* FIXME */
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));

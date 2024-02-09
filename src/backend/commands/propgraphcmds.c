@@ -38,35 +38,35 @@
 
 struct element_info
 {
-	Oid		elementid;
-	char	kind;
-	Oid		relid;
-	char   *aliasname;
-	ArrayType *key;
+	Oid			elementid;
+	char		kind;
+	Oid			relid;
+	char	   *aliasname;
+	ArrayType  *key;
 
-	char   *srcvertex;
-	Oid		srcvertexid;
-	ArrayType *srckey;
-	ArrayType *srcref;
+	char	   *srcvertex;
+	Oid			srcvertexid;
+	ArrayType  *srckey;
+	ArrayType  *srcref;
 
-	char   *destvertex;
-	Oid		destvertexid;
-	ArrayType *destkey;
-	ArrayType *destref;
+	char	   *destvertex;
+	Oid			destvertexid;
+	ArrayType  *destkey;
+	ArrayType  *destref;
 
-	List   *labels;
+	List	   *labels;
 };
 
 
 static ArrayType *propgraph_element_get_key(ParseState *pstate, const List *key_clause, int location, Relation element_rel);
 static ArrayType *array_from_column_list(ParseState *pstate, const List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
-static Oid insert_label_record(Oid graphid, Oid peoid, const char *label);
+static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
 static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr);
-static Oid get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
-static Oid get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
-static Oid get_element_relid(Oid peid);
+static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
+static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
+static Oid	get_element_relid(Oid peid);
 
 
 /*
@@ -90,7 +90,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 
 	components_persistence = RELPERSISTENCE_PERMANENT;
 
-	foreach (lc, stmt->vertex_tables)
+	foreach(lc, stmt->vertex_tables)
 	{
 		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
 		struct element_info *vinfo;
@@ -128,7 +128,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 		element_aliases = lappend(element_aliases, makeString(vinfo->aliasname));
 	}
 
-	foreach (lc, stmt->edge_tables)
+	foreach(lc, stmt->edge_tables)
 	{
 		PropGraphEdge *edge = lfirst_node(PropGraphEdge, lc);
 		struct element_info *einfo;
@@ -167,7 +167,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 
 		srcrelid = 0;
 		destrelid = 0;
-		foreach (lc2, vertex_infos)
+		foreach(lc2, vertex_infos)
 		{
 			struct element_info *vinfo = lfirst(lc2);
 
@@ -218,7 +218,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 		einfo->destkey = array_from_column_list(pstate, edge->edestkey, edge->location, rel);
 		einfo->destref = array_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
-		// TODO: various consistency checks
+		/* TODO: various consistency checks */
 
 		einfo->labels = edge->labels;
 
@@ -261,13 +261,13 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 	foreach(lc, edge_infos)
 	{
 		struct element_info *einfo = lfirst(lc);
-		ListCell *lc2;
+		ListCell   *lc2;
 
 		/*
 		 * Look up the vertices again.  Now the vertices have OIDs assigned,
 		 * which we need.
 		 */
-		foreach (lc2, vertex_infos)
+		foreach(lc2, vertex_infos)
 		{
 			struct element_info *vinfo = lfirst(lc2);
 
@@ -294,7 +294,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 static ArrayType *
 propgraph_element_get_key(ParseState *pstate, const List *key_clause, int location, Relation element_rel)
 {
-	ArrayType *a;
+	ArrayType  *a;
 
 	if (key_clause == NIL)
 	{
@@ -437,7 +437,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
 	/* Add dependencies on vertices */
-	// TODO: columns
+	/* TODO: columns */
 	if (einfo->srcvertexid)
 	{
 		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->srcvertexid);
@@ -453,7 +453,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 
 	if (einfo->labels)
 	{
-		ListCell *lc;
+		ListCell   *lc;
 
 		foreach(lc, einfo->labels)
 		{
@@ -528,9 +528,9 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 	List	   *proplist = NIL;
 	ParseState *pstate;
 	ParseNamespaceItem *nsitem;
-	List *tp;
-	Relation rel;
-	ListCell *lc;
+	List	   *tp;
+	Relation	rel;
+	ListCell   *lc;
 
 	if (properties->all)
 	{
@@ -550,7 +550,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 		{
 			Form_pg_attribute att = (Form_pg_attribute) GETSTRUCT(attributeTuple);
 			ColumnRef  *cr;
-			ResTarget *rt;
+			ResTarget  *rt;
 
 			if (att->attnum <= 0 || att->attisdropped)
 				continue;
@@ -576,7 +576,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 
 		foreach(lc, proplist)
 		{
-			ResTarget *rt = lfirst_node(ResTarget, lc);
+			ResTarget  *rt = lfirst_node(ResTarget, lc);
 
 			if (!rt->name && !IsA(rt->val, ColumnRef))
 				ereport(ERROR,
@@ -673,7 +673,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 	ObjectAddressSet(pgaddress, RelationRelationId, pgrelid);
 
-	foreach (lc, stmt->add_vertex_tables)
+	foreach(lc, stmt->add_vertex_tables)
 	{
 		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
 		struct element_info *vinfo;
@@ -705,7 +705,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 	CommandCounterIncrement();
 
-	foreach (lc, stmt->add_edge_tables)
+	foreach(lc, stmt->add_edge_tables)
 	{
 		PropGraphEdge *edge = lfirst_node(PropGraphEdge, lc);
 		struct element_info *einfo;
@@ -763,7 +763,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		einfo->destkey = array_from_column_list(pstate, edge->edestkey, edge->location, rel);
 		einfo->destref = array_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
 
-		// TODO: various consistency checks
+		/* TODO: various consistency checks */
 
 		einfo->labels = edge->labels;
 
@@ -775,7 +775,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		insert_element_record(pgaddress, einfo);
 	}
 
-	foreach (lc, stmt->drop_vertex_tables)
+	foreach(lc, stmt->drop_vertex_tables)
 	{
 		char	   *alias = strVal(lfirst(lc));
 		Oid			peoid;
@@ -786,7 +786,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
-	foreach (lc, stmt->drop_edge_tables)
+	foreach(lc, stmt->drop_edge_tables)
 	{
 		char	   *alias = strVal(lfirst(lc));
 		Oid			peoid;
@@ -797,7 +797,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
-	foreach (lc, stmt->add_labels)
+	foreach(lc, stmt->add_labels)
 	{
 		PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
 		Oid			peoid;
@@ -892,7 +892,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 						   get_rel_name(pgrelid), stmt->element_alias, stmt->drop_label),
 					parser_errposition(pstate, -1));
 
-		foreach (lc, stmt->drop_properties)
+		foreach(lc, stmt->drop_properties)
 		{
 			char	   *propname = strVal(lfirst(lc));
 			Oid			propoid;
@@ -903,7 +903,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 									  CStringGetDatum(propname));
 			if (!propoid)
 				ereport(ERROR,
-					errcode(ERRCODE_UNDEFINED_OBJECT),
+						errcode(ERRCODE_UNDEFINED_OBJECT),
 						errmsg("property graph \"%s\" element \"%s\" label \"%s\" has no property \"%s\"",
 							   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label, propname),
 						parser_errposition(pstate, -1));

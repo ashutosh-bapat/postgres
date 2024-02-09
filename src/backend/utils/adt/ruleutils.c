@@ -7555,9 +7555,9 @@ get_graph_label_expr(Node *label_expr, deparse_context *context)
 
 		case T_BoolExpr:
 			{
-				BoolExpr *be = (BoolExpr *) label_expr;
-				ListCell *lc;
-				bool first = true;
+				BoolExpr   *be = (BoolExpr *) label_expr;
+				ListCell   *lc;
+				bool		first = true;
 
 				Assert(be->boolop == OR_EXPR);
 

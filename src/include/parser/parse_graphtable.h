@@ -20,12 +20,12 @@
 
 typedef struct GraphTableParseState
 {
-	Oid graphid;
-	List *variables;
+	Oid			graphid;
+	List	   *variables;
 } GraphTableParseState;
 
 extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref);
 
-Node *transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern);
+Node	   *transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern);
 
 #endif							/* PARSE_GRAPHTABLE_H */
