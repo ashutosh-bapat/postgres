@@ -13,29 +13,21 @@
  */
 #include "postgres.h"
 
-#include "access/genam.h"
 #include "access/table.h"
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "nodes/parsenodes.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteGraphTable.h"
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
-#include "utils/syscache.h"
-
-/*  XXX */
-#include "catalog/namespace.h"
-#include "catalog/pg_collation.h"
-#include "catalog/pg_operator.h"
-#include "nodes/print.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
-#include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 
 
 static Oid get_labelid(Oid graphid, const char *labelname);

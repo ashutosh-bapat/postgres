@@ -2044,6 +2044,7 @@ expression_tree_walker_impl(Node *node,
 		case T_RangeTblRef:
 		case T_SortGroupClause:
 		case T_CTESearchClause:
+		case T_PropertyRef:
 			/* primitive node types with no expression subnodes */
 			break;
 		case T_WithCheckOption:
@@ -2544,6 +2545,26 @@ expression_tree_walker_impl(Node *node,
 					return true;
 			}
 			break;
+		case T_ElementPattern:
+			{
+				ElementPattern *ep = (ElementPattern *) node;
+
+				if (WALK(ep->subexpr))
+					return true;
+				if (WALK(ep->whereClause))
+					return true;
+			}
+			break;
+		case T_GraphPattern:
+			{
+				GraphPattern *gp = (GraphPattern *) node;
+
+				if (LIST_WALK(gp->path_pattern_list))
+					return true;
+				if (WALK(gp->whereClause))
+					return true;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));
@@ -2738,12 +2759,10 @@ range_table_entry_walker_impl(RangeTblEntry *rte,
 				return true;
 			break;
 		case RTE_GRAPH_TABLE:
-#if TODO
 			if (WALK(rte->graph_pattern))
 				return true;
 			if (WALK(rte->graph_table_columns))
 				return true;
-#endif
 			break;
 		case RTE_CTE:
 		case RTE_NAMEDTUPLESTORE:
@@ -3746,10 +3765,8 @@ range_table_mutator_impl(List *rtable,
 				MUTATE(newrte->values_lists, rte->values_lists, List *);
 				break;
 			case RTE_GRAPH_TABLE:
-#if TODO
-				MUTATE(newrte->graph_pattern, rte->graph_pattern, List *);
+				MUTATE(newrte->graph_pattern, rte->graph_pattern, GraphPattern *);
 				MUTATE(newrte->graph_table_columns, rte->graph_table_columns, List *);
-#endif
 				break;
 			case RTE_CTE:
 			case RTE_NAMEDTUPLESTORE:
@@ -4306,12 +4323,10 @@ raw_expression_tree_walker_impl(Node *node,
 			{
 				RangeGraphTable *rgt = (RangeGraphTable *) node;
 
-#if TODO
 				if (WALK(rgt->graph_pattern))
 					return true;
 				if (WALK(rgt->columns))
 					return true;
-#endif
 				if (WALK(rgt->alias))
 					return true;
 			}

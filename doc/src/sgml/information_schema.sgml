@@ -4171,6 +4171,78 @@ ORDER BY c.ordinal_position;
   </table>
  </sect1>
 
+ <sect1 id="infoschema-pg-edge-table-components">
+  <title><literal>pg_edge_table_components</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-element-table-key-columns">
+  <title><literal>pg_element_table_key_columns</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-element-table-labels">
+  <title><literal>pg_element_table_labels</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-element-table-properties">
+  <title><literal>pg_element_table_properties</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-element-tables">
+  <title><literal>pg_element_tables</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-label-properties">
+  <title><literal>pg_element_label_properties</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-labels">
+  <title><literal>pg_element_labels</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-property-data-types">
+  <title><literal>pg_property_data_types</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
+ <sect1 id="infoschema-pg-property-graph-privileges">
+  <title><literal>pg_property_graph_privileges</literal></title>
+
+  <para>
+   TODO
+  </para>
+ </sect1>
+
  <sect1 id="infoschema-property-graphs">
   <title><literal>property_graphs</literal></title>
 
