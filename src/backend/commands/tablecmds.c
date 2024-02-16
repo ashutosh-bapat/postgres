@@ -298,6 +298,12 @@ static const struct dropmsgstrings dropmsgstringarray[] = {
 		gettext_noop("index \"%s\" does not exist, skipping"),
 		gettext_noop("\"%s\" is not an index"),
 	gettext_noop("Use DROP INDEX to remove an index.")},
+	{RELKIND_PROPGRAPH,
+		ERRCODE_UNDEFINED_OBJECT,
+		gettext_noop("property graph \"%s\" does not exist"),
+		gettext_noop("property graph \"%s\" does not exist, skipping"),
+		gettext_noop("\"%s\" is not a property graph"),
+	gettext_noop("Use DROP PROPERTY GRAPH to remove a property graph.")},
 	{'\0', 0, NULL, NULL, NULL, NULL}
 };
 
@@ -1526,6 +1532,10 @@ RemoveRelations(DropStmt *drop)
 
 		case OBJECT_FOREIGN_TABLE:
 			relkind = RELKIND_FOREIGN_TABLE;
+			break;
+
+		case OBJECT_PROPGRAPH:
+			relkind = RELKIND_PROPGRAPH;
 			break;
 
 		default:
@@ -13989,6 +13999,9 @@ RememberAllDependentForRebuilding(AlteredTableInfo *tab, AlterTableType subtype,
 			case OCLASS_EXTENSION:
 			case OCLASS_EVENT_TRIGGER:
 			case OCLASS_PARAMETER_ACL:
+			case OCLASS_PROPGRAPH_ELEMENT:
+			case OCLASS_PROPGRAPH_LABEL:
+			case OCLASS_PROPGRAPH_PROPERTY:
 			case OCLASS_PUBLICATION:
 			case OCLASS_PUBLICATION_NAMESPACE:
 			case OCLASS_PUBLICATION_REL:
@@ -14814,6 +14827,7 @@ ATExecChangeOwner(Oid relationOid, Oid newOwnerId, bool recursing, LOCKMODE lock
 		case RELKIND_MATVIEW:
 		case RELKIND_FOREIGN_TABLE:
 		case RELKIND_PARTITIONED_TABLE:
+		case RELKIND_PROPGRAPH:
 			/* ok to change owner */
 			break;
 		case RELKIND_INDEX:

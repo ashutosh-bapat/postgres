@@ -241,6 +241,21 @@
      </row>
 
      <row>
+      <entry><link linkend="catalog-pg-propgraph-element"><structname>pg_propgraph_element</structname></link></entry>
+      <entry>property graph elements (vertices and edges)</entry>
+     </row>
+
+     <row>
+      <entry><link linkend="catalog-pg-propgraph-label"><structname>pg_propgraph_label</structname></link></entry>
+      <entry>property graph labels</entry>
+     </row>
+
+     <row>
+      <entry><link linkend="catalog-pg-propgraph-property"><structname>pg_propgraph_property</structname></link></entry>
+      <entry>property graph properties</entry>
+     </row>
+
+     <row>
       <entry><link linkend="catalog-pg-publication"><structname>pg_publication</structname></link></entry>
       <entry>publications for logical replication</entry>
      </row>
@@ -2115,7 +2130,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        <literal>c</literal> = composite type,
        <literal>f</literal> = foreign table,
        <literal>p</literal> = partitioned table,
-       <literal>I</literal> = partitioned index
+       <literal>I</literal> = partitioned index,
+       <literal>g</literal> = property graph
       </para></entry>
      </row>
 
@@ -6256,6 +6272,36 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
    shared library file containing the function.
   </para>
 
+ </sect1>
+
+ <sect1 id="catalog-pg-propgraph-element">
+  <title><structname>pg_propgraph_element</structname></title>
+
+  <indexterm zone="catalog-pg-propgraph-element">
+   <primary>pg_propgraph_element</primary>
+  </indexterm>
+
+  <para>TODO</para>
+ </sect1>
+
+ <sect1 id="catalog-pg-propgraph-label">
+  <title><structname>pg_propgraph_label</structname></title>
+
+  <indexterm zone="catalog-pg-propgraph-label">
+   <primary>pg_propgraph_label</primary>
+  </indexterm>
+
+  <para>TODO</para>
+ </sect1>
+
+ <sect1 id="catalog-pg-propgraph-property">
+  <title><structname>pg_propgraph_property</structname></title>
+
+  <indexterm zone="catalog-pg-propgraph-property">
+   <primary>pg_propgraph_property</primary>
+  </indexterm>
+
+  <para>TODO</para>
  </sect1>
 
  <sect1 id="catalog-pg-publication">

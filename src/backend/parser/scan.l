@@ -353,6 +353,11 @@ typecast		"::"
 dot_dot			\.\.
 colon_equals	":="
 
+bracket_right_arrow	"]->"
+left_arrow_bracket	"<-["
+minus_left_bracket	"-["
+right_bracket_minus	"]-"
+
 /*
  * These operator-like tokens (unlike the above ones) also match the {operator}
  * rule, which means that they might be overridden by a longer match if they
@@ -366,6 +371,9 @@ less_equals		"<="
 greater_equals	">="
 less_greater	"<>"
 not_equals		"!="
+
+left_arrow		"<-"
+right_arrow		"->"
 
 /*
  * "self" is the set of chars that should be returned as single-character
@@ -850,6 +858,26 @@ other			.
 					return COLON_EQUALS;
 				}
 
+{bracket_right_arrow} {
+					SET_YYLLOC();
+					return BRACKET_RIGHT_ARROW;
+				}
+
+{left_arrow_bracket} {
+					SET_YYLLOC();
+					return LEFT_ARROW_BRACKET;
+				}
+
+{minus_left_bracket} {
+					SET_YYLLOC();
+					return MINUS_LEFT_BRACKET;
+				}
+
+{right_bracket_minus} {
+					SET_YYLLOC();
+					return RIGHT_BRACKET_MINUS;
+				}
+
 {equals_greater} {
 					SET_YYLLOC();
 					return EQUALS_GREATER;
@@ -877,9 +905,29 @@ other			.
 					return NOT_EQUALS;
 				}
 
+{left_arrow}	{
+					SET_YYLLOC();
+					return LEFT_ARROW;
+				}
+
+{right_arrow}	{
+					SET_YYLLOC();
+					return RIGHT_ARROW;
+				}
+
 {self}			{
 					SET_YYLLOC();
 					return yytext[0];
+				}
+
+\{				{
+					SET_YYLLOC();
+					return LEFT_BRACE;
+				}
+
+\}				{
+					SET_YYLLOC();
+					return RIGHT_BRACE;
 				}
 
 {operator}		{

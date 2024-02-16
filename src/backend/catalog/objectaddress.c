@@ -47,6 +47,9 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -371,6 +374,48 @@ static const ObjectPropertyType ObjectProperty[] =
 		true
 	},
 	{
+		"property graph element",
+		PropgraphElementRelationId,
+		PropgraphElementObjectIndexId,
+		PROPGRAPHELOID,
+		PROPGRAPHELALIAS,
+		Anum_pg_propgraph_element_oid,
+		Anum_pg_propgraph_element_pgealias,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
+		"property graph label",
+		PropgraphLabelRelationId,
+		PropgraphLabelObjectIndexId,
+		-1,
+		PROPGRAPHLABELNAME,
+		Anum_pg_propgraph_label_oid,
+		Anum_pg_propgraph_label_pgllabel,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
+		"property graph property",
+		PropgraphPropertyRelationId,
+		PropgraphPropertyObjectIndexId,
+		-1,
+		PROPGRAPHPROPNAME,
+		Anum_pg_propgraph_property_oid,
+		Anum_pg_propgraph_property_pgpname,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
 		"role",
 		AuthIdRelationId,
 		AuthIdOidIndexId,
@@ -681,6 +726,9 @@ static const struct object_type_map
 		"foreign table", OBJECT_FOREIGN_TABLE
 	},
 	{
+		"property graph", OBJECT_PROPGRAPH
+	},
+	{
 		"table column", OBJECT_COLUMN
 	},
 	{
@@ -849,6 +897,18 @@ static const struct object_type_map
 	{
 		"policy", OBJECT_POLICY
 	},
+	/* OCLASS_PROPGRAPH_ELEMENT */
+	{
+		"property graph element", -1
+	},
+	/* OCLASS_PROPGRAPH_LABEL */
+	{
+		"property graph label", -1
+	},
+	/* OCLASS_PROPGRAPH_PROPERTY */
+	{
+		"property graph property", -1
+	},
 	/* OCLASS_PUBLICATION */
 	{
 		"publication", OBJECT_PUBLICATION
@@ -989,6 +1049,7 @@ get_object_address(ObjectType objtype, Node *object,
 			case OBJECT_VIEW:
 			case OBJECT_MATVIEW:
 			case OBJECT_FOREIGN_TABLE:
+			case OBJECT_PROPGRAPH:
 				address =
 					get_relation_by_qualified_name(objtype, castNode(List, object),
 												   &relation, lockmode,
@@ -1395,6 +1456,13 @@ get_relation_by_qualified_name(ObjectType objtype, List *object,
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("\"%s\" is not an index",
+								RelationGetRelationName(relation))));
+			break;
+		case OBJECT_PROPGRAPH:
+			if (relation->rd_rel->relkind != RELKIND_PROPGRAPH)
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("\"%s\" is not a property graph",
 								RelationGetRelationName(relation))));
 			break;
 		case OBJECT_SEQUENCE:
@@ -2312,6 +2380,7 @@ pg_get_object_address(PG_FUNCTION_ARGS)
 		case OBJECT_MATVIEW:
 		case OBJECT_INDEX:
 		case OBJECT_FOREIGN_TABLE:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_COLUMN:
 		case OBJECT_ATTRIBUTE:
 		case OBJECT_COLLATION:
@@ -2431,6 +2500,7 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
 		case OBJECT_FOREIGN_TABLE:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_COLUMN:
 		case OBJECT_RULE:
 		case OBJECT_TRIGGER:
@@ -3961,6 +4031,43 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				break;
 			}
 
+		case OCLASS_PROPGRAPH_ELEMENT:
+			{
+				HeapTuple	tup;
+				Form_pg_propgraph_element pgeform;
+				StringInfoData rel;
+
+				tup = SearchSysCache1(PROPGRAPHELOID,
+									  ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tup))
+					elog(ERROR, "cache lookup failed for property graph element %u",
+						 object->objectId);
+
+				pgeform = (Form_pg_propgraph_element) GETSTRUCT(tup);
+
+				initStringInfo(&rel);
+				getRelationDescription(&rel, pgeform->pgepgid, false);
+
+				/* translator: second %s is, e.g., "property graph %s" */
+				appendStringInfo(&buffer, _("element %s in %s"),
+								 NameStr(pgeform->pgealias), rel.data);
+				pfree(rel.data);
+				ReleaseSysCache(tup);
+				break;
+			}
+
+		case OCLASS_PROPGRAPH_LABEL:
+			{
+				appendStringInfo(&buffer, "label %u TODO", object->objectId);
+				break;
+			}
+
+		case OCLASS_PROPGRAPH_PROPERTY:
+			{
+				appendStringInfo(&buffer, "property %u TODO", object->objectId);
+				break;
+			}
+
 		case OCLASS_PUBLICATION:
 			{
 				char	   *pubname = get_publication_name(object->objectId,
@@ -4146,6 +4253,10 @@ getRelationDescription(StringInfo buffer, Oid relid, bool missing_ok)
 			break;
 		case RELKIND_FOREIGN_TABLE:
 			appendStringInfo(buffer, _("foreign table %s"),
+							 relname);
+			break;
+		case RELKIND_PROPGRAPH:
+			appendStringInfo(buffer, _("property graph %s"),
 							 relname);
 			break;
 		default:
@@ -4568,6 +4679,18 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 			appendStringInfoString(&buffer, "policy");
 			break;
 
+		case OCLASS_PROPGRAPH_ELEMENT:
+			appendStringInfoString(&buffer, "property graph element");
+			break;
+
+		case OCLASS_PROPGRAPH_LABEL:
+			appendStringInfoString(&buffer, "property graph label");
+			break;
+
+		case OCLASS_PROPGRAPH_PROPERTY:
+			appendStringInfoString(&buffer, "property graph property");
+			break;
+
 		case OCLASS_PUBLICATION:
 			appendStringInfoString(&buffer, "publication");
 			break;
@@ -4650,6 +4773,9 @@ getRelationTypeDescription(StringInfo buffer, Oid relid, int32 objectSubId,
 			break;
 		case RELKIND_FOREIGN_TABLE:
 			appendStringInfoString(buffer, "foreign table");
+			break;
+		case RELKIND_PROPGRAPH:
+			appendStringInfoString(buffer, "property graph");
 			break;
 		default:
 			/* shouldn't get here */
@@ -5810,6 +5936,18 @@ getObjectIdentityParts(const ObjectAddress *object,
 				break;
 			}
 
+		case OCLASS_PROPGRAPH_ELEMENT:
+			appendStringInfo(&buffer, "%u TODO", object->objectId);
+			break;
+
+		case OCLASS_PROPGRAPH_LABEL:
+			appendStringInfo(&buffer, "%u TODO", object->objectId);
+			break;
+
+		case OCLASS_PROPGRAPH_PROPERTY:
+			appendStringInfo(&buffer, "%u TODO", object->objectId);
+			break;
+
 		case OCLASS_PUBLICATION:
 			{
 				char	   *pubname;
@@ -6118,6 +6256,8 @@ get_relkind_objtype(char relkind)
 			return OBJECT_MATVIEW;
 		case RELKIND_FOREIGN_TABLE:
 			return OBJECT_FOREIGN_TABLE;
+		case RELKIND_PROPGRAPH:
+			return OBJECT_PROPGRAPH;
 		case RELKIND_TOASTVALUE:
 			return OBJECT_TABLE;
 		default:

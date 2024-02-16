@@ -594,7 +594,7 @@ ExecCheckPermissions(List *rangeTable, List *rteperminfos,
 			 */
 			Assert(rte->rtekind == RTE_RELATION ||
 				   (rte->rtekind == RTE_SUBQUERY &&
-					rte->relkind == RELKIND_VIEW));
+					(rte->relkind == RELKIND_VIEW || rte->relkind == RELKIND_PROPGRAPH)));
 
 			(void) getRTEPermissionInfo(rteperminfos, rte);
 			/* Many-to-one mapping not allowed */

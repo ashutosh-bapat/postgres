@@ -50,6 +50,9 @@
 #include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
@@ -70,6 +73,7 @@
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
 #include "commands/policy.h"
+#include "commands/propgraphcmds.h"
 #include "commands/publicationcmds.h"
 #include "commands/seclabel.h"
 #include "commands/sequence.h"
@@ -1451,6 +1455,9 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_AM:
 		case OCLASS_AMOP:
 		case OCLASS_AMPROC:
+		case OCLASS_PROPGRAPH_ELEMENT:
+		case OCLASS_PROPGRAPH_LABEL:
+		case OCLASS_PROPGRAPH_PROPERTY:
 		case OCLASS_SCHEMA:
 		case OCLASS_TSPARSER:
 		case OCLASS_TSDICT:
@@ -2163,6 +2170,7 @@ find_expr_references_walker(Node *node,
 			switch (rte->rtekind)
 			{
 				case RTE_RELATION:
+				case RTE_GRAPH_TABLE:
 					add_object_address(RelationRelationId, rte->relid, 0,
 									   context->addrs);
 					break;
@@ -2899,6 +2907,15 @@ getObjectClass(const ObjectAddress *object)
 
 		case PolicyRelationId:
 			return OCLASS_POLICY;
+
+		case PropgraphElementRelationId:
+			return OCLASS_PROPGRAPH_ELEMENT;
+
+		case PropgraphLabelRelationId:
+			return OCLASS_PROPGRAPH_LABEL;
+
+		case PropgraphPropertyRelationId:
+			return OCLASS_PROPGRAPH_PROPERTY;
 
 		case PublicationNamespaceRelationId:
 			return OCLASS_PUBLICATION_NAMESPACE;

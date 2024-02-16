@@ -118,7 +118,10 @@ CATALOG_HEADERS := \
 	pg_publication_namespace.h \
 	pg_publication_rel.h \
 	pg_subscription.h \
-	pg_subscription_rel.h
+	pg_subscription_rel.h \
+	pg_propgraph_element.h \
+	pg_propgraph_label.h \
+	pg_propgraph_property.h
 
 GENERATED_HEADERS := $(CATALOG_HEADERS:%.h=%_d.h) schemapg.h syscache_ids.h syscache_info.h system_fk_info.h
 

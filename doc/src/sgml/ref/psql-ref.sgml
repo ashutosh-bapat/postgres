@@ -1218,7 +1218,7 @@ INSERT INTO tbl1 VALUES ($1, $2) \bind 'first value' 'second value' \g
 
         <listitem>
         <para>
-        For each relation (table, view, materialized view, index, sequence,
+        For each relation (table, view, materialized view, index, property graph, sequence,
         or foreign table)
         or composite type matching the
         <replaceable class="parameter">pattern</replaceable>, show all
@@ -1258,9 +1258,9 @@ INSERT INTO tbl1 VALUES ($1, $2) \bind 'first value' 'second value' \g
         <para>
         If <command>\d</command> is used without a
         <replaceable class="parameter">pattern</replaceable> argument, it is
-        equivalent to <command>\dtvmsE</command> which will show a list of
-        all visible tables, views, materialized views, sequences and
-        foreign tables.
+        equivalent to <command>\dtvmsEG</command> which will show a list of
+        all visible tables, views, materialized views, sequences,
+        foreign tables, and property graphs.
         This is purely a convenience measure.
         </para>
         </note>
@@ -1528,6 +1528,7 @@ INSERT INTO tbl1 VALUES ($1, $2) \bind 'first value' 'second value' \g
 
       <varlistentry id="app-psql-meta-command-de">
         <term><literal>\dE[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+        <term><literal>\dG[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
         <term><literal>\di[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
         <term><literal>\dm[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
         <term><literal>\ds[S+] [ <link linkend="app-psql-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
@@ -1536,10 +1537,10 @@ INSERT INTO tbl1 VALUES ($1, $2) \bind 'first value' 'second value' \g
 
         <listitem>
         <para>
-        In this group of commands, the letters <literal>E</literal>,
+        In this group of commands, the letters <literal>E</literal>, <literal>G</literal>,
         <literal>i</literal>, <literal>m</literal>, <literal>s</literal>,
         <literal>t</literal>, and <literal>v</literal>
-        stand for foreign table, index, materialized view,
+        stand for foreign table, index, property graph, materialized view,
         sequence, table, and view,
         respectively.
         You can specify any or all of

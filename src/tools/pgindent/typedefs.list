@@ -4054,3 +4054,22 @@ rfile
 ws_options
 ws_file_info
 PathKeyInfo
+
+# TODO
+AlterPropGraphElementKind
+AlterPropGraphStmt
+CreatePropGraphStmt
+FormData_pg_propgraph_element
+FormData_pg_propgraph_label
+FormData_pg_propgraph_property
+GraphElementPattern
+GraphElementPatternKind
+GraphLabelRef
+GraphPattern
+GraphPropertyRef
+GraphTableParseState
+PropGraphEdge
+PropGraphLabelAndProperties
+PropGraphProperties
+PropGraphVertex
+RangeGraphTable
