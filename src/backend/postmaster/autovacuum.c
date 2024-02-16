@@ -586,6 +586,7 @@ AutoVacLauncherMain(int argc, char *argv[])
 	 * regular maintenance from being executed.
 	 */
 	SetConfigOption("statement_timeout", "0", PGC_SUSET, PGC_S_OVERRIDE);
+	SetConfigOption("transaction_timeout", "0", PGC_SUSET, PGC_S_OVERRIDE);
 	SetConfigOption("lock_timeout", "0", PGC_SUSET, PGC_S_OVERRIDE);
 	SetConfigOption("idle_in_transaction_session_timeout", "0",
 					PGC_SUSET, PGC_S_OVERRIDE);
@@ -1410,12 +1411,8 @@ AutoVacWorkerFailed(void)
 static void
 avl_sigusr2_handler(SIGNAL_ARGS)
 {
-	int			save_errno = errno;
-
 	got_SIGUSR2 = true;
 	SetLatch(MyLatch);
-
-	errno = save_errno;
 }
 
 
@@ -1591,6 +1588,7 @@ AutoVacWorkerMain(int argc, char *argv[])
 	 * regular maintenance from being executed.
 	 */
 	SetConfigOption("statement_timeout", "0", PGC_SUSET, PGC_S_OVERRIDE);
+	SetConfigOption("transaction_timeout", "0", PGC_SUSET, PGC_S_OVERRIDE);
 	SetConfigOption("lock_timeout", "0", PGC_SUSET, PGC_S_OVERRIDE);
 	SetConfigOption("idle_in_transaction_session_timeout", "0",
 					PGC_SUSET, PGC_S_OVERRIDE);

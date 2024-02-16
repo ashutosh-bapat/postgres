@@ -2062,7 +2062,8 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
         <term><literal>FAILOVER [ <replaceable class="parameter">boolean</replaceable> ]</literal></term>
         <listitem>
          <para>
-          If true, the slot is enabled to be synced to the standbys.
+          If true, the slot is enabled to be synced to the standbys
+          so that logical replication can be resumed after failover.
           The default is false.
          </para>
         </listitem>
@@ -2162,7 +2163,8 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
         <term><literal>FAILOVER [ <replaceable class="parameter">boolean</replaceable> ]</literal></term>
         <listitem>
          <para>
-          If true, the slot is enabled to be synced to the standbys.
+          If true, the slot is enabled to be synced to the standbys
+          so that logical replication can be resumed after failover.
          </para>
         </listitem>
        </varlistentry>
@@ -3127,7 +3129,7 @@ psql "dbname=postgres replication=database" -c "IDENTIFY_SYSTEM;"
          <para>
           Files other than regular files and directories, such as symbolic
           links (other than for the directories listed above) and special
-          device files, are skipped.  (Symbolic links
+          device and operating system files, are skipped.  (Symbolic links
           in <filename>pg_tblspc</filename> are maintained.)
          </para>
         </listitem>
