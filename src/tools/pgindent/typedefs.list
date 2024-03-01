@@ -333,6 +333,8 @@ BuildAccumulator
 BuiltinScript
 BulkInsertState
 BulkInsertStateData
+BulkWriteBuffer
+BulkWriteState
 CACHESIGN
 CAC_state
 CCFastEqualFN
@@ -2018,6 +2020,7 @@ PendingFsyncEntry
 PendingRelDelete
 PendingRelSync
 PendingUnlinkEntry
+PendingWrite
 PendingWriteback
 PerLockTagEntry
 PerlInterpreter
@@ -3571,7 +3574,6 @@ pg_cryptohash_errno
 pg_cryptohash_type
 pg_ctype_cache
 pg_enc
-pg_enc2gettext
 pg_enc2name
 pg_encname
 pg_fe_sasl_mech
