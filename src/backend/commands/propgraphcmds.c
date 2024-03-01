@@ -686,8 +686,12 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		rel = table_open(vinfo->relid, NoLock);
 
-		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
-			elog(ERROR, "TODO");
+		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP && get_rel_persistence(pgrelid) != RELPERSISTENCE_TEMP)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("cannot add temporary element table to non-temporary property graph"),
+					 errdetail("Table \"%s\" is a temporary table.", get_rel_name(vinfo->relid)),
+					 parser_errposition(pstate, vertex->vtable->location)));
 
 		if (vertex->vtable->alias)
 			vinfo->aliasname = vertex->vtable->alias->aliasname;
@@ -722,8 +726,12 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		rel = table_open(einfo->relid, NoLock);
 
-		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP)
-			elog(ERROR, "TODO");
+		if (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP && get_rel_persistence(pgrelid) != RELPERSISTENCE_TEMP)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					 errmsg("cannot add temporary element table to non-temporary property graph"),
+					 errdetail("Table \"%s\" is a temporary table.", get_rel_name(einfo->relid)),
+					 parser_errposition(pstate, edge->etable->location)));
 
 		if (edge->etable->alias)
 			einfo->aliasname = edge->etable->alias->aliasname;
