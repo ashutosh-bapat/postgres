@@ -58,8 +58,14 @@ struct element_info
 };
 
 
-static ArrayType *propgraph_element_get_key(ParseState *pstate, const List *key_clause, int location, Relation element_rel);
+static ArrayType *propgraph_element_get_key(ParseState *pstate, const List *keycols, Relation element_rel,
+											const char *aliasname, int location);
+static void propgraph_edge_get_ref_keys(ParseState *pstate, const List *keycols, const List *refcols,
+										Relation edge_rel, Relation ref_rel,
+										const char *aliasname, int location, const char *type,
+										ArrayType **outkey, ArrayType **outref);
 static ArrayType *array_from_column_list(ParseState *pstate, const List *colnames, int location, Relation element_rel);
+static ArrayType *array_from_attnums(int numattrs, const AttrNumber *attnums);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
@@ -117,7 +123,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 					 errmsg("alias \"%s\" used more than once as element table", vinfo->aliasname),
 					 parser_errposition(pstate, vertex->location)));
 
-		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
+		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, rel, vinfo->aliasname, vertex->location);
 
 		vinfo->labels = vertex->labels;
 
@@ -160,7 +166,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 					 errmsg("alias \"%s\" used more than once as element table", einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		einfo->key = propgraph_element_get_key(pstate, edge->ekey, edge->location, rel);
+		einfo->key = propgraph_element_get_key(pstate, edge->ekey, rel, einfo->aliasname, edge->location);
 
 		einfo->srcvertex = edge->esrcvertex;
 		einfo->destvertex = edge->edestvertex;
@@ -193,30 +199,15 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 							edge->edestvertex, einfo->aliasname),
 					 parser_errposition(pstate, edge->location)));
 
-		if (!edge->esrckey || !edge->esrcvertexcols || !edge->edestkey || !edge->edestvertexcols)
-			elog(ERROR, "TODO foreign key support");
-
 		srcrel = table_open(srcrelid, NoLock);
 		destrel = table_open(destrelid, NoLock);
 
-		if (list_length(edge->esrckey) != list_length(edge->esrcvertexcols))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("mismatching number of columns in source vertex definition of edge \"%s\"",
-							einfo->aliasname),
-					 parser_errposition(pstate, edge->location)));
-
-		if (list_length(edge->edestkey) != list_length(edge->edestvertexcols))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("mismatching number of columns in destination vertex definition of edge \"%s\"",
-							einfo->aliasname),
-					 parser_errposition(pstate, edge->location)));
-
-		einfo->srckey = array_from_column_list(pstate, edge->esrckey, edge->location, rel);
-		einfo->srcref = array_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
-		einfo->destkey = array_from_column_list(pstate, edge->edestkey, edge->location, rel);
-		einfo->destref = array_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+		propgraph_edge_get_ref_keys(pstate, edge->esrckey, edge->esrcvertexcols, rel, srcrel,
+									einfo->aliasname, edge->location, "SOURCE",
+									&einfo->srckey, &einfo->srcref);
+		propgraph_edge_get_ref_keys(pstate, edge->edestkey, edge->edestvertexcols, rel, destrel,
+									einfo->aliasname, edge->location, "DESTINATION",
+									&einfo->destkey, &einfo->destref);
 
 		/* TODO: various consistency checks */
 
@@ -292,7 +283,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
  * relation is used.  The return value is an array of column numbers.
  */
 static ArrayType *
-propgraph_element_get_key(ParseState *pstate, const List *key_clause, int location, Relation element_rel)
+propgraph_element_get_key(ParseState *pstate, const List *key_clause, Relation element_rel, const char *aliasname, int location)
 {
 	ArrayType  *a;
 
@@ -302,21 +293,15 @@ propgraph_element_get_key(ParseState *pstate, const List *key_clause, int locati
 
 		if (!pkidx)
 			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("element table key must be specified for table without primary key"),
-					 parser_errposition(pstate, location)));
+					errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					errmsg("no key specified and no suitable primary key exists for definition of element \"%s\"", aliasname),
+					parser_errposition(pstate, location));
 		else
 		{
 			Relation	indexDesc;
-			int			numattrs;
-			Datum	   *attnumsd;
 
 			indexDesc = index_open(pkidx, AccessShareLock);
-			numattrs = indexDesc->rd_index->indkey.dim1;
-			attnumsd = palloc_array(Datum, numattrs);
-			for (int i = 0; i < numattrs; i++)
-				attnumsd[i] = Int16GetDatum(indexDesc->rd_index->indkey.values[i]);
-			a = construct_array_builtin(attnumsd, numattrs, INT2OID);
+			a = array_from_attnums(indexDesc->rd_index->indkey.dim1, indexDesc->rd_index->indkey.values);
 			index_close(indexDesc, NoLock);
 		}
 	}
@@ -326,6 +311,73 @@ propgraph_element_get_key(ParseState *pstate, const List *key_clause, int locati
 	}
 
 	return a;
+}
+
+/*
+ * Process the source or destination link of an edge.
+ *
+ * keycols and refcols are column names representing the local and referenced
+ * (vertex) columns.  If they are both NIL, a matching foreign key is looked
+ * up.
+ *
+ * edge_rel and ref_rel are the local and referenced element tables.
+ *
+ * aliasname, location, and type are for error messages.  type is either
+ * "SOURCE" or "DESTINATION".
+ *
+ * The outputs are arrays of column numbers in outkey and outref.
+ */
+static void
+propgraph_edge_get_ref_keys(ParseState *pstate, const List *keycols, const List *refcols,
+							Relation edge_rel, Relation ref_rel,
+							const char *aliasname, int location, const char *type,
+							ArrayType **outkey, ArrayType **outref)
+{
+	Assert((keycols && refcols) || (!keycols && !refcols));
+
+	if (keycols)
+	{
+		if (list_length(keycols) != list_length(refcols))
+			ereport(ERROR,
+					errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+					errmsg("mismatching number of columns in %s vertex definition of edge \"%s\"", type, aliasname),
+					parser_errposition(pstate, location));
+
+		*outkey = array_from_column_list(pstate, keycols, location, edge_rel);
+		*outref = array_from_column_list(pstate, refcols, location, ref_rel);
+	}
+	else
+	{
+		List	   *fkeys;
+		ListCell   *lc;
+		int			count = 0;
+		ForeignKeyCacheInfo *fk = NULL;
+
+		fkeys = RelationGetFKeyList(edge_rel);
+		foreach(lc, fkeys)
+		{
+			fk = lfirst_node(ForeignKeyCacheInfo, lc);
+
+			if (fk->confrelid == RelationGetRelid(ref_rel))
+				count++;
+		}
+
+		if (count == 0)
+			ereport(ERROR,
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("no %s key specified and no suitable foreign key exists for definition of edge \"%s\"", type, aliasname),
+					parser_errposition(pstate, location));
+		else if (count > 1)
+			ereport(ERROR,
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("more than one suitable foreign key exists for %s key of edge \"%s\"", type, aliasname),
+					parser_errposition(pstate, location));
+
+		Assert(fk);
+
+		*outkey = array_from_attnums(fk->nkeys, fk->conkey);
+		*outref = array_from_attnums(fk->nkeys, fk->confkey);
+	}
 }
 
 /*
@@ -371,6 +423,19 @@ array_from_column_list(ParseState *pstate, const List *colnames, int location, R
 						 parser_errposition(pstate, location)));
 		}
 	}
+
+	return construct_array_builtin(attnumsd, numattrs, INT2OID);
+}
+
+static ArrayType *
+array_from_attnums(int numattrs, const AttrNumber *attnums)
+{
+	Datum	   *attnumsd;
+
+	attnumsd = palloc_array(Datum, numattrs);
+
+	for (int i = 0; i < numattrs; i++)
+		attnumsd[i] = Int16GetDatum(attnums[i]);
 
 	return construct_array_builtin(attnumsd, numattrs, INT2OID);
 }
@@ -698,7 +763,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		else
 			vinfo->aliasname = vertex->vtable->relname;
 
-		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, vertex->location, rel);
+		vinfo->key = propgraph_element_get_key(pstate, vertex->vkey, rel, vinfo->aliasname, vertex->location);
 
 		vinfo->labels = vertex->labels;
 
@@ -738,13 +803,10 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		else
 			einfo->aliasname = edge->etable->relname;
 
-		einfo->key = propgraph_element_get_key(pstate, edge->ekey, edge->location, rel);
+		einfo->key = propgraph_element_get_key(pstate, edge->ekey, rel, einfo->aliasname, edge->location);
 
 		einfo->srcvertexid = get_vertex_oid(pstate, pgrelid, edge->esrcvertex, edge->location);
 		einfo->destvertexid = get_vertex_oid(pstate, pgrelid, edge->edestvertex, edge->location);
-
-		if (!edge->esrckey || !edge->esrcvertexcols || !edge->edestkey || !edge->edestvertexcols)
-			elog(ERROR, "TODO foreign key support");
 
 		srcrelid = get_element_relid(einfo->srcvertexid);
 		destrelid = get_element_relid(einfo->destvertexid);
@@ -752,24 +814,12 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		srcrel = table_open(srcrelid, AccessShareLock);
 		destrel = table_open(destrelid, AccessShareLock);
 
-		if (list_length(edge->esrckey) != list_length(edge->esrcvertexcols))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("mismatching number of columns in source vertex definition of edge \"%s\"",
-							einfo->aliasname),
-					 parser_errposition(pstate, edge->location)));
-
-		if (list_length(edge->edestkey) != list_length(edge->edestvertexcols))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("mismatching number of columns in destination vertex definition of edge \"%s\"",
-							einfo->aliasname),
-					 parser_errposition(pstate, edge->location)));
-
-		einfo->srckey = array_from_column_list(pstate, edge->esrckey, edge->location, rel);
-		einfo->srcref = array_from_column_list(pstate, edge->esrcvertexcols, edge->location, srcrel);
-		einfo->destkey = array_from_column_list(pstate, edge->edestkey, edge->location, rel);
-		einfo->destref = array_from_column_list(pstate, edge->edestvertexcols, edge->location, destrel);
+		propgraph_edge_get_ref_keys(pstate, edge->esrckey, edge->esrcvertexcols, rel, srcrel,
+									einfo->aliasname, edge->location, "SOURCE",
+									&einfo->srckey, &einfo->srcref);
+		propgraph_edge_get_ref_keys(pstate, edge->edestkey, edge->edestvertexcols, rel, destrel,
+									einfo->aliasname, edge->location, "DESTINATION",
+									&einfo->destkey, &einfo->destref);
 
 		/* TODO: various consistency checks */
 
