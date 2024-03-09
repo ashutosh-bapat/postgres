@@ -841,11 +841,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token		MODE_PLPGSQL_ASSIGN2
 %token		MODE_PLPGSQL_ASSIGN3
 
- /*
-  * FIXME: The brace characters are assigned token symbols because if we
-  * mention literal braces in the rules then the ecpg parser assembly breaks.
-  */
-%token		LEFT_BRACE RIGHT_BRACE
 
 /* Precedence: lowest to highest */
 %left		UNION EXCEPT
@@ -17313,10 +17308,10 @@ opt_is_label_expression:
  */
 
 opt_graph_pattern_quantifier:
-			LEFT_BRACE Iconst RIGHT_BRACE				{ $$ = list_make2_int($2, $2); }
-			| LEFT_BRACE ',' Iconst RIGHT_BRACE			{ $$ = list_make2_int(0, $3); }
-			| LEFT_BRACE Iconst ',' Iconst RIGHT_BRACE	{ $$ = list_make2_int($2, $4); }
-			| /*EMPTY*/									{ $$ = NULL; }
+			'{' Iconst '}'					{ $$ = list_make2_int($2, $2); }
+			| '{' ',' Iconst '}'			{ $$ = list_make2_int(0, $3); }
+			| '{' Iconst ',' Iconst '}'		{ $$ = list_make2_int($2, $4); }
+			| /*EMPTY*/						{ $$ = NULL; }
 		;
 
 /*

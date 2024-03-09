@@ -920,16 +920,6 @@ other			.
 					return yytext[0];
 				}
 
-\{				{
-					SET_YYLLOC();
-					return LEFT_BRACE;
-				}
-
-\}				{
-					SET_YYLLOC();
-					return RIGHT_BRACE;
-				}
-
 {operator}		{
 					/*
 					 * Check for embedded slash-star or dash-dash; those
