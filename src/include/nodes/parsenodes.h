@@ -976,6 +976,10 @@ typedef enum GraphElementPatternKind
 	PAREN_EXPR,
 } GraphElementPatternKind;
 
+#define IS_EDGE_PATTERN(kind) ((kind) == EDGE_PATTERN_ANY || \
+							   (kind) == EDGE_PATTERN_RIGHT || \
+							   (kind) == EDGE_PATTERN_LEFT)
+
 typedef struct GraphElementPattern
 {
 	NodeTag		type;
@@ -986,6 +990,13 @@ typedef struct GraphElementPattern
 	Node	   *whereClause;
 	List	   *quantifier;
 	int			location;
+ 	/*
+	 * TODO: Shold this be part of this structure of GraphPathElement? If
+ 	 * placed in the latter it would duplicate the list and also the list won't
+ 	 * have the labels not associated with given element table. Yet the list
+ 	 * if only available after Path pattern has been converted into paths.
+	 */
+	List	   *labels;	/* Resolved labels. */
 } GraphElementPattern;
 
 /****************************************************************************

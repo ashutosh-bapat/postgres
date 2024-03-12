@@ -28,5 +28,7 @@ extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 
 Node	   *transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern);
 List *get_element_labelids(Oid graphid, Oid eleoid);
+List *get_label_property_names(const Oid graphid, const char *label_name, Oid labelid);
+Oid get_property_type(Oid graphid, const char *propname);
 
 #endif							/* PARSE_GRAPHTABLE_H */

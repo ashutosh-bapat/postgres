@@ -29,6 +29,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
+#include "parser/parse_graphtable.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -68,7 +69,6 @@ static void insert_property_record(ParseState *pstate, Oid graphid, Oid labeloid
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
-static List *get_label_property_names(const Oid graphid, const char *label_name, Oid labelid);
 
 
 /*
@@ -1087,72 +1087,4 @@ get_element_relid(Oid peid)
 	ReleaseSysCache(tuple);
 
 	return pgerelid;
-}
-
-/*
- * Return the names of properties associated with the given label name.
- *
- * There may be many labels with the same name in a given property graph, but all of them need to have the same number of properties with the same names and data types. Hence properties associated with any label may be returned.
- */
-static List *
-get_label_property_names(const Oid graphid, const char *label_name, Oid labelid)
-{
-	Relation	rel;
-	SysScanDesc scan;
-	ScanKeyData key[2];
-	HeapTuple	tup;
-	List	   *result = NIL;
-	Oid			ref_labelid = InvalidOid;
-
-	/*
-	 * Find a reference label to fetch label properties. The reference label
-	 * should be some label other than the one being modified.
-	 */
-	rel = table_open(PropgraphLabelRelationId, AccessShareLock);
-	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_label_pglpgid,
-				BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(graphid));
-	ScanKeyInit(&key[1],
-				Anum_pg_propgraph_label_pgllabel,
-				BTEqualStrategyNumber,
-				F_NAMEEQ, CStringGetDatum(label_name));
-
-	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId,
-							  true, NULL, 2, key);
-
-	if (HeapTupleIsValid(tup = systable_getnext(scan)))
-	{
-		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tup);
-
-		if (label->oid != labelid)
-			ref_labelid = label->oid;
-	}
-	systable_endscan(scan);
-	table_close(rel, AccessShareLock);
-
-	if (!OidIsValid(ref_labelid))
-		return NIL;
-
-	/* Get all the properties of the reference label */
-	rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
-
-	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_property_pgplabelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(ref_labelid));
-
-	scan = systable_beginscan(rel, PropgraphPropertyNameIndexId, true, NULL, 1, key);
-
-	while ((tup = systable_getnext(scan)))
-	{
-		Form_pg_propgraph_property pgpform = (Form_pg_propgraph_property) GETSTRUCT(tup);
-
-		result = lappend(result, NameStr(pgpform->pgpname));
-	}
-
-	systable_endscan(scan);
-	table_close(rel, AccessShareLock);
-
-	return result;
 }
