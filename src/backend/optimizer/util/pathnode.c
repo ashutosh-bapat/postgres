@@ -379,10 +379,20 @@ set_cheapest(RelOptInfo *parent_rel)
 		cheapest_total_path = best_param_path;
 	Assert(cheapest_total_path != NULL);
 
-	parent_rel->cheapest_startup_path = cheapest_startup_path;
-	parent_rel->cheapest_total_path = cheapest_total_path;
+	/* TODO: If these paths were set earlier, they need to unlinked. */
+	if (cheapest_startup_path)
+		link_path(&parent_rel->cheapest_startup_path, cheapest_startup_path);
+	if (cheapest_total_path)
+		link_path(&parent_rel->cheapest_total_path, cheapest_total_path);
 	parent_rel->cheapest_unique_path = NULL;	/* computed only if needed */
 	parent_rel->cheapest_parameterized_paths = parameterized_paths;
+	foreach (p, parameterized_paths)
+	{
+		Path *ppath = lfirst(p);
+
+		/* TODO: need a better way to link path into a list. */
+		ppath->ref_count++;
+	}
 }
 
 /*
@@ -1095,6 +1105,15 @@ free_path(Path *path)
 
 					unlink_path(&ppath->subpath);
 				}
+			}
+			break;
+		
+		case T_ForeignScan:
+			{
+				ForeignPath *fpath = (ForeignPath *) path;
+
+				if (fpath->fdw_outerpath)
+					unlink_path(&fpath->fdw_outerpath);
 			}
 			break;
 
@@ -2488,7 +2507,8 @@ create_foreignscan_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->path.total_cost = total_cost;
 	pathnode->path.pathkeys = pathkeys;
 
-	link_path(&pathnode->fdw_outerpath, fdw_outerpath);
+	if (fdw_outerpath)
+		link_path(&pathnode->fdw_outerpath, fdw_outerpath);
 	pathnode->fdw_restrictinfo = fdw_restrictinfo;
 	pathnode->fdw_private = fdw_private;
 
@@ -2542,7 +2562,8 @@ create_foreign_join_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->path.total_cost = total_cost;
 	pathnode->path.pathkeys = pathkeys;
 
-	link_path(&pathnode->fdw_outerpath, fdw_outerpath);
+	if (fdw_outerpath)
+		link_path(&pathnode->fdw_outerpath, fdw_outerpath);
 	pathnode->fdw_restrictinfo = fdw_restrictinfo;
 	pathnode->fdw_private = fdw_private;
 
@@ -2591,7 +2612,8 @@ create_foreign_upper_path(PlannerInfo *root, RelOptInfo *rel,
 	pathnode->path.total_cost = total_cost;
 	pathnode->path.pathkeys = pathkeys;
 
-	link_path(&pathnode->fdw_outerpath, fdw_outerpath);
+	if (fdw_outerpath)
+		link_path(&pathnode->fdw_outerpath, fdw_outerpath);
 	pathnode->fdw_restrictinfo = fdw_restrictinfo;
 	pathnode->fdw_private = fdw_private;
 

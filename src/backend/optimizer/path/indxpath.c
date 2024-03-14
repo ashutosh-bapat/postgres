@@ -1268,6 +1268,7 @@ generate_bitmap_or_paths(PlannerInfo *root, RelOptInfo *rel,
 		}
 	}
 
+	/* TODO: Increment reference of each path */
 	return result;
 }
 
