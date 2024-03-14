@@ -1248,6 +1248,8 @@ postgresGetForeignPlan(PlannerInfo *root,
 	bool		has_limit = false;
 	ListCell   *lc;
 
+	elog(INFO, "foreignrel: %s", nodeToString(foreignrel));
+
 	/*
 	 * Get FDW private data created by postgresGetForeignUpperPaths(), if any.
 	 */
