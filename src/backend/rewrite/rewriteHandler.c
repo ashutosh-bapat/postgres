@@ -2041,7 +2041,6 @@ fireRIRrules(Query *parsetree, List *activeRIRs)
 		if (rte->rtekind == RTE_GRAPH_TABLE)
 		{
 			parsetree = rewriteGraphTable(parsetree, rt_index);
-			continue;
 		}
 
 		/*

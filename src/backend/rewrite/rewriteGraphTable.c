@@ -19,6 +19,8 @@
 #include "catalog/pg_propgraph_property.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_node.h"
+#include "parser/parse_relation.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteGraphTable.h"
 #include "rewrite/rewriteHandler.h"
@@ -85,35 +87,29 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		if (IsA(gep->labelexpr, GraphLabelRef))
 		{
 			GraphLabelRef *glr = castNode(GraphLabelRef, gep->labelexpr);
-			RangeTblEntry *r;
 			Oid			elid;
 			Oid			relid;
-			RTEPermissionInfo *rpi;
+			Relation	rel;
+			ParseNamespaceItem *pni;
 			RangeTblRef *rtr;
 
-			r = makeNode(RangeTblEntry);
-			r->rtekind = RTE_RELATION;
 			elid = linitial_oid(get_elements_for_label(rte->relid, glr->labelname));
 			element_ids = lappend_oid(element_ids, elid);
 			relid = get_table_for_element(elid);
-			labelid = get_labelid(rte->relid, glr->labelname);
-			r->relid = relid;
-			r->relkind = get_rel_relkind(relid);
-			r->rellockmode = AccessShareLock;
-			r->inh = true;
-			newsubquery->rtable = lappend(newsubquery->rtable, r);
 
-			rpi = makeNode(RTEPermissionInfo);
-			rpi->relid = relid;
-			rpi->checkAsUser = 0;
-			rpi->requiredPerms = ACL_SELECT;
-			newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, rpi);
+			rel = table_open(relid, AccessShareLock);
+			pni = addRangeTableEntryForRelation(make_parsestate(NULL), rel, AccessShareLock, NULL, true, false);
+			table_close(rel, NoLock);
 
-			r->perminfoindex = list_length(newsubquery->rteperminfos);
+			newsubquery->rtable = lappend(newsubquery->rtable, pni->p_rte);
+			newsubquery->rteperminfos = lappend(newsubquery->rteperminfos, pni->p_perminfo);
+			pni->p_rte->perminfoindex = list_length(newsubquery->rteperminfos);
 
 			rtr = makeNode(RangeTblRef);
 			rtr->rtindex = list_length(newsubquery->rtable);
 			fromlist = lappend(fromlist, rtr);
+
+			labelid = get_labelid(rte->relid, glr->labelname);
 		}
 		else
 			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(gep->labelexpr));

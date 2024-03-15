@@ -92,5 +92,30 @@ CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH 
 
 SELECT pg_get_viewdef('customers_us'::regclass);
 
+-- test view/graph nesting
+
+CREATE VIEW customers_view AS SELECT customer_id, 'redacted' || customer_id AS name_redacted, address FROM customers;
+SELECT * FROM customers;
+SELECT * FROm customers_view;
+
+CREATE PROPERTY GRAPH myshop2
+    VERTEX TABLES (
+        products,
+        customers_view KEY (customer_id) LABEL customers,
+        orders
+    )
+    EDGE TABLES (
+        order_items KEY (order_items_id)
+            SOURCE KEY (order_id) REFERENCES orders (order_id)
+            DESTINATION KEY (product_no) REFERENCES products (product_no),
+        customer_orders KEY (customer_orders_id)
+            SOURCE KEY (customer_id) REFERENCES customers_view (customer_id)
+            DESTINATION KEY (order_id) REFERENCES orders (order_id)
+    );
+
+CREATE VIEW customers_us_redacted AS SELECT * FROM GRAPH_TABLE (myshop2 MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name_redacted AS customer_name_redacted));
+
+SELECT * FROM customers_us_redacted;
+
 -- leave for pg_upgrade/pg_dump tests
 --DROP SCHEMA graph_table_tests CASCADE;
