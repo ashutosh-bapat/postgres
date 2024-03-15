@@ -4035,36 +4035,99 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 			{
 				HeapTuple	tup;
 				Form_pg_propgraph_element pgeform;
-				StringInfoData rel;
 
-				tup = SearchSysCache1(PROPGRAPHELOID,
-									  ObjectIdGetDatum(object->objectId));
+				tup = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(object->objectId));
 				if (!HeapTupleIsValid(tup))
 					elog(ERROR, "cache lookup failed for property graph element %u",
 						 object->objectId);
 
 				pgeform = (Form_pg_propgraph_element) GETSTRUCT(tup);
 
-				initStringInfo(&rel);
-				getRelationDescription(&rel, pgeform->pgepgid, false);
+				if (pgeform->pgekind == PGEKIND_VERTEX)
+					/* translator: followed by, e.g., "property graph %s" */
+					appendStringInfo(&buffer, _("vertex %s of "), NameStr(pgeform->pgealias));
+				else if (pgeform->pgekind == PGEKIND_EDGE)
+					/* translator: followed by, e.g., "property graph %s" */
+					appendStringInfo(&buffer, _("edge %s of "), NameStr(pgeform->pgealias));
+				else
+					appendStringInfo(&buffer, "??? element %s of ", NameStr(pgeform->pgealias));
+				getRelationDescription(&buffer, pgeform->pgepgid, false);
 
-				/* translator: second %s is, e.g., "property graph %s" */
-				appendStringInfo(&buffer, _("element %s in %s"),
-								 NameStr(pgeform->pgealias), rel.data);
-				pfree(rel.data);
 				ReleaseSysCache(tup);
 				break;
 			}
 
 		case OCLASS_PROPGRAPH_LABEL:
 			{
-				appendStringInfo(&buffer, "label %u TODO", object->objectId);
+				Relation	rel;
+				SysScanDesc scan;
+				ScanKeyData key[1];
+				HeapTuple	tuple;
+				Form_pg_propgraph_label pglform;
+
+				rel = table_open(PropgraphLabelRelationId, AccessShareLock);
+				ScanKeyInit(&key[0],
+							Anum_pg_propgraph_label_oid,
+							BTEqualStrategyNumber, F_OIDEQ,
+							ObjectIdGetDatum(object->objectId));
+
+				scan = systable_beginscan(rel, PropgraphLabelObjectIndexId, true, NULL, 1, key);
+				tuple = systable_getnext(scan);
+				if (!HeapTupleIsValid(tuple))
+				{
+					if (!missing_ok)
+						elog(ERROR, "could not find tuple for label %u", object->objectId);
+
+					systable_endscan(scan);
+					table_close(rel, AccessShareLock);
+					break;
+				}
+
+				pglform = (Form_pg_propgraph_label) GETSTRUCT(tuple);
+
+				/* translator: followed by, e.g., "property graph %s" */
+				appendStringInfo(&buffer, _("label %s of "), NameStr(pglform->pgllabel));
+				getRelationDescription(&buffer, pglform->pglpgid, false);
+
+				systable_endscan(scan);
+				table_close(rel, AccessShareLock);
 				break;
 			}
 
 		case OCLASS_PROPGRAPH_PROPERTY:
 			{
-				appendStringInfo(&buffer, "property %u TODO", object->objectId);
+				Relation	rel;
+				SysScanDesc scan;
+				ScanKeyData key[1];
+				HeapTuple	tuple;
+				Form_pg_propgraph_property pgpform;
+
+				rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
+				ScanKeyInit(&key[0],
+							Anum_pg_propgraph_property_oid,
+							BTEqualStrategyNumber, F_OIDEQ,
+							ObjectIdGetDatum(object->objectId));
+
+				scan = systable_beginscan(rel, PropgraphPropertyObjectIndexId, true, NULL, 1, key);
+				tuple = systable_getnext(scan);
+				if (!HeapTupleIsValid(tuple))
+				{
+					if (!missing_ok)
+						elog(ERROR, "could not find tuple for property %u", object->objectId);
+
+					systable_endscan(scan);
+					table_close(rel, AccessShareLock);
+					break;
+				}
+
+				pgpform = (Form_pg_propgraph_property) GETSTRUCT(tuple);
+
+				/* translator: followed by, e.g., "property graph %s" */
+				appendStringInfo(&buffer, _("property %s of "), NameStr(pgpform->pgpname));
+				getRelationDescription(&buffer, pgpform->pgppgid, false);
+
+				systable_endscan(scan);
+				table_close(rel, AccessShareLock);
 				break;
 			}
 

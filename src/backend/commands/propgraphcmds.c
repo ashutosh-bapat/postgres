@@ -46,11 +46,13 @@ struct element_info
 
 	char	   *srcvertex;
 	Oid			srcvertexid;
+	Oid			srcrelid;
 	ArrayType  *srckey;
 	ArrayType  *srcref;
 
 	char	   *destvertex;
 	Oid			destvertexid;
+	Oid			destrelid;
 	ArrayType  *destkey;
 	ArrayType  *destref;
 
@@ -69,7 +71,7 @@ static ArrayType *array_from_attnums(int numattrs, const AttrNumber *attnums);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
-static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr);
+static void insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
@@ -263,14 +265,22 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 			struct element_info *vinfo = lfirst(lc2);
 
 			if (strcmp(vinfo->aliasname, einfo->srcvertex) == 0)
+			{
 				einfo->srcvertexid = vinfo->elementid;
+				einfo->srcrelid = vinfo->relid;
+			}
 			if (strcmp(vinfo->aliasname, einfo->destvertex) == 0)
+			{
 				einfo->destvertexid = vinfo->elementid;
+				einfo->destrelid = vinfo->relid;
+			}
 			if (einfo->srcvertexid && einfo->destvertexid)
 				break;
 		}
 		Assert(einfo->srcvertexid);
 		Assert(einfo->destvertexid);
+		Assert(einfo->srcrelid);
+		Assert(einfo->destrelid);
 		insert_element_record(pgaddress, einfo);
 	}
 
@@ -440,6 +450,23 @@ array_from_attnums(int numattrs, const AttrNumber *attnums)
 	return construct_array_builtin(attnumsd, numattrs, INT2OID);
 }
 
+static void
+array_of_attnums_to_objectaddrs(Oid relid, ArrayType *arr, ObjectAddresses *addrs)
+{
+	Datum	   *attnumsd;
+	int			numattrs;
+
+	deconstruct_array_builtin(arr, INT2OID, &attnumsd, NULL, &numattrs);
+
+	for (int i = 0; i < numattrs; i++)
+	{
+		ObjectAddress referenced;
+
+		ObjectAddressSubSet(referenced, RelationRelationId, relid, DatumGetInt16(attnumsd[i]));
+		add_exact_object_address(&referenced, addrs);
+	}
+}
+
 /*
  * Insert a record for an element into the pg_propgraph_element catalog.  Also
  * inserts labels and properties into their respective catalogs.
@@ -456,6 +483,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	HeapTuple	tup;
 	ObjectAddress myself;
 	ObjectAddress referenced;
+	ObjectAddresses *addrs;
 
 	rel = table_open(PropgraphElementRelationId, RowExclusiveLock);
 
@@ -497,22 +525,32 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 	/* Add dependency on the property graph */
 	recordDependencyOn(&myself, &pgaddress, DEPENDENCY_AUTO);
 
+	addrs = new_object_addresses();
+
 	/* Add dependency on the relation */
 	ObjectAddressSet(referenced, RelationRelationId, einfo->relid);
-	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	add_exact_object_address(&referenced, addrs);
+	array_of_attnums_to_objectaddrs(einfo->relid, einfo->key, addrs);
 
 	/* Add dependencies on vertices */
-	/* TODO: columns */
 	if (einfo->srcvertexid)
 	{
 		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->srcvertexid);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
+		array_of_attnums_to_objectaddrs(einfo->relid, einfo->srckey, addrs);
+		array_of_attnums_to_objectaddrs(einfo->srcrelid, einfo->srcref, addrs);
 	}
 	if (einfo->destvertexid)
 	{
 		ObjectAddressSet(referenced, PropgraphElementRelationId, einfo->destvertexid);
-		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+		add_exact_object_address(&referenced, addrs);
+		array_of_attnums_to_objectaddrs(einfo->relid, einfo->destkey, addrs);
+		array_of_attnums_to_objectaddrs(einfo->destrelid, einfo->destref, addrs);
 	}
+
+	/* TODO: dependencies on equality operators, like for foreign keys */
+
+	record_object_address_dependencies(&myself, addrs, DEPENDENCY_NORMAL);
 
 	table_close(rel, NoLock);
 
@@ -575,7 +613,8 @@ insert_label_record(Oid graphid, Oid peoid, const char *label)
 
 	ObjectAddressSet(myself, PropgraphLabelRelationId, labeloid);
 
-	/* Add dependency on the property graph element */
+	ObjectAddressSet(referenced, RelationRelationId, graphid);
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 	ObjectAddressSet(referenced, PropgraphElementRelationId, peoid);
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 
@@ -670,7 +709,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 	{
 		TargetEntry *te = lfirst_node(TargetEntry, lc);
 
-		insert_property_record(graphid, labeloid, te->resname, te->expr);
+		insert_property_record(graphid, labeloid, pgerelid, te->resname, te->expr);
 	}
 }
 
@@ -678,7 +717,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
  * Insert one record for a property into the pg_propgraph_property catalog.
  */
 static void
-insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr)
+insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr)
 {
 	Relation	rel;
 	NameData	propnamedata;
@@ -706,9 +745,11 @@ insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Ex
 
 	ObjectAddressSet(myself, PropgraphPropertyRelationId, propoid);
 
-	/* Add dependency on the property graph label */
+	ObjectAddressSet(referenced, RelationRelationId, graphid);
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 	ObjectAddressSet(referenced, PropgraphLabelRelationId, labeloid);
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+	recordDependencyOnSingleRelExpr(&myself, (Node *) copyObject(expr), pgerelid, DEPENDENCY_NORMAL, DEPENDENCY_NORMAL, false);
 
 	table_close(rel, NoLock);
 }
@@ -779,8 +820,6 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		PropGraphEdge *edge = lfirst_node(PropGraphEdge, lc);
 		struct element_info *einfo;
 		Relation	rel;
-		Oid			srcrelid;
-		Oid			destrelid;
 		Relation	srcrel;
 		Relation	destrel;
 
@@ -808,11 +847,11 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		einfo->srcvertexid = get_vertex_oid(pstate, pgrelid, edge->esrcvertex, edge->location);
 		einfo->destvertexid = get_vertex_oid(pstate, pgrelid, edge->edestvertex, edge->location);
 
-		srcrelid = get_element_relid(einfo->srcvertexid);
-		destrelid = get_element_relid(einfo->destvertexid);
+		einfo->srcrelid = get_element_relid(einfo->srcvertexid);
+		einfo->destrelid = get_element_relid(einfo->destvertexid);
 
-		srcrel = table_open(srcrelid, AccessShareLock);
-		destrel = table_open(destrelid, AccessShareLock);
+		srcrel = table_open(einfo->srcrelid, AccessShareLock);
+		destrel = table_open(einfo->destrelid, AccessShareLock);
 
 		propgraph_edge_get_ref_keys(pstate, edge->esrckey, edge->esrcvertexcols, rel, srcrel,
 									einfo->aliasname, edge->location, "SOURCE",

@@ -22,6 +22,23 @@ CREATE PROPERTY GRAPH g2
             SOURCE KEY (a) REFERENCES t1 (a)
             DESTINATION KEY (x, t) REFERENCES t3 (x, y)
     );
+-- test dependencies/object descriptions
+DROP TABLE t1;  -- fail
+ERROR:  cannot drop table t1 because other objects depend on it
+DETAIL:  vertex t1 of property graph g2 depends on table t1
+edge e1 of property graph g2 depends on table t1
+edge e2 of property graph g2 depends on table t1
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ALTER TABLE t1 DROP COLUMN b;  -- non-key column; fail
+ERROR:  cannot drop column b of table t1 because other objects depend on it
+DETAIL:  property b of property graph g2 depends on column b of table t1
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ALTER TABLE t1 DROP COLUMN a;  -- key column; fail
+ERROR:  cannot drop column a of table t1 because other objects depend on it
+DETAIL:  vertex t1 of property graph g2 depends on column a of table t1
+edge e1 of property graph g2 depends on column a of table t1
+edge e2 of property graph g2 depends on column a of table t1
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 -- like g2 but assembled with ALTER
 CREATE PROPERTY GRAPH g3;
 ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL);
@@ -36,11 +53,11 @@ ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 DROP LABEL t3l3x;  -- error
 ERROR:  property graph "g3" element "t3" has no label "t3l3x"
 ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 DROP LABEL t3l3;
 ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2);  -- fail (TODO: dubious error message)
-ERROR:  cannot drop element t2 in property graph g3 because other objects depend on it
-DETAIL:  element e1 in property graph g3 depends on element t2 in property graph g3
+ERROR:  cannot drop vertex t2 of property graph g3 because other objects depend on it
+DETAIL:  edge e1 of property graph g3 depends on vertex t2 of property graph g3
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2) CASCADE;
-NOTICE:  drop cascades to element e1 in property graph g3
+NOTICE:  drop cascades to edge e1 of property graph g3
 ALTER PROPERTY GRAPH g3 DROP EDGE TABLES (e2);
 CREATE PROPERTY GRAPH g4
     VERTEX TABLES (

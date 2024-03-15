@@ -29,6 +29,12 @@ CREATE PROPERTY GRAPH g2
             DESTINATION KEY (x, t) REFERENCES t3 (x, y)
     );
 
+-- test dependencies/object descriptions
+
+DROP TABLE t1;  -- fail
+ALTER TABLE t1 DROP COLUMN b;  -- non-key column; fail
+ALTER TABLE t1 DROP COLUMN a;  -- key column; fail
+
 -- like g2 but assembled with ALTER
 CREATE PROPERTY GRAPH g3;
 ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL);
