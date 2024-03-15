@@ -51,7 +51,6 @@
 #include "tcop/tcopprot.h"
 #include "utils/guc.h"
 #include "utils/ps_status.h"
-#include "utils/timestamp.h"
 
 /*
  * We read() into a temp buffer twice as big as a chunk, so that any fragment
@@ -1174,7 +1173,7 @@ write_syslogger_file(const char *buffer, int count, int destination)
 	 * to our input pipe which would result in a different sort of looping.
 	 */
 	if (rc != count)
-		write_stderr("could not write to log file: %s\n", strerror(errno));
+		write_stderr("could not write to log file: %m\n");
 }
 
 #ifdef WIN32

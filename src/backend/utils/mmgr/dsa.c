@@ -53,9 +53,7 @@
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
 #include "storage/dsm.h"
-#include "storage/ipc.h"
 #include "storage/lwlock.h"
-#include "storage/shmem.h"
 #include "utils/dsa.h"
 #include "utils/freepage.h"
 #include "utils/memutils.h"
@@ -1035,6 +1033,19 @@ dsa_set_size_limit(dsa_area *area, size_t limit)
 	LWLockAcquire(DSA_AREA_LOCK(area), LW_EXCLUSIVE);
 	area->control->max_total_segment_size = limit;
 	LWLockRelease(DSA_AREA_LOCK(area));
+}
+
+/* Return the total size of all active segments */
+size_t
+dsa_get_total_size(dsa_area *area)
+{
+	size_t		size;
+
+	LWLockAcquire(DSA_AREA_LOCK(area), LW_EXCLUSIVE);
+	size = area->control->total_segment_size;
+	LWLockRelease(DSA_AREA_LOCK(area));
+
+	return size;
 }
 
 /*

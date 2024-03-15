@@ -95,7 +95,6 @@
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
-#include "storage/sinvaladt.h"
 #include "storage/smgr.h"
 #include "tcop/tcopprot.h"
 #include "utils/fmgroids.h"
@@ -135,10 +134,6 @@ int			Log_autovacuum_min_duration = 600000;
 /* the minimum allowed time between two awakenings of the launcher */
 #define MIN_AUTOVAC_SLEEPTIME 100.0 /* milliseconds */
 #define MAX_AUTOVAC_SLEEPTIME 300	/* seconds */
-
-/* Flags to tell if we are in an autovacuum process */
-static bool am_autovacuum_launcher = false;
-static bool am_autovacuum_worker = false;
 
 /*
  * Variables to save the cost-related storage parameters for the current
@@ -435,8 +430,6 @@ NON_EXEC_STATIC void
 AutoVacLauncherMain(int argc, char *argv[])
 {
 	sigjmp_buf	local_sigjmp_buf;
-
-	am_autovacuum_launcher = true;
 
 	MyBackendType = B_AUTOVAC_LAUNCHER;
 	init_ps_display(NULL);
@@ -1490,8 +1483,6 @@ AutoVacWorkerMain(int argc, char *argv[])
 {
 	sigjmp_buf	local_sigjmp_buf;
 	Oid			dbid;
-
-	am_autovacuum_worker = true;
 
 	MyBackendType = B_AUTOVAC_WORKER;
 	init_ps_display(NULL);
@@ -2915,6 +2906,7 @@ table_recheck_autovac(Oid relid, HTAB *table_toast_map,
 		tab->at_params.multixact_freeze_table_age = multixact_freeze_table_age;
 		tab->at_params.is_wraparound = wraparound;
 		tab->at_params.log_min_duration = log_min_duration;
+		tab->at_params.toast_parent = InvalidOid;
 		tab->at_storage_param_vac_cost_limit = avopts ?
 			avopts->vacuum_cost_limit : 0;
 		tab->at_storage_param_vac_cost_delay = avopts ?
@@ -3351,24 +3343,6 @@ autovac_init(void)
 				(errmsg("autovacuum not started because of misconfiguration"),
 				 errhint("Enable the \"track_counts\" option.")));
 }
-
-/*
- * IsAutoVacuum functions
- *		Return whether this is either a launcher autovacuum process or a worker
- *		process.
- */
-bool
-IsAutoVacuumLauncherProcess(void)
-{
-	return am_autovacuum_launcher;
-}
-
-bool
-IsAutoVacuumWorkerProcess(void)
-{
-	return am_autovacuum_worker;
-}
-
 
 /*
  * AutoVacuumShmemSize

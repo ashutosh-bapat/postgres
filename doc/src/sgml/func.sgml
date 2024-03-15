@@ -24232,7 +24232,7 @@ SELECT has_function_privilege('joeuser', 'myfunc(int, text)', 'execute');
         are <literal>SELECT</literal>, <literal>INSERT</literal>,
         <literal>UPDATE</literal>, <literal>DELETE</literal>,
         <literal>TRUNCATE</literal>, <literal>REFERENCES</literal>,
-        and <literal>TRIGGER</literal>.
+        <literal>TRIGGER</literal>, and <literal>MAINTAIN</literal>.
        </para></entry>
       </row>
 
@@ -28165,7 +28165,7 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-logical-slot-get-changes" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_logical_slot_get_changes</primary>
         </indexterm>
@@ -28188,11 +28188,15 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         the specified value.  Note, however, that the actual number of
         rows returned may be larger, since this limit is only checked after
         adding the rows produced when decoding each new transaction commit.
+        If the specified slot is a logical failover slot then the function will
+        not return until all physical slots specified in
+        <link linkend="guc-standby-slot-names"><varname>standby_slot_names</varname></link>
+        have confirmed WAL receipt.
        </para></entry>
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-logical-slot-peek-changes" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_logical_slot_peek_changes</primary>
         </indexterm>
@@ -28247,7 +28251,7 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
       </row>
 
       <row>
-       <entry role="func_table_entry"><para role="func_signature">
+       <entry id="pg-replication-slot-advance" role="func_table_entry"><para role="func_signature">
         <indexterm>
          <primary>pg_replication_slot_advance</primary>
         </indexterm>
@@ -28263,7 +28267,11 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         the name of the slot and the actual position that it was advanced to.
         The updated slot position information is written out at the next
         checkpoint if any advancing is done. So in the event of a crash, the
-        slot may return to an earlier position.
+        slot may return to an earlier position. If the specified slot is a
+        logical failover slot then the function will not return until all
+        physical slots specified in
+        <link linkend="guc-standby-slot-names"><varname>standby_slot_names</varname></link>
+        have confirmed WAL receipt.
        </para></entry>
       </row>
 
@@ -28556,6 +28564,23 @@ postgres=# SELECT '0/0'::pg_lsn + pd.segment_number * ps.setting::int + :offset 
         Shows the compression algorithm that was used to compress
         an individual variable-length value. Returns <literal>NULL</literal>
         if the value is not compressed.
+       </para></entry>
+      </row>
+
+      <row>
+       <entry role="func_table_entry"><para role="func_signature">
+        <indexterm>
+         <primary>pg_column_toast_chunk_id</primary>
+        </indexterm>
+        <function>pg_column_toast_chunk_id</function> ( <type>"any"</type> )
+        <returnvalue>oid</returnvalue>
+       </para>
+       <para>
+        Shows the <structfield>chunk_id</structfield> of an on-disk
+        <acronym>TOAST</acronym>ed value.  Returns <literal>NULL</literal>
+        if the value is un-<acronym>TOAST</acronym>ed or not on-disk.  See
+        <xref linkend="storage-toast"/> for more information about
+        <acronym>TOAST</acronym>.
        </para></entry>
       </row>
 

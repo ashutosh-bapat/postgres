@@ -173,7 +173,6 @@ AutoVacOpts
 AutoVacuumShmemStruct
 AutoVacuumWorkItem
 AutoVacuumWorkItemType
-AuxProcType
 BF_ctx
 BF_key
 BF_word
@@ -389,6 +388,7 @@ ClientCertMode
 ClientCertName
 ClientConnectionInfo
 ClientData
+ClientSocket
 ClonePtrType
 ClosePortalStmt
 ClosePtrType
@@ -1210,6 +1210,7 @@ InitializeDSMForeignScan_function
 InitializeWorkerForeignScan_function
 InjectionPointCacheEntry
 InjectionPointEntry
+InjectionPointSharedState
 InlineCodeBlock
 InsertStmt
 Instrumentation
@@ -1762,6 +1763,7 @@ PG_Locale_Strategy
 PG_Lock_Status
 PG_init_t
 PGcancel
+PGcancelConn
 PGcmdQueueEntry
 PGconn
 PGdataValue
@@ -2650,6 +2652,7 @@ SplitPoint
 SplitTextOutputData
 SplitVar
 StackElem
+StandbySlotNamesConfigData
 StartDataPtrType
 StartLOPtrType
 StartLOsPtrType
@@ -3736,6 +3739,7 @@ rewind_source
 rewrite_event
 rf_context
 rm_detail_t
+rt_node_class_test_elem
 role_auth_extra
 rolename_hash
 row_security_policy_hook_type

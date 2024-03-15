@@ -15,7 +15,6 @@
 #include <unistd.h>
 #include <signal.h>
 
-#include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/auxprocess.h"
@@ -24,26 +23,14 @@
 #include "postmaster/walsummarizer.h"
 #include "postmaster/walwriter.h"
 #include "replication/walreceiver.h"
-#include "storage/bufmgr.h"
-#include "storage/bufpage.h"
 #include "storage/condition_variable.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
-#include "tcop/tcopprot.h"
-#include "utils/memutils.h"
+#include "storage/procsignal.h"
 #include "utils/ps_status.h"
-#include "utils/rel.h"
 
 
 static void ShutdownAuxiliaryProcess(int code, Datum arg);
-
-
-/* ----------------
- *		global variables
- * ----------------
- */
-
-AuxProcType MyAuxProcType = NotAnAuxProcess;	/* declared in miscadmin.h */
 
 
 /*
@@ -55,39 +42,11 @@ AuxProcType MyAuxProcType = NotAnAuxProcess;	/* declared in miscadmin.h */
  *	 This code is here just because of historical reasons.
  */
 void
-AuxiliaryProcessMain(AuxProcType auxtype)
+AuxiliaryProcessMain(BackendType auxtype)
 {
 	Assert(IsUnderPostmaster);
 
-	MyAuxProcType = auxtype;
-
-	switch (MyAuxProcType)
-	{
-		case StartupProcess:
-			MyBackendType = B_STARTUP;
-			break;
-		case ArchiverProcess:
-			MyBackendType = B_ARCHIVER;
-			break;
-		case BgWriterProcess:
-			MyBackendType = B_BG_WRITER;
-			break;
-		case CheckpointerProcess:
-			MyBackendType = B_CHECKPOINTER;
-			break;
-		case WalWriterProcess:
-			MyBackendType = B_WAL_WRITER;
-			break;
-		case WalReceiverProcess:
-			MyBackendType = B_WAL_RECEIVER;
-			break;
-		case WalSummarizerProcess:
-			MyBackendType = B_WAL_SUMMARIZER;
-			break;
-		default:
-			elog(PANIC, "unrecognized process type: %d", (int) MyAuxProcType);
-			MyBackendType = B_INVALID;
-	}
+	MyBackendType = auxtype;
 
 	init_ps_display(NULL);
 
@@ -107,17 +66,7 @@ AuxiliaryProcessMain(AuxProcType auxtype)
 
 	BaseInit();
 
-	/*
-	 * Assign the ProcSignalSlot for an auxiliary process.  Since it doesn't
-	 * have a BackendId, the slot is statically allocated based on the
-	 * auxiliary process type (MyAuxProcType).  Backends use slots indexed in
-	 * the range from 1 to MaxBackends (inclusive), so we use MaxBackends +
-	 * AuxProcType + 1 as the index of the slot for an auxiliary process.
-	 *
-	 * This will need rethinking if we ever want more than one of a particular
-	 * auxiliary process type.
-	 */
-	ProcSignalInit(MaxBackends + MyAuxProcType + 1);
+	ProcSignalInit();
 
 	/*
 	 * Auxiliary processes don't run transactions, but they may need a
@@ -136,38 +85,38 @@ AuxiliaryProcessMain(AuxProcType auxtype)
 
 	SetProcessingMode(NormalProcessing);
 
-	switch (MyAuxProcType)
+	switch (MyBackendType)
 	{
-		case StartupProcess:
+		case B_STARTUP:
 			StartupProcessMain();
 			proc_exit(1);
 
-		case ArchiverProcess:
+		case B_ARCHIVER:
 			PgArchiverMain();
 			proc_exit(1);
 
-		case BgWriterProcess:
+		case B_BG_WRITER:
 			BackgroundWriterMain();
 			proc_exit(1);
 
-		case CheckpointerProcess:
+		case B_CHECKPOINTER:
 			CheckpointerMain();
 			proc_exit(1);
 
-		case WalWriterProcess:
+		case B_WAL_WRITER:
 			WalWriterMain();
 			proc_exit(1);
 
-		case WalReceiverProcess:
+		case B_WAL_RECEIVER:
 			WalReceiverMain();
 			proc_exit(1);
 
-		case WalSummarizerProcess:
+		case B_WAL_SUMMARIZER:
 			WalSummarizerMain();
 			proc_exit(1);
 
 		default:
-			elog(PANIC, "unrecognized process type: %d", (int) MyAuxProcType);
+			elog(PANIC, "unrecognized process type: %d", (int) MyBackendType);
 			proc_exit(1);
 	}
 }

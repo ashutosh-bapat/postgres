@@ -83,7 +83,6 @@
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
-#include "utils/float.h"
 #include "utils/formatting.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
@@ -1681,6 +1680,8 @@ str_tolower(const char *buff, size_t nbytes, Oid collid)
 		else
 #endif
 		{
+			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
+
 			if (pg_database_encoding_max_length() > 1)
 			{
 				wchar_t    *workspace;
@@ -1799,6 +1800,8 @@ str_toupper(const char *buff, size_t nbytes, Oid collid)
 		else
 #endif
 		{
+			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
+
 			if (pg_database_encoding_max_length() > 1)
 			{
 				wchar_t    *workspace;
@@ -1918,6 +1921,8 @@ str_initcap(const char *buff, size_t nbytes, Oid collid)
 		else
 #endif
 		{
+			Assert(!mylocale || mylocale->provider == COLLPROVIDER_LIBC);
+
 			if (pg_database_encoding_max_length() > 1)
 			{
 				wchar_t    *workspace;

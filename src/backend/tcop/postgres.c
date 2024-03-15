@@ -72,6 +72,7 @@
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/guc_hooks.h"
+#include "utils/injection_point.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
@@ -3259,7 +3260,7 @@ ProcessInterrupts(void)
 			ereport(FATAL,
 					(errcode(ERRCODE_QUERY_CANCELED),
 					 errmsg("canceling authentication due to timeout")));
-		else if (IsAutoVacuumWorkerProcess())
+		else if (AmAutoVacuumWorkerProcess())
 			ereport(FATAL,
 					(errcode(ERRCODE_ADMIN_SHUTDOWN),
 					 errmsg("terminating autovacuum process due to administrator command")));
@@ -3278,7 +3279,7 @@ ProcessInterrupts(void)
 			 */
 			proc_exit(1);
 		}
-		else if (IsBackgroundWorker)
+		else if (AmBackgroundWorkerProcess())
 			ereport(FATAL,
 					(errcode(ERRCODE_ADMIN_SHUTDOWN),
 					 errmsg("terminating background worker \"%s\" due to administrator command",
@@ -3378,7 +3379,7 @@ ProcessInterrupts(void)
 					(errcode(ERRCODE_QUERY_CANCELED),
 					 errmsg("canceling statement due to statement timeout")));
 		}
-		if (IsAutoVacuumWorkerProcess())
+		if (AmAutoVacuumWorkerProcess())
 		{
 			LockErrorCleanup();
 			ereport(ERROR,
@@ -3411,9 +3412,12 @@ ProcessInterrupts(void)
 		 * interrupt.
 		 */
 		if (IdleInTransactionSessionTimeout > 0)
+		{
+			INJECTION_POINT("idle-in-transaction-session-timeout");
 			ereport(FATAL,
 					(errcode(ERRCODE_IDLE_IN_TRANSACTION_SESSION_TIMEOUT),
 					 errmsg("terminating connection due to idle-in-transaction timeout")));
+		}
 		else
 			IdleInTransactionSessionTimeoutPending = false;
 	}
@@ -3422,9 +3426,12 @@ ProcessInterrupts(void)
 	{
 		/* As above, ignore the signal if the GUC has been reset to zero. */
 		if (TransactionTimeout > 0)
+		{
+			INJECTION_POINT("transaction-timeout");
 			ereport(FATAL,
 					(errcode(ERRCODE_TRANSACTION_TIMEOUT),
 					 errmsg("terminating connection due to transaction timeout")));
+		}
 		else
 			TransactionTimeoutPending = false;
 	}
@@ -3433,9 +3440,12 @@ ProcessInterrupts(void)
 	{
 		/* As above, ignore the signal if the GUC has been reset to zero. */
 		if (IdleSessionTimeout > 0)
+		{
+			INJECTION_POINT("idle-session-timeout");
 			ereport(FATAL,
 					(errcode(ERRCODE_IDLE_SESSION_TIMEOUT),
 					 errmsg("terminating connection due to idle-session timeout")));
+		}
 		else
 			IdleSessionTimeoutPending = false;
 	}
@@ -4233,10 +4243,7 @@ PostgresMain(const char *dbname, const char *username)
 
 	/*
 	 * If the PostmasterContext is still around, recycle the space; we don't
-	 * need it anymore after InitPostgres completes.  Note this does not trash
-	 * *MyProcPort, because ConnCreate() allocated that space with malloc()
-	 * ... else we'd need to copy the Port data first.  Also, subsidiary data
-	 * such as the username isn't lost either; see ProcessStartupPacket().
+	 * need it anymore after InitPostgres completes.
 	 */
 	if (PostmasterContext)
 	{

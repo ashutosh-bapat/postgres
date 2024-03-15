@@ -82,11 +82,11 @@
 #include "utils/float.h"
 #include "utils/guc_hooks.h"
 #include "utils/guc_tables.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
-#include "utils/portal.h"
+#include "utils/plancache.h"
 #include "utils/ps_status.h"
-#include "utils/inval.h"
 #include "utils/xml.h"
 
 /* This value is normally passed in from the Makefile */
@@ -2287,7 +2287,7 @@ struct config_int ConfigureNamesInt[] =
 	{
 		{"commit_timestamp_buffers", PGC_POSTMASTER, RESOURCES_MEM,
 			gettext_noop("Sets the size of the dedicated buffer pool used for the commit timestamp cache."),
-			NULL,
+			gettext_noop("Specify 0 to have this value determined as a fraction of shared_buffers."),
 			GUC_UNIT_BLOCKS
 		},
 		&commit_timestamp_buffers,
@@ -2342,7 +2342,7 @@ struct config_int ConfigureNamesInt[] =
 	{
 		{"subtransaction_buffers", PGC_POSTMASTER, RESOURCES_MEM,
 			gettext_noop("Sets the size of the dedicated buffer pool used for the sub-transaction cache."),
-			NULL,
+			gettext_noop("Specify 0 to have this value determined as a fraction of shared_buffers."),
 			GUC_UNIT_BLOCKS
 		},
 		&subtransaction_buffers,
@@ -2353,7 +2353,7 @@ struct config_int ConfigureNamesInt[] =
 	{
 		{"transaction_buffers", PGC_POSTMASTER, RESOURCES_MEM,
 			gettext_noop("Sets the size of the dedicated buffer pool used for the transaction status cache."),
-			NULL,
+			gettext_noop("Specify 0 to have this value determined as a fraction of shared_buffers."),
 			GUC_UNIT_BLOCKS
 		},
 		&transaction_buffers,
@@ -2868,7 +2868,7 @@ struct config_int ConfigureNamesInt[] =
 	{
 		{"wal_buffers", PGC_POSTMASTER, WAL_SETTINGS,
 			gettext_noop("Sets the number of disk-page buffers in shared memory for WAL."),
-			NULL,
+			gettext_noop("Specify -1 to have this value determined as a fraction of shared_buffers."),
 			GUC_UNIT_XBLOCKS
 		},
 		&XLOGbuffers,
@@ -4668,6 +4668,20 @@ struct config_string ConfigureNamesString[] =
 		&debug_io_direct_string,
 		"",
 		check_debug_io_direct, assign_debug_io_direct, NULL
+	},
+
+	{
+		{"standby_slot_names", PGC_SIGHUP, REPLICATION_PRIMARY,
+			gettext_noop("Lists streaming replication standby server slot "
+						 "names that logical WAL sender processes will wait for."),
+			gettext_noop("Logical WAL sender processes will send decoded "
+						 "changes to plugins only after the specified  "
+						 "replication slots confirm receiving WAL."),
+			GUC_LIST_INPUT
+		},
+		&standby_slot_names,
+		"",
+		check_standby_slot_names, assign_standby_slot_names, NULL
 	},
 
 	/* End-of-list marker */

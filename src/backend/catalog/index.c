@@ -26,9 +26,7 @@
 #include "access/amapi.h"
 #include "access/heapam.h"
 #include "access/multixact.h"
-#include "access/reloptions.h"
 #include "access/relscan.h"
-#include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/toast_compression.h"
 #include "access/transam.h"
@@ -45,7 +43,6 @@
 #include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
-#include "catalog/pg_depend.h"
 #include "catalog/pg_description.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_opclass.h"
@@ -58,7 +55,6 @@
 #include "commands/event_trigger.h"
 #include "commands/progress.h"
 #include "commands/tablecmds.h"
-#include "commands/tablespace.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
@@ -71,7 +67,6 @@
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
-#include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -1469,6 +1464,7 @@ index_concurrently_build(Oid heapRelationId,
 	SetUserIdAndSecContext(heapRel->rd_rel->relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	indexRelation = index_open(indexRelationId, RowExclusiveLock);
 
@@ -3021,6 +3017,7 @@ index_build(Relation heapRelation,
 	SetUserIdAndSecContext(heapRelation->rd_rel->relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	/* Set up initial progress report status */
 	{
@@ -3356,6 +3353,7 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 	SetUserIdAndSecContext(heapRelation->rd_rel->relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	indexRelation = index_open(indexId, RowExclusiveLock);
 
@@ -3617,6 +3615,7 @@ reindex_index(const ReindexStmt *stmt, Oid indexId,
 	SetUserIdAndSecContext(heapRelation->rd_rel->relowner,
 						   save_sec_context | SECURITY_RESTRICTED_OPERATION);
 	save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
 
 	if (progress)
 	{

@@ -22,7 +22,6 @@
 #include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
-#include "access/sysattr.h"
 #include "access/table.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
@@ -2677,7 +2676,7 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 											 Anum_pg_constraint_conkey);
 
 				keyatts = decompile_column_index_array(val, conForm->conrelid, &buf);
-				if (conForm->conwithoutoverlaps)
+				if (conForm->conperiod)
 					appendStringInfoString(&buf, " WITHOUT OVERLAPS");
 
 				appendStringInfoChar(&buf, ')');

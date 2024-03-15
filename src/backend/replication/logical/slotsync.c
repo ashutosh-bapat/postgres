@@ -113,9 +113,6 @@ static long sleep_ms = MIN_SLOTSYNC_WORKER_NAPTIME_MS;
 /* The restart interval for slot sync work used by postmaster */
 #define SLOTSYNC_RESTART_INTERVAL_SEC 10
 
-/* Flag to tell if we are in a slot sync worker process */
-static bool am_slotsync_worker = false;
-
 /*
  * Flag to tell if we are syncing replication slots. Unlike the 'syncing' flag
  * in SlotSyncCtxStruct, this flag is true only if the current process is
@@ -491,7 +488,11 @@ synchronize_one_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 	latestFlushPtr = GetStandbyFlushRecPtr(NULL);
 	if (remote_slot->confirmed_lsn > latestFlushPtr)
 	{
-		ereport(am_slotsync_worker ? LOG : ERROR,
+		/*
+		 * Can get here only if GUC 'standby_slot_names' on the primary server
+		 * was not configured correctly.
+		 */
+		ereport(AmLogicalSlotSyncWorkerProcess() ? LOG : ERROR,
 				errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				errmsg("skipping slot synchronization as the received slot sync"
 					   " LSN %X/%X for slot \"%s\" is ahead of the standby position %X/%X",
@@ -860,6 +861,13 @@ validate_remote_info(WalReceiverConn *wrconn)
 	remote_in_recovery = DatumGetBool(slot_getattr(tupslot, 1, &isnull));
 	Assert(!isnull);
 
+	/*
+	 * Slot sync is currently not supported on a cascading standby. This is
+	 * because if we allow it, the primary server needs to wait for all the
+	 * cascading standbys, otherwise, logical subscribers can still be ahead
+	 * of one of the cascading standbys which we plan to promote. Thus, to
+	 * avoid this additional complexity, we restrict it for the time being.
+	 */
 	if (remote_in_recovery)
 		ereport(ERROR,
 				errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -1113,8 +1121,6 @@ ReplSlotSyncWorkerMain(int argc, char *argv[])
 	char	   *err;
 	sigjmp_buf	local_sigjmp_buf;
 	StringInfoData app_name;
-
-	am_slotsync_worker = true;
 
 	MyBackendType = B_SLOTSYNC_WORKER;
 
@@ -1436,15 +1442,6 @@ bool
 IsSyncingReplicationSlots(void)
 {
 	return syncing_slots;
-}
-
-/*
- * Is current process a slot sync worker?
- */
-bool
-IsLogicalSlotSyncWorker(void)
-{
-	return am_slotsync_worker;
 }
 
 /*
