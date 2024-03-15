@@ -29,6 +29,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "utils/ruleutils.h"
 #include "utils/syscache.h"
 
 
@@ -98,7 +99,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			relid = get_table_for_element(elid);
 
 			rel = table_open(relid, AccessShareLock);
-			pni = addRangeTableEntryForRelation(make_parsestate(NULL), rel, AccessShareLock, NULL, true, false);
+			pni = addRangeTableEntryForRelation(make_parsestate(NULL), rel, AccessShareLock, NULL, true, true);
 			table_close(rel, NoLock);
 
 			newsubquery->rtable = lappend(newsubquery->rtable, pni->p_rte);
@@ -217,6 +218,10 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	 */
 	rte->graph_pattern = NULL;
 	rte->graph_table_columns = NIL;
+
+#if 0
+	elog(INFO, "rewritten:\n%s", pg_get_querydef(copyObject(parsetree), false));
+#endif
 
 	return parsetree;
 }

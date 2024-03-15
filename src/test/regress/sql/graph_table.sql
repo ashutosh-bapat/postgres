@@ -77,17 +77,6 @@ SELECT * FROM GRAPH_TABLE (myshop MATCH (c:customers)-[co:customer_orders]->(o:o
 SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)-[IS customer_orders]->(c IS customers) COLUMNS (c.name, o.ordered_when));
 SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)<-[IS customer_orders]-(c IS customers) COLUMNS (c.name, o.ordered_when));
 
--- TODO: should approximately match this query:
-SET debug_print_parse = on;
-SELECT customer_name FROM (
-    SELECT c.name AS customer_name
-    FROM customers c, customer_orders _co, orders o
-    WHERE _co.customer_id = c.customer_id
-      AND _co.order_id = o.order_id
-      AND c.address = 'US'
-) myshop;
-RESET debug_print_parse;
-
 CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
 
 SELECT pg_get_viewdef('customers_us'::regclass);
