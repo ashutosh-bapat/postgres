@@ -5314,8 +5314,8 @@ EXPLAIN SELECT count(*) FROM measurement WHERE logdate &gt;= DATE '2008-01-01';
   <para>
    A graph is a set of vertices and edges.  Each edge has two distinguishable
    associated vertices called the source and destination vertices.  (So in
-   this model all edges are directed.)  Vertices and edges together are called
-   the elements of the graph.  A property graph extends this well-known
+   this model, all edges are directed.)  Vertices and edges together are
+   called the elements of the graph.  A property graph extends this well-known
    mathematical structure with a way to represent user data.  In a property
    graph, each vertex or edge has one or more associated labels, and each
    label has zero or more properties.  The labels are similar to table row
@@ -5430,7 +5430,7 @@ CREATE PROPERTY GRAPH myshop
 
   <para>
    One use of labels is to expose a table through a different name in the
-   graph.  For example, in graphs, vertices typically have singular noun
+   graph.  For example, in graphs, vertices typically have singular nouns as
    labels and edges typically have verbs as labels, such as <quote>is</quote>,
    <quote>has</quote>, <quote>contains</quote>, or something specific like
    <quote>approves</quote>.  We can introduce such labels into our example
@@ -5485,11 +5485,7 @@ CREATE PROPERTY GRAPH myshop
 </programlisting>
    (In practice, there ought to be an edge linking the
    <literal>employees</literal> table to something, but it is allowed like
-   this.)
-  </para>
-
-  <para>
-   Then we can run a query like this (incomplete):
+   this.)  Then we can run a query like this (incomplete):
 <programlisting>
 SELECT ... FROM GRAPH_TABLE (myshop MATCH (:person WHERE name = '...')-[]->... COLUMNS (...));
 </programlisting>
