@@ -349,7 +349,7 @@ F867	FETCH FIRST clause: WITH TIES option			YES
 F868	ORDER BY in grouped table			YES	
 F869	SQL implementation info population			YES	
 G000	Graph pattern			YES	SQL/PGQ required
-G001	Repeatable-elements match mode			YES	SQL/PGQ required XXX
+G001	Repeatable-elements match mode			YES	SQL/PGQ required
 G002	Different-edges match mode			NO	
 G003	Explicit REPEATABLE ELEMENTS keyword			NO	
 G004	Path variables			NO	
