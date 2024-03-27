@@ -26,6 +26,7 @@
 #include "commands/propgraphcmds.h"
 #include "commands/tablecmds.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "utils/array.h"
@@ -62,11 +63,12 @@ static ArrayType *propgraph_element_get_key(ParseState *pstate, const List *key_
 static ArrayType *array_from_column_list(ParseState *pstate, const List *colnames, int location, Relation element_rel);
 static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
-static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
-static void insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr);
+static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, Oid pgeoid, const PropGraphProperties *properties, const char *labelname);
+static void insert_property_record(ParseState *pstate, Oid graphid, Oid labeloid, const char *propname, const Expr *expr, List *elabelids);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
+static List *get_label_property_names(const Oid graphid, const char *label_name, Oid labelid);
 
 
 /*
@@ -459,12 +461,10 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		{
 			PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
 			Oid			labeloid;
+			const char *label_name = lp->label ? lp->label : einfo->aliasname;
 
-			if (lp->label)
-				labeloid = insert_label_record(graphid, peoid, lp->label);
-			else
-				labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
-			insert_property_records(graphid, labeloid, einfo->relid, lp->properties);
+			labeloid = insert_label_record(graphid, peoid, label_name);
+			insert_property_records(graphid, labeloid, einfo->relid, peoid, lp->properties, label_name);
 		}
 	}
 	else
@@ -476,7 +476,7 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		pr->location = -1;
 
 		labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
-		insert_property_records(graphid, labeloid, einfo->relid, pr);
+		insert_property_records(graphid, labeloid, einfo->relid, peoid, pr, einfo->aliasname);
 	}
 }
 
@@ -516,6 +516,9 @@ insert_label_record(Oid graphid, Oid peoid, const char *label)
 
 	table_close(rel, NoLock);
 
+	/* Make the label visible locally for further validations */
+	CommandCounterIncrement();
+
 	return labeloid;
 }
 
@@ -523,7 +526,7 @@ insert_label_record(Oid graphid, Oid peoid, const char *label)
  * Insert records for properties into the pg_propgraph_property catalog.
  */
 static void
-insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties)
+insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, Oid pgeoid,const PropGraphProperties *properties, const char *labelname)
 {
 	List	   *proplist = NIL;
 	ParseState *pstate;
@@ -531,6 +534,8 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 	List	   *tp;
 	Relation	rel;
 	ListCell   *lc;
+	List *labelpropnames;
+	List *labelids;
 
 	if (properties->all)
 	{
@@ -600,12 +605,41 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 	table_close(rel, NoLock);
 
 	tp = transformTargetList(pstate, proplist, EXPR_KIND_OTHER);
+	labelpropnames = get_label_property_names(graphid, labelname, labeloid);
+	labelids = get_element_labelids(graphid, pgeoid);
+
+	/*
+	 * If there's already a label defined earlier, with the same name, for the
+	 * same property graph, this label should have the same number of
+	 * properties with the same names as that label. Data types will be
+	 * compared while inserting the properties. SQL/PGQ standard, section 9.15
+	 * syntax rule 4.c.ii
+	 */
+	if (list_length(labelpropnames) != 0 &&
+		list_length(tp) != list_length(labelpropnames))
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_OBJECT),
+				 errmsg("mismatch in number of properties of label \"%s\"", labelname)));
 
 	foreach(lc, tp)
 	{
 		TargetEntry *te = lfirst_node(TargetEntry, lc);
+		ListCell *lcp;
+		bool	found = (list_length(labelpropnames) == 0);
 
-		insert_property_record(graphid, labeloid, te->resname, te->expr);
+		foreach (lcp, labelpropnames)
+		{
+			const char *propname = lfirst(lcp);
+
+			if (strcmp(propname, te->resname) == 0)
+				found = true;
+		}
+
+		if (!found)
+			ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_OBJECT),
+				 errmsg("property \"%s\" does not exist in the earlier definition of label \"%s\"", te->resname, labelname)));
+		insert_property_record(pstate, graphid, labeloid, te->resname, te->expr, labelids);
 	}
 }
 
@@ -613,7 +647,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
  * Insert one record for a property into the pg_propgraph_property catalog.
  */
 static void
-insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Expr *expr)
+insert_property_record(ParseState *pstate, Oid graphid, Oid labeloid, const char *propname, const Expr *expr, List *elabelids)
 {
 	Relation	rel;
 	NameData	propnamedata;
@@ -623,9 +657,61 @@ insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Ex
 	HeapTuple	tup;
 	ObjectAddress myself;
 	ObjectAddress referenced;
+	SysScanDesc scan;
+	ScanKeyData key[2];
+	List		*exprs = list_make1((Expr *) expr);
+	Node *prevexpr = NULL;
 
 	rel = table_open(PropgraphPropertyRelationId, RowExclusiveLock);
 
+	/*
+	 * SQL/PGQ standard section 15, syntax rule c.iii
+	 * Make sure that the data type of property is UNION compatible with data
+	 * types of other properties with the same name.
+	 *
+	 * SQL/PGQ section 9.12 syntax rule 10: properties with the same name
+	 * associated with two different labels of the same graph element should
+	 * have the same definition and hence same data type.
+	 */
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_property_pgppgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
+				Anum_pg_propgraph_property_pgpname,
+				BTEqualStrategyNumber,
+				F_NAMEEQ, CStringGetDatum(propname));
+
+	/* TODO: Do we need an index on graphid and property name? */
+	scan = systable_beginscan(rel, InvalidOid,
+							  false, NULL, 2, key);
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_property propform = (Form_pg_propgraph_property) GETSTRUCT(tup);
+		Node *node;
+
+		node = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHPROPNAME, tup, Anum_pg_propgraph_property_pgpexpr)));
+		exprs = lappend(exprs, node);
+
+		/*
+		 * Fetch property expression if it's defined in some other label of the
+		 * same element.
+		*/
+		if (list_member_oid(elabelids, propform->pgplabelid))
+			prevexpr = node;
+	}
+	systable_endscan(scan);
+
+	/* TODO: specify labelname, element name and graph property name in the error message. */
+	if (prevexpr && !equal(prevexpr, expr))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				errmsg("property \"%s\" exists with a different definitions for the same element", propname)));
+
+	verify_common_type(select_common_type(pstate, exprs, "PROPERTY", NULL),
+	exprs);
+
+	/* Add property to the catalog. */
 	propoid = GetNewOidWithIndex(rel, PropgraphPropertyObjectIndexId, Anum_pg_propgraph_property_oid);
 	values[Anum_pg_propgraph_property_oid - 1] = ObjectIdGetDatum(propoid);
 	values[Anum_pg_propgraph_property_pgppgid - 1] = ObjectIdGetDatum(graphid);
@@ -646,6 +732,9 @@ insert_property_record(Oid graphid, Oid labeloid, const char *propname, const Ex
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 
 	table_close(rel, NoLock);
+
+	/* Make the new property visible locally for further validations. */
+	CommandCounterIncrement();
 }
 
 /*
@@ -814,7 +903,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		pgerelid = get_element_relid(peoid);
 
 		labeloid = insert_label_record(pgrelid, peoid, lp->label);
-		insert_property_records(pgrelid, labeloid, pgerelid, lp->properties);
+		insert_property_records(pgrelid, labeloid, pgerelid, peoid, lp->properties, lp->label);
 	}
 
 	if (stmt->drop_label)
@@ -867,7 +956,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
 					parser_errposition(pstate, -1));
 
-		insert_property_records(pgrelid, labeloid, pgerelid, stmt->add_properties);
+		insert_property_records(pgrelid, labeloid, pgerelid, peoid, stmt->add_properties, stmt->alter_label);
 	}
 
 	if (stmt->drop_properties)
@@ -998,4 +1087,72 @@ get_element_relid(Oid peid)
 	ReleaseSysCache(tuple);
 
 	return pgerelid;
+}
+
+/*
+ * Return the names of properties associated with the given label name.
+ *
+ * There may be many labels with the same name in a given property graph, but all of them need to have the same number of properties with the same names and data types. Hence properties associated with any label may be returned.
+ */
+static List *
+get_label_property_names(const Oid graphid, const char *label_name, Oid labelid)
+{
+	Relation	rel;
+	SysScanDesc scan;
+	ScanKeyData key[2];
+	HeapTuple	tup;
+	List	   *result = NIL;
+	Oid			ref_labelid = InvalidOid;
+
+	/*
+	 * Find a reference label to fetch label properties. The reference label
+	 * should be some label other than the one being modified.
+	 */
+	rel = table_open(PropgraphLabelRelationId, AccessShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pglpgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
+				Anum_pg_propgraph_label_pgllabel,
+				BTEqualStrategyNumber,
+				F_NAMEEQ, CStringGetDatum(label_name));
+
+	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId,
+							  true, NULL, 2, key);
+
+	if (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tup);
+
+		if (label->oid != labelid)
+			ref_labelid = label->oid;
+	}
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+
+	if (!OidIsValid(ref_labelid))
+		return NIL;
+
+	/* Get all the properties of the reference label */
+	rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
+
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_property_pgplabelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(ref_labelid));
+
+	scan = systable_beginscan(rel, PropgraphPropertyNameIndexId, true, NULL, 1, key);
+
+	while ((tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_property pgpform = (Form_pg_propgraph_property) GETSTRUCT(tup);
+
+		result = lappend(result, NameStr(pgpform->pgpname));
+	}
+
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+
+	return result;
 }

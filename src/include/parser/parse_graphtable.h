@@ -27,5 +27,6 @@ typedef struct GraphTableParseState
 extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref);
 
 Node	   *transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern);
+List *get_element_labelids(Oid graphid, Oid eleoid);
 
 #endif							/* PARSE_GRAPHTABLE_H */

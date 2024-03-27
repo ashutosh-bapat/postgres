@@ -19,6 +19,8 @@
 #include "access/htup_details.h"
 #include "access/table.h"
 #include "catalog/pg_propgraph_property.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_element.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_collate.h"
@@ -31,6 +33,11 @@
 
 /*
  * Get the type of a property.
+ *
+ * TODO: Properties with the same property name associated with different
+ * labels may have different types. This function returns just one of them. Fix
+ * it. This function might be useful in insert_property_record() which tries to
+ * find a common data type for all properties with the same name.
  */
 static Oid
 get_property_type(Oid graphid, const char *propname)
@@ -248,4 +255,39 @@ transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern
 	assign_expr_collations(pstate2, graph_pattern->whereClause);
 
 	return (Node *) graph_pattern;
+}
+
+List *
+get_element_labelids(Oid graphid, Oid eleoid)
+{
+	Relation	rel;
+	SysScanDesc scan;
+	ScanKeyData key[2];
+	HeapTuple	tup;
+	List	   *result = NIL;
+
+	rel = table_open(PropgraphLabelRelationId, AccessShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pglpgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
+				Anum_pg_propgraph_label_pglelid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(eleoid));
+
+	scan = systable_beginscan(rel, InvalidOid,
+							  false, NULL, 2, key);
+
+	if (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tup);
+
+		if (label->pglelid == eleoid)
+			result = lappend_oid(result, label->oid);
+	}
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+
+	return result;
 }
