@@ -185,8 +185,8 @@ sub main
 		my $prec = 0;
 
 		# Make sure any (unquoted) braces are split
-		s/(*nlb:')\{(*nla:')/ { /g;
-		s/(*nlb:')\}(*nla:')/ } /g;
+		s/(?<!')\{(?!')/ { /g;
+		s/(?<!')\}(?!')/ } /g;
 
 		# Any comments are split
 		s|\/\*| /* |g;
