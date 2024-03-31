@@ -33,6 +33,7 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/ruleutils.h"
 #include "utils/syscache.h"
 
 
@@ -68,10 +69,11 @@ static void propgraph_edge_get_ref_keys(ParseState *pstate, const List *keycols,
 										ArrayType **outkey, ArrayType **outref);
 static ArrayType *array_from_column_list(ParseState *pstate, const List *colnames, int location, Relation element_rel);
 static ArrayType *array_from_attnums(int numattrs, const AttrNumber *attnums);
-static void insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
+static Oid	insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
 static void insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr);
+static void check_element_properties(Oid peoid);
 static void check_propgraph_properties(Oid pgrelid);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
@@ -91,6 +93,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 	List	   *vertex_infos = NIL;
 	List	   *edge_infos = NIL;
 	List	   *element_aliases = NIL;
+	List	   *element_oids = NIL;
 
 	if (stmt->pgname->relpersistence == RELPERSISTENCE_UNLOGGED)
 		ereport(ERROR,
@@ -212,8 +215,6 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 									einfo->aliasname, edge->location, "DESTINATION",
 									&einfo->destkey, &einfo->destref);
 
-		/* TODO: various consistency checks */
-
 		einfo->labels = edge->labels;
 
 		table_close(destrel, NoLock);
@@ -248,13 +249,16 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 	foreach(lc, vertex_infos)
 	{
 		struct element_info *vinfo = lfirst(lc);
+		Oid			peoid;
 
-		insert_element_record(pgaddress, vinfo);
+		peoid = insert_element_record(pgaddress, vinfo);
+		element_oids = lappend_oid(element_oids, peoid);
 	}
 
 	foreach(lc, edge_infos)
 	{
 		struct element_info *einfo = lfirst(lc);
+		Oid			peoid;
 		ListCell   *lc2;
 
 		/*
@@ -282,11 +286,14 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 		Assert(einfo->destvertexid);
 		Assert(einfo->srcrelid);
 		Assert(einfo->destrelid);
-		insert_element_record(pgaddress, einfo);
+		peoid = insert_element_record(pgaddress, einfo);
+		element_oids = lappend_oid(element_oids, peoid);
 	}
 
 	CommandCounterIncrement();
 
+	foreach_oid(peoid, element_oids)
+		check_element_properties(peoid);
 	check_propgraph_properties(pgaddress.objectId);
 
 	return pgaddress;
@@ -476,7 +483,7 @@ array_of_attnums_to_objectaddrs(Oid relid, ArrayType *arr, ObjectAddresses *addr
  * Insert a record for an element into the pg_propgraph_element catalog.  Also
  * inserts labels and properties into their respective catalogs.
  */
-static void
+static Oid
 insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 {
 	Oid			graphid = pgaddress.objectId;
@@ -586,6 +593,8 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
 		insert_property_records(graphid, labeloid, einfo->relid, pr);
 	}
+
+	return peoid;
 }
 
 /*
@@ -760,11 +769,124 @@ insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *prop
 }
 
 /*
- * Check that in a graph, all properties with the same name have the same type
- * (independent of which label they are on).  (See SQL/PGQ subclause
+ * Check that for the given graph element, all properties with the same name
+ * have the same expression for each label.  (See SQL/PGQ subclause "Creation
+ * of an element table descriptor".)
+ *
+ * We check this after all the catalog records are already inserted.  This
+ * makes it easier to share this code between CREATE PROPERTY GRAPH and ALTER
+ * PROPERTY GRAPH.  We pass in the element OID so that ALTER TABLE only has to
+ * check the element it has just operated on.  CREATE PROPERTY GROUP checks
+ * all elements it has created.
+ */
+static void
+check_element_properties(Oid peoid)
+{
+	Relation	rel1;
+	ScanKeyData key1[1];
+	SysScanDesc scan1;
+	HeapTuple	tuple1;
+	List	   *propnames = NIL;
+	List	   *propexprs = NIL;
+
+	rel1 = table_open(PropgraphLabelRelationId, AccessShareLock);
+	ScanKeyInit(&key1[0],
+				Anum_pg_propgraph_label_pglelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(peoid));
+
+	scan1 = systable_beginscan(rel1, PropgraphLabelLabelIndexId, true, NULL, 1, key1);
+	while (HeapTupleIsValid(tuple1 = systable_getnext(scan1)))
+	{
+		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tuple1);
+		Relation	rel2;
+		ScanKeyData key2[1];
+		SysScanDesc scan2;
+		HeapTuple	tuple2;
+
+		rel2 = table_open(PropgraphPropertyRelationId, AccessShareLock);
+		ScanKeyInit(&key2[0],
+					Anum_pg_propgraph_property_pgplabelid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(label->oid));
+
+		scan2 = systable_beginscan(rel2, PropgraphPropertyNameIndexId, true, NULL, 1, key2);
+		while (HeapTupleIsValid(tuple2 = systable_getnext(scan2)))
+		{
+			Form_pg_propgraph_property prop = (Form_pg_propgraph_property) GETSTRUCT(tuple2);
+			const char *propname;
+			Datum		datum;
+			bool		isnull;
+			char	   *propexpr;
+			ListCell   *lc1,
+					   *lc2;
+			bool		found;
+
+			propname = NameStr(prop->pgpname);
+			datum = heap_getattr(tuple2, Anum_pg_propgraph_property_pgpexpr, RelationGetDescr(rel2), &isnull);
+			Assert(!isnull);
+			propexpr = TextDatumGetCString(datum);
+
+			found = false;
+			forboth(lc1, propnames, lc2, propexprs)
+			{
+				if (strcmp(propname, lfirst(lc1)) == 0)
+				{
+					Node	   *na,
+							   *nb;
+
+					na = stringToNode(propexpr);
+					nb = stringToNode(lfirst(lc2));
+
+					found = true;
+
+					if (!equal(na, nb))
+					{
+						HeapTuple	tuple3;
+						Form_pg_propgraph_element elform;
+						List	   *dpcontext;
+
+						tuple3 = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(peoid));
+						if (!tuple3)
+							elog(ERROR, "cache lookup failed for property graph element %u", peoid);
+						elform = (Form_pg_propgraph_element) GETSTRUCT(tuple3);
+						dpcontext = deparse_context_for(get_rel_name(elform->pgerelid), elform->pgerelid);
+
+						ereport(ERROR,
+								errcode(ERRCODE_SYNTAX_ERROR),
+								errmsg("element \"%s\" property \"%s\" expression mismatch: %s vs. %s",
+									   NameStr(elform->pgealias), propname,
+									   deparse_expression(nb, dpcontext, false, false),
+									   deparse_expression(na, dpcontext, false, false)),
+								errdetail("In a property graph element, a property of the same name has to have the same expression in each label."));
+
+						ReleaseSysCache(tuple3);
+					}
+
+					break;
+				}
+			}
+
+			if (!found)
+			{
+				propnames = lappend(propnames, pstrdup(propname));
+				propexprs = lappend(propexprs, propexpr);
+			}
+		}
+		systable_endscan(scan2);
+		table_close(rel2, AccessShareLock);
+	}
+
+	systable_endscan(scan1);
+	table_close(rel1, AccessShareLock);
+}
+
+/*
+ * Check that in the given graph, all properties with the same name have the
+ * same type (independent of which label they are on).  (See SQL/PGQ subclause
  * "Consistency check of a tabular property graph descriptor".)
  *
- * XXX We check this after all the catalog records are already inserted.  This
+ * We check this after all the catalog records are already inserted.  This
  * makes it easier to share this code between CREATE PROPERTY GRAPH and ALTER
  * PROPERTY GRAPH.
  */
@@ -856,6 +978,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		PropGraphVertex *vertex = lfirst_node(PropGraphVertex, lc);
 		struct element_info *vinfo;
 		Relation	rel;
+		Oid			peoid;
 
 		vinfo = palloc0_object(struct element_info);
 		vinfo->kind = PGEKIND_VERTEX;
@@ -882,10 +1005,12 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		table_close(rel, NoLock);
 
-		insert_element_record(pgaddress, vinfo);
-	}
+		peoid = insert_element_record(pgaddress, vinfo);
 
-	CommandCounterIncrement();
+		CommandCounterIncrement();
+		check_element_properties(peoid);
+		check_propgraph_properties(pgrelid);
+	}
 
 	foreach(lc, stmt->add_edge_tables)
 	{
@@ -894,6 +1019,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		Relation	rel;
 		Relation	srcrel;
 		Relation	destrel;
+		Oid			peoid;
 
 		einfo = palloc0_object(struct element_info);
 		einfo->kind = PGEKIND_EDGE;
@@ -932,8 +1058,6 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 									einfo->aliasname, edge->location, "DESTINATION",
 									&einfo->destkey, &einfo->destref);
 
-		/* TODO: various consistency checks */
-
 		einfo->labels = edge->labels;
 
 		table_close(destrel, NoLock);
@@ -941,7 +1065,11 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		table_close(rel, NoLock);
 
-		insert_element_record(pgaddress, einfo);
+		peoid = insert_element_record(pgaddress, einfo);
+
+		CommandCounterIncrement();
+		check_element_properties(peoid);
+		check_propgraph_properties(pgrelid);
 	}
 
 	foreach(lc, stmt->drop_vertex_tables)
@@ -984,6 +1112,10 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		labeloid = insert_label_record(pgrelid, peoid, lp->label);
 		insert_property_records(pgrelid, labeloid, pgerelid, lp->properties);
+
+		CommandCounterIncrement();
+		check_element_properties(peoid);
+		check_propgraph_properties(pgrelid);
 	}
 
 	if (stmt->drop_label)
@@ -1037,6 +1169,10 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 					parser_errposition(pstate, -1));
 
 		insert_property_records(pgrelid, labeloid, pgerelid, stmt->add_properties);
+
+		CommandCounterIncrement();
+		check_element_properties(peoid);
+		check_propgraph_properties(pgrelid);
 	}
 
 	if (stmt->drop_properties)
@@ -1081,10 +1217,6 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 			performDeletion(&obj, stmt->drop_behavior, 0);
 		}
 	}
-
-	CommandCounterIncrement();
-
-	check_propgraph_properties(pgaddress.objectId);
 
 	return pgaddress;
 }

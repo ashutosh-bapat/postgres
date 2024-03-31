@@ -106,6 +106,16 @@ CREATE PROPERTY GRAPH gx
     );
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (
+        t1 KEY (a) LABEL foo PROPERTIES (a + 1 AS aa)
+                   LABEL bar PROPERTIES (1 + a AS aa)  -- expression mismatch
+    );
+ALTER PROPERTY GRAPH g2
+    ADD VERTEX TABLES (
+        t1 AS t1x KEY (a) LABEL foo PROPERTIES (a + 1 AS aa)
+                          LABEL bar PROPERTIES (1 + a AS aa)  -- expression mismatch
+    );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
         t1 KEY (a) PROPERTIES (b AS p1),
         t2 PROPERTIES (k AS p1)  -- type mismatch
     );

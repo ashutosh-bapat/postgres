@@ -135,6 +135,20 @@ LINE 4:         e1 SOURCE t1 DESTINATION t2  -- no foreign keys
                 ^
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (
+        t1 KEY (a) LABEL foo PROPERTIES (a + 1 AS aa)
+                   LABEL bar PROPERTIES (1 + a AS aa)  -- expression mismatch
+    );
+ERROR:  element "t1" property "aa" expression mismatch: (1 + a) vs. (a + 1)
+DETAIL:  In a property graph element, a property of the same name has to have the same expression in each label.
+ALTER PROPERTY GRAPH g2
+    ADD VERTEX TABLES (
+        t1 AS t1x KEY (a) LABEL foo PROPERTIES (a + 1 AS aa)
+                          LABEL bar PROPERTIES (1 + a AS aa)  -- expression mismatch
+    );
+ERROR:  element "t1x" property "aa" expression mismatch: (1 + a) vs. (a + 1)
+DETAIL:  In a property graph element, a property of the same name has to have the same expression in each label.
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
         t1 KEY (a) PROPERTIES (b AS p1),
         t2 PROPERTIES (k AS p1)  -- type mismatch
     );
