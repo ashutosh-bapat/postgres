@@ -104,6 +104,12 @@ CREATE PROPERTY GRAPH gx
     EDGE TABLES (
         e1 SOURCE t1 DESTINATION t2  -- no foreign keys
     );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) PROPERTIES (b AS p1),
+        t2 PROPERTIES (k AS p1)  -- type mismatch
+    );
+ALTER PROPERTY GRAPH g2 ALTER VERTEX TABLE t1 ADD LABEL foo PROPERTIES (b AS k);  -- type mismatch
 
 
 ALTER PROPERTY GRAPH g1 OWNER TO regress_graph_user1;

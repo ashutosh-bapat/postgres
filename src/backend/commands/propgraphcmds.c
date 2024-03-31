@@ -72,6 +72,7 @@ static void insert_element_record(ObjectAddress pgaddress, struct element_info *
 static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
 static void insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr);
+static void check_propgraph_properties(Oid pgrelid);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
@@ -283,6 +284,10 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 		Assert(einfo->destrelid);
 		insert_element_record(pgaddress, einfo);
 	}
+
+	CommandCounterIncrement();
+
+	check_propgraph_properties(pgaddress.objectId);
 
 	return pgaddress;
 }
@@ -755,6 +760,73 @@ insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *prop
 }
 
 /*
+ * Check that in a graph, all properties with the same name have the same type
+ * (independent of which label they are on).  (See SQL/PGQ subclause
+ * "Consistency check of a tabular property graph descriptor".)
+ *
+ * XXX We check this after all the catalog records are already inserted.  This
+ * makes it easier to share this code between CREATE PROPERTY GRAPH and ALTER
+ * PROPERTY GRAPH.
+ */
+static void
+check_propgraph_properties(Oid pgrelid)
+{
+	Relation	rel;
+	ScanKeyData key[1];
+	SysScanDesc scan;
+	HeapTuple	tuple;
+	List	   *propnames = NIL;
+	List	   *proptypes = NIL;
+
+	rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_property_pgppgid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(pgrelid));
+
+	scan = systable_beginscan(rel, PropgraphPropertyGraphNameIndexId, true, NULL, 1, key);
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_property prop = (Form_pg_propgraph_property) GETSTRUCT(tuple);
+		const char *propname;
+		Oid			proptype;
+		ListCell   *lc1,
+				   *lc2;
+		bool		found;
+
+		propname = NameStr(prop->pgpname);
+		proptype = prop->pgptypid;
+
+		found = false;
+		forboth(lc1, propnames, lc2, proptypes)
+		{
+			if (strcmp(propname, lfirst(lc1)) == 0)
+			{
+				found = true;
+
+				if (proptype != lfirst_oid(lc2))
+					ereport(ERROR,
+							errcode(ERRCODE_SYNTAX_ERROR),
+							errmsg("property \"%s\" data type mismatch: %s vs. %s",
+								   propname, format_type_be(lfirst_oid(lc2)), format_type_be(proptype)),
+							errdetail("In a property graph, a property of the same name has to have the same data type in each label."));
+
+				break;
+			}
+		}
+
+		if (!found)
+		{
+			propnames = lappend(propnames, pstrdup(propname));
+			proptypes = lappend_oid(proptypes, proptype);
+		}
+	}
+
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+}
+
+/*
  * ALTER PROPERTY GRAPH
  */
 ObjectAddress
@@ -1009,6 +1081,10 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 			performDeletion(&obj, stmt->drop_behavior, 0);
 		}
 	}
+
+	CommandCounterIncrement();
+
+	check_propgraph_properties(pgaddress.objectId);
 
 	return pgaddress;
 }

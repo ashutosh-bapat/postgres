@@ -133,6 +133,16 @@ CREATE PROPERTY GRAPH gx
 ERROR:  no SOURCE key specified and no suitable foreign key exists for definition of edge "e1"
 LINE 4:         e1 SOURCE t1 DESTINATION t2  -- no foreign keys
                 ^
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) PROPERTIES (b AS p1),
+        t2 PROPERTIES (k AS p1)  -- type mismatch
+    );
+ERROR:  property "p1" data type mismatch: text vs. integer
+DETAIL:  In a property graph, a property of the same name has to have the same data type in each label.
+ALTER PROPERTY GRAPH g2 ALTER VERTEX TABLE t1 ADD LABEL foo PROPERTIES (b AS k);  -- type mismatch
+ERROR:  property "k" data type mismatch: integer vs. text
+DETAIL:  In a property graph, a property of the same name has to have the same data type in each label.
 ALTER PROPERTY GRAPH g1 OWNER TO regress_graph_user1;
 SET ROLE regress_graph_user1;
 GRANT SELECT ON PROPERTY GRAPH g1 TO regress_graph_user2;
