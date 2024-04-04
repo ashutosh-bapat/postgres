@@ -2318,7 +2318,15 @@ psql_completion(const char *text, int start, int end)
 	else if (Matches("ALTER", "PROPERTY", "GRAPH"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
 	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny))
-		COMPLETE_WITH("OWNER TO", "RENAME TO", "SET SCHEMA");
+		COMPLETE_WITH("ADD", "ALTER", "DROP", "OWNER TO", "RENAME TO", "SET SCHEMA");
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ADD|ALTER|DROP"))
+		COMPLETE_WITH("VERTEX", "EDGE");
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ADD|DROP", "VERTEX|EDGE"))
+		COMPLETE_WITH("TABLES");
+	else if (HeadMatches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ADD") && TailMatches("EDGE"))
+		COMPLETE_WITH("TABLES");
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ALTER", "VERTEX|EDGE"))
+		COMPLETE_WITH("TABLE");
 
 	/* ALTER RULE <name>, add ON */
 	else if (Matches("ALTER", "RULE", MatchAny))
@@ -3163,19 +3171,13 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("(");
 	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "("))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
-	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(", MatchAny))
-		COMPLETE_WITH(",", ")");
-	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(") &&
-			 TailMatches(")"))
-		COMPLETE_WITH("EDGE");	/* FIXME: doesn't seem to work */
-	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
-			 TailMatches("EDGE|RELATIONSHIP"))
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(*)"))
+		COMPLETE_WITH("EDGE");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") && TailMatches("EDGE|RELATIONSHIP"))
 		COMPLETE_WITH("TABLES");
-	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
-			 TailMatches("EDGE|RELATIONSHIP", "TABLES"))
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") && TailMatches("EDGE|RELATIONSHIP", "TABLES"))
 		COMPLETE_WITH("(");
-	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") &&
-			 TailMatches("EDGE|RELATIONSHIP", "TABLES", "("))
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") && TailMatches("EDGE|RELATIONSHIP", "TABLES", "("))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
 
 /* CREATE PUBLICATION */
