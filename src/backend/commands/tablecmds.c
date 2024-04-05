@@ -18292,6 +18292,11 @@ RangeVarCallbackForAlterRelation(const RangeVar *rv, Oid relid, Oid oldrelid,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a composite type", rv->relname)));
 
+	if (reltype == OBJECT_PROPGRAPH && relkind != RELKIND_PROPGRAPH)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a property graph", rv->relname)));
+
 	if (reltype == OBJECT_INDEX && relkind != RELKIND_INDEX &&
 		relkind != RELKIND_PARTITIONED_INDEX
 		&& !IsA(stmt, RenameStmt))
