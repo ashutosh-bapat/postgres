@@ -49,7 +49,6 @@ SecLabelSupportsObjectType(ObjectType objtype)
 		case OBJECT_LARGEOBJECT:
 		case OBJECT_MATVIEW:
 		case OBJECT_PROCEDURE:
-		case OBJECT_PROPGRAPH:
 		case OBJECT_PUBLICATION:
 		case OBJECT_ROLE:
 		case OBJECT_ROUTINE:
@@ -81,6 +80,7 @@ SecLabelSupportsObjectType(ObjectType objtype)
 		case OBJECT_OPFAMILY:
 		case OBJECT_PARAMETER_ACL:
 		case OBJECT_POLICY:
+		case OBJECT_PROPGRAPH:
 		case OBJECT_PUBLICATION_NAMESPACE:
 		case OBJECT_PUBLICATION_REL:
 		case OBJECT_RULE:
