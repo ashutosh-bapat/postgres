@@ -2102,7 +2102,7 @@ typedef struct GraphLabelRef
 {
 	NodeTag		type;
 	const char *labelname;
-	int			location;
+	ParseLoc	location;
 } GraphLabelRef;
 
 /*
@@ -2114,7 +2114,7 @@ typedef struct GraphPropertyRef
 	const char *elvarname;
 	const char *propname;
 	Oid			typeId;
-	int			location;
+	ParseLoc	location;
 } GraphPropertyRef;
 
 /*--------------------

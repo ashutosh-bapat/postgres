@@ -692,7 +692,7 @@ typedef struct RangeGraphTable
 	struct GraphPattern *graph_pattern;
 	List	   *columns;
 	Alias	   *alias;			/* table alias & optional column aliases */
-	int			location;		/* token location, or -1 if unknown */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } RangeGraphTable;
 
 /*
@@ -1003,7 +1003,7 @@ typedef struct GraphElementPattern
 	List	   *subexpr;
 	Node	   *whereClause;
 	List	   *quantifier;
-	int			location;
+	ParseLoc	location;
 } GraphElementPattern;
 
 /****************************************************************************
@@ -4090,7 +4090,7 @@ typedef struct PropGraphVertex
 	RangeVar   *vtable;
 	List	   *vkey;
 	List	   *labels;
-	int			location;
+	ParseLoc	location;
 } PropGraphVertex;
 
 typedef struct PropGraphEdge
@@ -4105,7 +4105,7 @@ typedef struct PropGraphEdge
 	char	   *edestvertex;
 	List	   *edestvertexcols;
 	List	   *labels;
-	int			location;
+	ParseLoc	location;
 } PropGraphEdge;
 
 typedef struct PropGraphLabelAndProperties
@@ -4113,7 +4113,7 @@ typedef struct PropGraphLabelAndProperties
 	NodeTag		type;
 	const char *label;
 	struct PropGraphProperties *properties;
-	int			location;
+	ParseLoc	location;
 } PropGraphLabelAndProperties;
 
 typedef struct PropGraphProperties
@@ -4121,7 +4121,7 @@ typedef struct PropGraphProperties
 	NodeTag		type;
 	List	   *properties;
 	bool		all;
-	int			location;
+	ParseLoc	location;
 } PropGraphProperties;
 
 /* ----------------------
