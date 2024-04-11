@@ -33,5 +33,8 @@ tests += {
     'sql': [
       'injection_points',
     ],
+    'regress_args': ['--dlpath', meson.build_root() / 'src/test/regress'],
+    # The injection points are cluster-wide, so disable installcheck
+    'runningcheck': false,
   },
 }

@@ -82,7 +82,7 @@ CATALOG(pg_propgraph_element,8299,PropgraphElementRelationId)
  */
 typedef FormData_pg_propgraph_element *Form_pg_propgraph_element;
 
-DECLARE_TOAST(pg_propgraph_element, 8312, 8313);
+DECLARE_TOAST(pg_propgraph_element, 8315, 8316);
 
 DECLARE_UNIQUE_INDEX_PKEY(pg_propgraph_element_oid_index, 8300, PropgraphElementObjectIndexId, pg_propgraph_element, btree(oid oid_ops));
 DECLARE_UNIQUE_INDEX(pg_propgraph_element_alias_index, 8301, PropgraphElementAliasIndexId, pg_propgraph_element, btree(pgepgid oid_ops, pgealias name_ops));

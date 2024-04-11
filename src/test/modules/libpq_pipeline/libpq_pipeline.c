@@ -116,27 +116,37 @@ confirm_query_canceled_impl(int line, PGconn *conn)
 
 /*
  * Using monitorConn, query pg_stat_activity to see that the connection with
- * the given PID is in the given state.  We never stop until it does.
+ * the given PID is either in the given state, or waiting on the given event
+ * (only one of them can be given).
  */
 static void
-wait_for_connection_state(int line, PGconn *monitorConn, int procpid, char *state)
+wait_for_connection_state(int line, PGconn *monitorConn, int procpid,
+						  char *state, char *event)
 {
 	const Oid	paramTypes[] = {INT4OID, TEXTOID};
 	const char *paramValues[2];
 	char	   *pidstr = psprintf("%d", procpid);
 
+	Assert((state == NULL) ^ (event == NULL));
+
 	paramValues[0] = pidstr;
-	paramValues[1] = state;
+	paramValues[1] = state ? state : event;
 
 	while (true)
 	{
 		PGresult   *res;
 		char	   *value;
 
-		res = PQexecParams(monitorConn,
-						   "SELECT count(*) FROM pg_stat_activity WHERE "
-						   "pid = $1 AND state = $2",
-						   2, paramTypes, paramValues, NULL, NULL, 1);
+		if (state != NULL)
+			res = PQexecParams(monitorConn,
+							   "SELECT count(*) FROM pg_stat_activity WHERE "
+							   "pid = $1 AND state = $2",
+							   2, paramTypes, paramValues, NULL, NULL, 0);
+		else
+			res = PQexecParams(monitorConn,
+							   "SELECT count(*) FROM pg_stat_activity WHERE "
+							   "pid = $1 AND wait_event = $2",
+							   2, paramTypes, paramValues, NULL, NULL, 0);
 
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
 			pg_fatal_impl(line, "could not query pg_stat_activity: %s", PQerrorMessage(monitorConn));
@@ -145,7 +155,7 @@ wait_for_connection_state(int line, PGconn *monitorConn, int procpid, char *stat
 		if (PQnfields(res) != 1)
 			pg_fatal_impl(line, "unexpected number of columns received: %d", PQnfields(res));
 		value = PQgetvalue(res, 0, 0);
-		if (value[0] != '0')
+		if (strcmp(value, "0") != 0)
 		{
 			PQclear(res);
 			break;
@@ -172,7 +182,7 @@ send_cancellable_query_impl(int line, PGconn *conn, PGconn *monitorConn)
 	 * connection below is reliable, instead of possibly seeing an outdated
 	 * state.
 	 */
-	wait_for_connection_state(line, monitorConn, PQbackendPID(conn), "idle");
+	wait_for_connection_state(line, monitorConn, PQbackendPID(conn), "idle", NULL);
 
 	env_wait = getenv("PG_TEST_TIMEOUT_DEFAULT");
 	if (env_wait == NULL)
@@ -183,10 +193,10 @@ send_cancellable_query_impl(int line, PGconn *conn, PGconn *monitorConn)
 		pg_fatal_impl(line, "failed to send query: %s", PQerrorMessage(conn));
 
 	/*
-	 * Wait for the query to start, because if the query is not running yet
-	 * the cancel request that we send won't have any effect.
+	 * Wait for the sleep to be active, because if the query is not running
+	 * yet, the cancel request that we send won't have any effect.
 	 */
-	wait_for_connection_state(line, monitorConn, PQbackendPID(conn), "active");
+	wait_for_connection_state(line, monitorConn, PQbackendPID(conn), NULL, "PgSleep");
 }
 
 /*
@@ -1709,6 +1719,46 @@ test_singlerowmode(PGconn *conn)
 	if (PQgetResult(conn) != NULL)
 		pg_fatal("expected NULL result");
 
+	/*
+	 * Try chunked mode as well; make sure that it correctly delivers a
+	 * partial final chunk.
+	 */
+	if (PQsendQueryParams(conn, "SELECT generate_series(1, 5)",
+						  0, NULL, NULL, NULL, NULL, 0) != 1)
+		pg_fatal("failed to send query: %s",
+				 PQerrorMessage(conn));
+	if (PQsendFlushRequest(conn) != 1)
+		pg_fatal("failed to send flush request");
+	if (PQsetChunkedRowsMode(conn, 3) != 1)
+		pg_fatal("PQsetChunkedRowsMode() failed");
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("unexpected NULL");
+	if (PQresultStatus(res) != PGRES_TUPLES_CHUNK)
+		pg_fatal("Expected PGRES_TUPLES_CHUNK, got %s: %s",
+				 PQresStatus(PQresultStatus(res)),
+				 PQerrorMessage(conn));
+	if (PQntuples(res) != 3)
+		pg_fatal("Expected 3 rows, got %d", PQntuples(res));
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("unexpected NULL");
+	if (PQresultStatus(res) != PGRES_TUPLES_CHUNK)
+		pg_fatal("Expected PGRES_TUPLES_CHUNK, got %s",
+				 PQresStatus(PQresultStatus(res)));
+	if (PQntuples(res) != 2)
+		pg_fatal("Expected 2 rows, got %d", PQntuples(res));
+	res = PQgetResult(conn);
+	if (res == NULL)
+		pg_fatal("unexpected NULL");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("Expected PGRES_TUPLES_OK, got %s",
+				 PQresStatus(PQresultStatus(res)));
+	if (PQntuples(res) != 0)
+		pg_fatal("Expected 0 rows, got %d", PQntuples(res));
+	if (PQgetResult(conn) != NULL)
+		pg_fatal("expected NULL result");
+
 	if (PQexitPipelineMode(conn) != 1)
 		pg_fatal("failed to end pipeline mode: %s", PQerrorMessage(conn));
 
@@ -2098,10 +2148,7 @@ usage(const char *progname)
 static void
 print_test_list(void)
 {
-#if 0
-	/* Commented out until further stabilized */
 	printf("cancel\n");
-#endif
 	printf("disallowed_in_pipeline\n");
 	printf("multi_pipelines\n");
 	printf("nosync\n");

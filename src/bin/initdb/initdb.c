@@ -2403,9 +2403,16 @@ setlocales(void)
 
 	if (locale_provider == COLLPROVIDER_BUILTIN)
 	{
-		if (strcmp(datlocale, "C") != 0)
+		if (strcmp(datlocale, "C") == 0)
+			canonname = "C";
+		else if (strcmp(datlocale, "C.UTF-8") == 0 ||
+				 strcmp(datlocale, "C.UTF8") == 0)
+			canonname = "C.UTF-8";
+		else
 			pg_fatal("invalid locale name \"%s\" for builtin provider",
 					 datlocale);
+
+		datlocale = canonname;
 	}
 	else if (locale_provider == COLLPROVIDER_ICU)
 	{
@@ -2455,7 +2462,8 @@ usage(const char *progname)
 			 "                            set default locale in the respective category for\n"
 			 "                            new databases (default taken from environment)\n"));
 	printf(_("      --no-locale           equivalent to --locale=C\n"));
-	printf(_("      --builtin-locale=LOCALE   set builtin locale name for new databases\n"));
+	printf(_("      --builtin-locale=LOCALE\n"
+			 "                            set builtin locale name for new databases\n"));
 	printf(_("      --locale-provider={builtin|libc|icu}\n"
 			 "                            set default locale provider for new databases\n"));
 	printf(_("      --pwfile=FILE         read password for the new superuser from file\n"));
@@ -2618,9 +2626,9 @@ setup_locale_encoding(void)
 	else
 	{
 		printf(_("The database cluster will be initialized with this locale configuration:\n"));
-		printf(_("  default collation provider:  %s\n"), collprovider_name(locale_provider));
+		printf(_("  locale provider:   %s\n"), collprovider_name(locale_provider));
 		if (locale_provider != COLLPROVIDER_LIBC)
-			printf(_("  default collation locale:    %s\n"), datlocale);
+			printf(_("  default collation: %s\n"), datlocale);
 		printf(_("  LC_COLLATE:  %s\n"
 				 "  LC_CTYPE:    %s\n"
 				 "  LC_MESSAGES: %s\n"
@@ -2693,6 +2701,13 @@ setup_locale_encoding(void)
 	if (!check_locale_encoding(lc_ctype, encodingid) ||
 		!check_locale_encoding(lc_collate, encodingid))
 		exit(1);				/* check_locale_encoding printed the error */
+
+	if (locale_provider == COLLPROVIDER_BUILTIN)
+	{
+		if (strcmp(datlocale, "C.UTF-8") == 0 && encodingid != PG_UTF8)
+			pg_fatal("builtin provider locale \"%s\" requires encoding \"%s\"",
+					 datlocale, "UTF-8");
+	}
 
 	if (locale_provider == COLLPROVIDER_ICU &&
 		!check_icu_locale_encoding(encodingid))

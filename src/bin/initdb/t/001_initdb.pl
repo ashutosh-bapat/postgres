@@ -138,7 +138,7 @@ if ($ENV{with_icu} eq 'yes')
 			'--lc-monetary=C', '--lc-time=C',
 			"$tempdir/data4"
 		],
-		qr/^\s+default collation locale:\s+und\n/ms,
+		qr/^\s+default collation:\s+und\n/ms,
 		'options --locale-provider=icu --locale=und --lc-*=C');
 
 	command_fails_like(
@@ -195,6 +195,25 @@ command_ok(
 		"$tempdir/data7"
 	],
 	'locale provider builtin with --locale');
+
+command_ok(
+	[
+		'initdb', '--no-sync',
+		'--locale-provider=builtin', '-E UTF-8',
+		'--lc-collate=C', '--lc-ctype=C',
+		'--builtin-locale=C.UTF-8', "$tempdir/data8"
+	],
+	'locale provider builtin with -E UTF-8 --builtin-locale=C.UTF-8');
+
+command_fails(
+	[
+		'initdb', '--no-sync',
+		'--locale-provider=builtin', '-E SQL_ASCII',
+		'--lc-collate=C', '--lc-ctype=C',
+		'--builtin-locale=C.UTF-8', "$tempdir/data9"
+	],
+	'locale provider builtin with --builtin-locale=C.UTF-8 fails for SQL_ASCII'
+);
 
 command_ok(
 	[

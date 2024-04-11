@@ -61,9 +61,11 @@
 
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "executor/execExpr.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/miscnodes.h"
+#include "nodes/nodeFuncs.h"
 #include "regex/regex.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
@@ -71,6 +73,8 @@
 #include "utils/float.h"
 #include "utils/formatting.h"
 #include "utils/jsonpath.h"
+#include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/timestamp.h"
 
 /*
@@ -154,6 +158,81 @@ typedef struct JsonValueListIterator
 	ListCell   *next;
 } JsonValueListIterator;
 
+/* Structures for JSON_TABLE execution  */
+
+/*
+ * Struct holding the result of jsonpath evaluation, to be used as source row
+ * for JsonTableGetValue() which in turn computes the values of individual
+ * JSON_TABLE columns.
+ */
+typedef struct JsonTablePlanRowSource
+{
+	Datum		value;
+	bool		isnull;
+} JsonTablePlanRowSource;
+
+/*
+ * State of evaluation of row pattern derived by applying jsonpath given in
+ * a JsonTablePlan to an input document given in the parent TableFunc.
+ */
+typedef struct JsonTablePlanState
+{
+	/* Original plan */
+	JsonTablePlan *plan;
+
+	/* The following fields are only valid for JsonTablePathScan plans */
+
+	/* jsonpath to evaluate against the input doc to get the row pattern */
+	JsonPath   *path;
+
+	/*
+	 * Memory context to use when evaluating the row pattern from the jsonpath
+	 */
+	MemoryContext mcxt;
+
+	/* PASSING arguments passed to jsonpath executor */
+	List	   *args;
+
+	/* List and iterator of jsonpath result values */
+	JsonValueList found;
+	JsonValueListIterator iter;
+
+	/* Currently selected row for JsonTableGetValue() to use */
+	JsonTablePlanRowSource current;
+
+	/* Counter for ORDINAL columns */
+	int			ordinal;
+
+	/* Nested plan, if any */
+	struct JsonTablePlanState *nested;
+
+	/* Left sibling, if any */
+	struct JsonTablePlanState *left;
+
+	/* Right sibling, if any */
+	struct JsonTablePlanState *right;
+
+	/* Parent plan, if this is a nested plan */
+	struct JsonTablePlanState *parent;
+} JsonTablePlanState;
+
+/* Random number to identify JsonTableExecContext for sanity checking */
+#define JSON_TABLE_EXEC_CONTEXT_MAGIC		418352867
+
+typedef struct JsonTableExecContext
+{
+	int			magic;
+
+	/* State of the plan providing a row evaluated from "root" jsonpath */
+	JsonTablePlanState *rootplanstate;
+
+	/*
+	 * Per-column JsonTablePlanStates for all columns including the nested
+	 * ones.
+	 */
+	JsonTablePlanState **colplanstates;
+} JsonTableExecContext;
+
 /* strict/lax flags is decomposed into four [un]wrap/error flags */
 #define jspStrictAbsenceOfErrors(cxt)	(!(cxt)->laxMode)
 #define jspAutoUnwrap(cxt)				((cxt)->laxMode)
@@ -229,6 +308,12 @@ static JsonPathExecResult appendBoolResult(JsonPathExecContext *cxt,
 										   JsonPathItem *jsp, JsonValueList *found, JsonPathBool res);
 static void getJsonPathItem(JsonPathExecContext *cxt, JsonPathItem *item,
 							JsonbValue *value);
+static JsonbValue *GetJsonPathVar(void *cxt, char *varName, int varNameLen,
+								  JsonbValue *baseObject, int *baseObjectId);
+static int	CountJsonPathVars(void *cxt);
+static void JsonItemFromDatum(Datum val, Oid typid, int32 typmod,
+							  JsonbValue *res);
+static void JsonbValueInitNumericDatum(JsonbValue *jbv, Datum num);
 static void getJsonPathVariable(JsonPathExecContext *cxt,
 								JsonPathItem *variable, JsonbValue *value);
 static int	countVariablesFromJsonb(void *varsJsonb);
@@ -247,6 +332,7 @@ static JsonPathExecResult getArrayIndex(JsonPathExecContext *cxt,
 										JsonPathItem *jsp, JsonbValue *jb, int32 *index);
 static JsonBaseObjectInfo setBaseObject(JsonPathExecContext *cxt,
 										JsonbValue *jbv, int32 id);
+static void JsonValueListClear(JsonValueList *jvl);
 static void JsonValueListAppend(JsonValueList *jvl, JsonbValue *jbv);
 static int	JsonValueListLength(const JsonValueList *jvl);
 static bool JsonValueListIsEmpty(JsonValueList *jvl);
@@ -265,6 +351,35 @@ static int	compareDatetime(Datum val1, Oid typid1, Datum val2, Oid typid2,
 							bool useTz, bool *cast_error);
 static void checkTimezoneIsUsedForCast(bool useTz, const char *type1,
 									   const char *type2);
+
+static void JsonTableInitOpaque(TableFuncScanState *state, int natts);
+static JsonTablePlanState *JsonTableInitPlan(JsonTableExecContext *cxt,
+											 JsonTablePlan *plan,
+											 JsonTablePlanState *parentstate,
+											 List *args,
+											 MemoryContext mcxt);
+static void JsonTableSetDocument(TableFuncScanState *state, Datum value);
+static void JsonTableResetRowPattern(JsonTablePlanState *plan, Datum item);
+static bool JsonTableFetchRow(TableFuncScanState *state);
+static Datum JsonTableGetValue(TableFuncScanState *state, int colnum,
+							   Oid typid, int32 typmod, bool *isnull);
+static void JsonTableDestroyOpaque(TableFuncScanState *state);
+static bool JsonTablePlanScanNextRow(JsonTablePlanState *planstate);
+static void JsonTableResetNestedPlan(JsonTablePlanState *planstate);
+static bool JsonTablePlanJoinNextRow(JsonTablePlanState *planstate);
+static bool JsonTablePlanNextRow(JsonTablePlanState *planstate);
+
+const TableFuncRoutine JsonbTableRoutine =
+{
+	.InitOpaque = JsonTableInitOpaque,
+	.SetDocument = JsonTableSetDocument,
+	.SetNamespace = NULL,
+	.SetRowFilter = NULL,
+	.SetColumnFilter = NULL,
+	.FetchRow = JsonTableFetchRow,
+	.GetValue = JsonTableGetValue,
+	.DestroyOpaque = JsonTableDestroyOpaque
+};
 
 /****************** User interface to JsonPath executor ********************/
 
@@ -2861,6 +2976,155 @@ getJsonPathItem(JsonPathExecContext *cxt, JsonPathItem *item,
 }
 
 /*
+ * Returns the computed value of a JSON path variable with given name.
+ */
+static JsonbValue *
+GetJsonPathVar(void *cxt, char *varName, int varNameLen,
+			   JsonbValue *baseObject, int *baseObjectId)
+{
+	JsonPathVariable *var = NULL;
+	List	   *vars = cxt;
+	ListCell   *lc;
+	JsonbValue *result;
+	int			id = 1;
+
+	foreach(lc, vars)
+	{
+		JsonPathVariable *curvar = lfirst(lc);
+
+		if (!strncmp(curvar->name, varName, varNameLen))
+		{
+			var = curvar;
+			break;
+		}
+
+		id++;
+	}
+
+	if (var == NULL)
+	{
+		*baseObjectId = -1;
+		return NULL;
+	}
+
+	result = palloc(sizeof(JsonbValue));
+	if (var->isnull)
+	{
+		*baseObjectId = 0;
+		result->type = jbvNull;
+	}
+	else
+		JsonItemFromDatum(var->value, var->typid, var->typmod, result);
+
+	*baseObject = *result;
+	*baseObjectId = id;
+
+	return result;
+}
+
+static int
+CountJsonPathVars(void *cxt)
+{
+	List	   *vars = (List *) cxt;
+
+	return list_length(vars);
+}
+
+
+/*
+ * Initialize JsonbValue to pass to jsonpath executor from given
+ * datum value of the specified type.
+ */
+static void
+JsonItemFromDatum(Datum val, Oid typid, int32 typmod, JsonbValue *res)
+{
+	switch (typid)
+	{
+		case BOOLOID:
+			res->type = jbvBool;
+			res->val.boolean = DatumGetBool(val);
+			break;
+		case NUMERICOID:
+			JsonbValueInitNumericDatum(res, val);
+			break;
+		case INT2OID:
+			JsonbValueInitNumericDatum(res, DirectFunctionCall1(int2_numeric, val));
+			break;
+		case INT4OID:
+			JsonbValueInitNumericDatum(res, DirectFunctionCall1(int4_numeric, val));
+			break;
+		case INT8OID:
+			JsonbValueInitNumericDatum(res, DirectFunctionCall1(int8_numeric, val));
+			break;
+		case FLOAT4OID:
+			JsonbValueInitNumericDatum(res, DirectFunctionCall1(float4_numeric, val));
+			break;
+		case FLOAT8OID:
+			JsonbValueInitNumericDatum(res, DirectFunctionCall1(float8_numeric, val));
+			break;
+		case TEXTOID:
+		case VARCHAROID:
+			res->type = jbvString;
+			res->val.string.val = VARDATA_ANY(val);
+			res->val.string.len = VARSIZE_ANY_EXHDR(val);
+			break;
+		case DATEOID:
+		case TIMEOID:
+		case TIMETZOID:
+		case TIMESTAMPOID:
+		case TIMESTAMPTZOID:
+			res->type = jbvDatetime;
+			res->val.datetime.value = val;
+			res->val.datetime.typid = typid;
+			res->val.datetime.typmod = typmod;
+			res->val.datetime.tz = 0;
+			break;
+		case JSONBOID:
+			{
+				JsonbValue *jbv = res;
+				Jsonb	   *jb = DatumGetJsonbP(val);
+
+				if (JsonContainerIsScalar(&jb->root))
+				{
+					bool		result PG_USED_FOR_ASSERTS_ONLY;
+
+					result = JsonbExtractScalar(&jb->root, jbv);
+					Assert(result);
+				}
+				else
+					JsonbInitBinary(jbv, jb);
+				break;
+			}
+		case JSONOID:
+			{
+				text	   *txt = DatumGetTextP(val);
+				char	   *str = text_to_cstring(txt);
+				Jsonb	   *jb;
+
+				jb = DatumGetJsonbP(DirectFunctionCall1(jsonb_in,
+														CStringGetDatum(str)));
+				pfree(str);
+
+				JsonItemFromDatum(JsonbPGetDatum(jb), JSONBOID, -1, res);
+				break;
+			}
+		default:
+			ereport(ERROR,
+					errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("could not convert value of type %s to jsonpath",
+						   format_type_be(typid)));
+	}
+}
+
+/* Initialize numeric value from the given datum */
+static void
+JsonbValueInitNumericDatum(JsonbValue *jbv, Datum num)
+{
+	jbv->type = jbvNumeric;
+	jbv->val.numeric = DatumGetNumeric(num);
+}
+
+/*
  * Get the value of variable passed to jsonpath executor
  */
 static void
@@ -3226,6 +3490,13 @@ setBaseObject(JsonPathExecContext *cxt, JsonbValue *jbv, int32 id)
 	cxt->baseObject.id = id;
 
 	return baseObject;
+}
+
+static void
+JsonValueListClear(JsonValueList *jvl)
+{
+	jvl->singleton = NULL;
+	jvl->list = NIL;
 }
 
 static void
@@ -3595,4 +3866,583 @@ compareDatetime(Datum val1, Oid typid1, Datum val2, Oid typid2,
 		return 0;				/* cast error */
 
 	return DatumGetInt32(DirectFunctionCall2(cmpfunc, val1, val2));
+}
+
+/*
+ * Executor-callable JSON_EXISTS implementation
+ *
+ * Returns NULL instead of throwing errors if 'error' is not NULL, setting
+ * *error to true.
+ */
+bool
+JsonPathExists(Datum jb, JsonPath *jp, bool *error, List *vars)
+{
+	JsonPathExecResult res;
+
+	res = executeJsonPath(jp, vars,
+						  GetJsonPathVar, CountJsonPathVars,
+						  DatumGetJsonbP(jb), !error, NULL, true);
+
+	Assert(error || !jperIsError(res));
+
+	if (error && jperIsError(res))
+		*error = true;
+
+	return res == jperOk;
+}
+
+/*
+ * Executor-callable JSON_QUERY implementation
+ *
+ * Returns NULL instead of throwing errors if 'error' is not NULL, setting
+ * *error to true.  *empty is set to true if no match is found.
+ */
+Datum
+JsonPathQuery(Datum jb, JsonPath *jp, JsonWrapper wrapper, bool *empty,
+			  bool *error, List *vars)
+{
+	JsonbValue *singleton;
+	bool		wrap;
+	JsonValueList found = {0};
+	JsonPathExecResult res;
+	int			count;
+
+	res = executeJsonPath(jp, vars,
+						  GetJsonPathVar, CountJsonPathVars,
+						  DatumGetJsonbP(jb), !error, &found, true);
+	Assert(error || !jperIsError(res));
+	if (error && jperIsError(res))
+	{
+		*error = true;
+		*empty = false;
+		return (Datum) 0;
+	}
+
+	/* WRAP or not? */
+	count = JsonValueListLength(&found);
+	singleton = count > 0 ? JsonValueListHead(&found) : NULL;
+	if (singleton == NULL)
+		wrap = false;
+	else if (wrapper == JSW_NONE || wrapper == JSW_UNSPEC)
+		wrap = false;
+	else if (wrapper == JSW_UNCONDITIONAL)
+		wrap = true;
+	else if (wrapper == JSW_CONDITIONAL)
+		wrap = count > 1 ||
+			IsAJsonbScalar(singleton) ||
+			(singleton->type == jbvBinary &&
+			 JsonContainerIsScalar(singleton->val.binary.data));
+	else
+	{
+		elog(ERROR, "unrecognized json wrapper %d", wrapper);
+		wrap = false;
+	}
+
+	if (wrap)
+		return JsonbPGetDatum(JsonbValueToJsonb(wrapItemsInArray(&found)));
+
+	/* No wrapping means only one item is expected. */
+	if (count > 1)
+	{
+		if (error)
+		{
+			*error = true;
+			return (Datum) 0;
+		}
+
+		ereport(ERROR,
+				(errcode(ERRCODE_MORE_THAN_ONE_SQL_JSON_ITEM),
+				 errmsg("JSON path expression in JSON_QUERY should return singleton item without wrapper"),
+				 errhint("Use WITH WRAPPER clause to wrap SQL/JSON item sequence into array.")));
+	}
+
+	if (singleton)
+		return JsonbPGetDatum(JsonbValueToJsonb(singleton));
+
+	*empty = true;
+	return PointerGetDatum(NULL);
+}
+
+/*
+ * Executor-callable JSON_VALUE implementation
+ *
+ * Returns NULL instead of throwing errors if 'error' is not NULL, setting
+ * *error to true.  *empty is set to true if no match is found.
+ */
+JsonbValue *
+JsonPathValue(Datum jb, JsonPath *jp, bool *empty, bool *error, List *vars)
+{
+	JsonbValue *res;
+	JsonValueList found = {0};
+	JsonPathExecResult jper PG_USED_FOR_ASSERTS_ONLY;
+	int			count;
+
+	jper = executeJsonPath(jp, vars, GetJsonPathVar, CountJsonPathVars,
+						   DatumGetJsonbP(jb),
+						   !error, &found, true);
+
+	Assert(error || !jperIsError(jper));
+
+	if (error && jperIsError(jper))
+	{
+		*error = true;
+		*empty = false;
+		return NULL;
+	}
+
+	count = JsonValueListLength(&found);
+
+	*empty = (count == 0);
+
+	if (*empty)
+		return NULL;
+
+	/* JSON_VALUE expects to get only singletons. */
+	if (count > 1)
+	{
+		if (error)
+		{
+			*error = true;
+			return NULL;
+		}
+
+		ereport(ERROR,
+				(errcode(ERRCODE_MORE_THAN_ONE_SQL_JSON_ITEM),
+				 errmsg("JSON path expression in JSON_VALUE should return singleton scalar item")));
+	}
+
+	res = JsonValueListHead(&found);
+	if (res->type == jbvBinary && JsonContainerIsScalar(res->val.binary.data))
+		JsonbExtractScalar(res->val.binary.data, res);
+
+	/* JSON_VALUE expects to get only scalars. */
+	if (!IsAJsonbScalar(res))
+	{
+		if (error)
+		{
+			*error = true;
+			return NULL;
+		}
+
+		ereport(ERROR,
+				(errcode(ERRCODE_SQL_JSON_SCALAR_REQUIRED),
+				 errmsg("JSON path expression in JSON_VALUE should return singleton scalar item")));
+	}
+
+	if (res->type == jbvNull)
+		return NULL;
+
+	return res;
+}
+
+/************************ JSON_TABLE functions ***************************/
+
+/*
+ * Sanity-checks and returns the opaque JsonTableExecContext from the
+ * given executor state struct.
+ */
+static inline JsonTableExecContext *
+GetJsonTableExecContext(TableFuncScanState *state, const char *fname)
+{
+	JsonTableExecContext *result;
+
+	if (!IsA(state, TableFuncScanState))
+		elog(ERROR, "%s called with invalid TableFuncScanState", fname);
+	result = (JsonTableExecContext *) state->opaque;
+	if (result->magic != JSON_TABLE_EXEC_CONTEXT_MAGIC)
+		elog(ERROR, "%s called with invalid TableFuncScanState", fname);
+
+	return result;
+}
+
+/*
+ * JsonTableInitOpaque
+ *		Fill in TableFuncScanState->opaque for processing JSON_TABLE
+ *
+ * This initializes the PASSING arguments and the JsonTablePlanState for
+ * JsonTablePlan given in TableFunc.
+ */
+static void
+JsonTableInitOpaque(TableFuncScanState *state, int natts)
+{
+	JsonTableExecContext *cxt;
+	PlanState  *ps = &state->ss.ps;
+	TableFuncScan *tfs = castNode(TableFuncScan, ps->plan);
+	TableFunc  *tf = tfs->tablefunc;
+	JsonTablePlan *rootplan = (JsonTablePlan *) tf->plan;
+	JsonExpr   *je = castNode(JsonExpr, tf->docexpr);
+	List	   *args = NIL;
+
+	cxt = palloc0(sizeof(JsonTableExecContext));
+	cxt->magic = JSON_TABLE_EXEC_CONTEXT_MAGIC;
+
+	/*
+	 * Evaluate JSON_TABLE() PASSING arguments to be passed to the jsonpath
+	 * executor via JsonPathVariables.
+	 */
+	if (state->passingvalexprs)
+	{
+		ListCell   *exprlc;
+		ListCell   *namelc;
+
+		Assert(list_length(state->passingvalexprs) ==
+			   list_length(je->passing_names));
+		forboth(exprlc, state->passingvalexprs,
+				namelc, je->passing_names)
+		{
+			ExprState  *state = lfirst_node(ExprState, exprlc);
+			String	   *name = lfirst_node(String, namelc);
+			JsonPathVariable *var = palloc(sizeof(*var));
+
+			var->name = pstrdup(name->sval);
+			var->typid = exprType((Node *) state->expr);
+			var->typmod = exprTypmod((Node *) state->expr);
+
+			/*
+			 * Evaluate the expression and save the value to be returned by
+			 * GetJsonPathVar().
+			 */
+			var->value = ExecEvalExpr(state, ps->ps_ExprContext,
+									  &var->isnull);
+
+			args = lappend(args, var);
+		}
+	}
+
+	cxt->colplanstates = palloc(sizeof(JsonTablePlanState *) *
+								list_length(tf->colvalexprs));
+
+	/*
+	 * Initialize plan for the root path and, recursively, also any child
+	 * plans that compute the NESTED paths.
+	 */
+	cxt->rootplanstate = JsonTableInitPlan(cxt, rootplan, NULL, args,
+										   CurrentMemoryContext);
+
+	state->opaque = cxt;
+}
+
+/*
+ * JsonTableDestroyOpaque
+ *		Resets state->opaque
+ */
+static void
+JsonTableDestroyOpaque(TableFuncScanState *state)
+{
+	JsonTableExecContext *cxt =
+		GetJsonTableExecContext(state, "JsonTableDestroyOpaque");
+
+	/* not valid anymore */
+	cxt->magic = 0;
+
+	state->opaque = NULL;
+}
+
+/*
+ * JsonTableInitPlan
+ *		Initialize information for evaluating jsonpath in the given
+ *		JsonTablePlan and, recursively, in any child plans
+ */
+static JsonTablePlanState *
+JsonTableInitPlan(JsonTableExecContext *cxt, JsonTablePlan *plan,
+				  JsonTablePlanState *parentstate,
+				  List *args, MemoryContext mcxt)
+{
+	JsonTablePlanState *planstate = palloc0(sizeof(*planstate));
+
+	planstate->plan = plan;
+	planstate->parent = parentstate;
+
+	if (IsA(plan, JsonTablePathScan))
+	{
+		JsonTablePathScan *scan = (JsonTablePathScan *) plan;
+		int			i;
+
+		planstate->path = DatumGetJsonPathP(scan->path->value->constvalue);
+		planstate->args = args;
+		planstate->mcxt = AllocSetContextCreate(mcxt, "JsonTableExecContext",
+												ALLOCSET_DEFAULT_SIZES);
+
+		/* No row pattern evaluated yet. */
+		planstate->current.value = PointerGetDatum(NULL);
+		planstate->current.isnull = true;
+
+		for (i = scan->colMin; i >= 0 && i <= scan->colMax; i++)
+			cxt->colplanstates[i] = planstate;
+
+		planstate->nested = scan->child ?
+			JsonTableInitPlan(cxt, scan->child, planstate, args, mcxt) : NULL;
+	}
+	else if (IsA(plan, JsonTableSiblingJoin))
+	{
+		JsonTableSiblingJoin *join = (JsonTableSiblingJoin *) plan;
+
+		planstate->left = JsonTableInitPlan(cxt, join->lplan, parentstate,
+											args, mcxt);
+		planstate->right = JsonTableInitPlan(cxt, join->rplan, parentstate,
+											 args, mcxt);
+	}
+
+	return planstate;
+}
+
+/*
+ * JsonTableSetDocument
+ *		Install the input document and evaluate the row pattern
+ */
+static void
+JsonTableSetDocument(TableFuncScanState *state, Datum value)
+{
+	JsonTableExecContext *cxt =
+		GetJsonTableExecContext(state, "JsonTableSetDocument");
+
+	JsonTableResetRowPattern(cxt->rootplanstate, value);
+}
+
+/*
+ * Evaluate a JsonTablePlan's jsonpath to get a new row pattren from
+ * the given context item
+ */
+static void
+JsonTableResetRowPattern(JsonTablePlanState *planstate, Datum item)
+{
+	JsonTablePathScan *scan = castNode(JsonTablePathScan, planstate->plan);
+	MemoryContext oldcxt;
+	JsonPathExecResult res;
+	Jsonb	   *js = (Jsonb *) DatumGetJsonbP(item);
+
+	JsonValueListClear(&planstate->found);
+
+	MemoryContextResetOnly(planstate->mcxt);
+
+	oldcxt = MemoryContextSwitchTo(planstate->mcxt);
+
+	res = executeJsonPath(planstate->path, planstate->args,
+						  GetJsonPathVar, CountJsonPathVars,
+						  js, scan->errorOnError,
+						  &planstate->found,
+						  true);
+
+	MemoryContextSwitchTo(oldcxt);
+
+	if (jperIsError(res))
+	{
+		Assert(!scan->errorOnError);
+		JsonValueListClear(&planstate->found);
+	}
+
+	/* Reset plan iterator to the beginning of the item list */
+	JsonValueListInitIterator(&planstate->found, &planstate->iter);
+	planstate->current.value = PointerGetDatum(NULL);
+	planstate->current.isnull = true;
+	planstate->ordinal = 0;
+}
+
+/*
+ * Fetch next row from a JsonTablePlan.
+ *
+ * Returns false if the plan has run out of rows, true otherwise.
+ */
+static bool
+JsonTablePlanNextRow(JsonTablePlanState *planstate)
+{
+	if (IsA(planstate->plan, JsonTablePathScan))
+		return JsonTablePlanScanNextRow(planstate);
+	else if (IsA(planstate->plan, JsonTableSiblingJoin))
+		return JsonTablePlanJoinNextRow(planstate);
+	else
+		elog(ERROR, "invalid JsonTablePlan %d", (int) planstate->plan->type);
+
+	Assert(false);
+	/* Appease compiler */
+	return false;
+}
+
+/*
+ * Fetch next row from a JsonTablePlan's path evaluation result and from
+ * any child nested path(s).
+ *
+ * Returns true if any of the paths (this or the nested) has more rows to
+ * return.
+ *
+ * By fetching the nested path(s)'s rows based on the parent row at each
+ * level, this essentially joins the rows of different levels.  If a nested
+ * path at a given level has no matching rows, the columns of that level will
+ * compute to NULL, making it an OUTER join.
+ */
+static bool
+JsonTablePlanScanNextRow(JsonTablePlanState *planstate)
+{
+	JsonbValue *jbv;
+	MemoryContext oldcxt;
+
+	/*
+	 * If planstate already has an active row and there is a nested plan,
+	 * check if it has an active row to join with the former.
+	 */
+	if (!planstate->current.isnull)
+	{
+		if (planstate->nested && JsonTablePlanNextRow(planstate->nested))
+			return true;
+	}
+
+	/* Fetch new row from the list of found values to set as active. */
+	jbv = JsonValueListNext(&planstate->found, &planstate->iter);
+
+	/* End of list? */
+	if (jbv == NULL)
+	{
+		planstate->current.value = PointerGetDatum(NULL);
+		planstate->current.isnull = true;
+		return false;
+	}
+
+	/*
+	 * Set current row item for subsequent JsonTableGetValue() calls for
+	 * evaluating individual columns.
+	 */
+	oldcxt = MemoryContextSwitchTo(planstate->mcxt);
+	planstate->current.value = JsonbPGetDatum(JsonbValueToJsonb(jbv));
+	planstate->current.isnull = false;
+	MemoryContextSwitchTo(oldcxt);
+
+	/* Next row! */
+	planstate->ordinal++;
+
+	/* Process nested plan(s), if any. */
+	if (planstate->nested)
+	{
+		/* Re-evaluate the nested path using the above parent row. */
+		JsonTableResetNestedPlan(planstate->nested);
+
+		/*
+		 * Now fetch the nested plan's current row to be joined against the
+		 * parent row.  Any further nested plans' paths will be re-evaluated
+		 * reursively, level at a time, after setting each nested plan's
+		 * current row.
+		 */
+		(void) JsonTablePlanNextRow(planstate->nested);
+	}
+
+	/* There are more rows. */
+	return true;
+}
+
+/*
+ * Re-evaluate the row pattern of a nested plan using the new parent row
+ * pattern.
+ */
+static void
+JsonTableResetNestedPlan(JsonTablePlanState *planstate)
+{
+	/* This better be a child plan. */
+	Assert(planstate->parent != NULL);
+	if (IsA(planstate->plan, JsonTablePathScan))
+	{
+		JsonTablePlanState *parent = planstate->parent;
+
+		if (!parent->current.isnull)
+			JsonTableResetRowPattern(planstate, parent->current.value);
+
+		/*
+		 * If this plan itself has a child nested plan, it will be reset when
+		 * the caller calls JsonTablePlanNextRow() on this plan.
+		 */
+	}
+	else if (IsA(planstate->plan, JsonTableSiblingJoin))
+	{
+		JsonTableResetNestedPlan(planstate->left);
+		JsonTableResetNestedPlan(planstate->right);
+	}
+}
+
+/*
+ * Fetch the next row from a JsonTableSiblingJoin.
+ *
+ * This is essentially a UNION between the rows from left and right siblings.
+ */
+static bool
+JsonTablePlanJoinNextRow(JsonTablePlanState *planstate)
+{
+
+	/* Fetch row from left sibling. */
+	if (!JsonTablePlanNextRow(planstate->left))
+	{
+		/*
+		 * Left sibling ran out of rows, so start fetching from the right
+		 * sibling.
+		 */
+		if (!JsonTablePlanNextRow(planstate->right))
+		{
+			/* Right sibling ran out of row, so there are more rows. */
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+ * JsonTableFetchRow
+ *		Prepare the next "current" row for upcoming GetValue calls.
+ *
+ * Returns false if no more rows can be returned.
+ */
+static bool
+JsonTableFetchRow(TableFuncScanState *state)
+{
+	JsonTableExecContext *cxt =
+		GetJsonTableExecContext(state, "JsonTableFetchRow");
+
+	return JsonTablePlanNextRow(cxt->rootplanstate);
+}
+
+/*
+ * JsonTableGetValue
+ *		Return the value for column number 'colnum' for the current row.
+ *
+ * This leaks memory, so be sure to reset often the context in which it's
+ * called.
+ */
+static Datum
+JsonTableGetValue(TableFuncScanState *state, int colnum,
+				  Oid typid, int32 typmod, bool *isnull)
+{
+	JsonTableExecContext *cxt =
+		GetJsonTableExecContext(state, "JsonTableGetValue");
+	ExprContext *econtext = state->ss.ps.ps_ExprContext;
+	ExprState  *estate = list_nth(state->colvalexprs, colnum);
+	JsonTablePlanState *planstate = cxt->colplanstates[colnum];
+	JsonTablePlanRowSource *current = &planstate->current;
+	Datum		result;
+
+	/* Row pattern value is NULL */
+	if (current->isnull)
+	{
+		result = (Datum) 0;
+		*isnull = true;
+	}
+	/* Evaluate JsonExpr. */
+	else if (estate)
+	{
+		Datum		saved_caseValue = econtext->caseValue_datum;
+		bool		saved_caseIsNull = econtext->caseValue_isNull;
+
+		/* Pass the row pattern value via CaseTestExpr. */
+		econtext->caseValue_datum = current->value;
+		econtext->caseValue_isNull = false;
+
+		result = ExecEvalExpr(estate, econtext, isnull);
+
+		econtext->caseValue_datum = saved_caseValue;
+		econtext->caseValue_isNull = saved_caseIsNull;
+	}
+	/* ORDINAL column */
+	else
+	{
+		result = Int32GetDatum(planstate->ordinal);
+		*isnull = false;
+	}
+
+	return result;
 }

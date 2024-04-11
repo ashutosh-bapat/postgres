@@ -33,6 +33,7 @@
 #include "common/blkreftable.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "postmaster/auxprocess.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/walsummarizer.h"
 #include "replication/walreceiver.h"
@@ -139,7 +140,7 @@ static XLogRecPtr redo_pointer_at_last_summary_removal = InvalidXLogRecPtr;
  * GUC parameters
  */
 bool		summarize_wal = false;
-int			wal_summary_keep_time = 10 * 24 * 60;
+int			wal_summary_keep_time = 10 * HOURS_PER_DAY * MINS_PER_HOUR;
 
 static void WalSummarizerShutdown(int code, Datum arg);
 static XLogRecPtr GetLatestLSN(TimeLineID *tli);
@@ -206,7 +207,7 @@ WalSummarizerShmemInit(void)
  * Entry point for walsummarizer process.
  */
 void
-WalSummarizerMain(void)
+WalSummarizerMain(char *startup_data, size_t startup_data_len)
 {
 	sigjmp_buf	local_sigjmp_buf;
 	MemoryContext context;
@@ -227,6 +228,11 @@ WalSummarizerMain(void)
 	bool		exact;
 	XLogRecPtr	switch_lsn = InvalidXLogRecPtr;
 	TimeLineID	switch_tli = 0;
+
+	Assert(startup_data_len == 0);
+
+	MyBackendType = B_WAL_SUMMARIZER;
+	AuxiliaryProcessMainCommon();
 
 	ereport(DEBUG1,
 			(errmsg_internal("WAL summarizer started")));
@@ -1474,7 +1480,7 @@ MaybeRemoveOldWalSummaries(void)
 	 * Files should only be removed if the last modification time precedes the
 	 * cutoff time we compute here.
 	 */
-	cutoff_time = time(NULL) - 60 * wal_summary_keep_time;
+	cutoff_time = time(NULL) - wal_summary_keep_time * SECS_PER_MINUTE;
 
 	/* Get all the summaries that currently exist. */
 	wslist = GetWalSummaries(0, InvalidXLogRecPtr, InvalidXLogRecPtr);

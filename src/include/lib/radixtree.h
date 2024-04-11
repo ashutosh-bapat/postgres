@@ -105,6 +105,10 @@
  *   involving a pointer to the value type, to calculate size.
  *     NOTE: implies that the value is in fact variable-length,
  *     so do not set for fixed-length values.
+ * - RT_RUNTIME_EMBEDDABLE_VALUE - for variable length values, allows
+ *   storing the value in a child pointer slot, rather than as a single-
+ *   value leaf, if small enough. This requires that the value, when
+ *   read as a child pointer, can be tagged in the lowest bit.
  *
  * Optional parameters:
  * - RT_SHMEM - if defined, the radix tree is created in the DSA area
@@ -437,7 +441,13 @@ static inline bool
 RT_VALUE_IS_EMBEDDABLE(RT_VALUE_TYPE * value_p)
 {
 #ifdef RT_VARLEN_VALUE_SIZE
+
+#ifdef RT_RUNTIME_EMBEDDABLE_VALUE
+	return RT_GET_VALUE_SIZE(value_p) <= sizeof(RT_PTR_ALLOC);
+#else
 	return false;
+#endif
+
 #else
 	return RT_GET_VALUE_SIZE(value_p) <= sizeof(RT_PTR_ALLOC);
 #endif
@@ -451,7 +461,19 @@ static inline bool
 RT_CHILDPTR_IS_VALUE(RT_PTR_ALLOC child)
 {
 #ifdef RT_VARLEN_VALUE_SIZE
+
+#ifdef RT_RUNTIME_EMBEDDABLE_VALUE
+	/* check for pointer tag */
+#ifdef RT_SHMEM
+	return child & 1;
+#else
+	return ((uintptr_t) child) & 1;
+#endif
+
+#else
 	return false;
+#endif
+
 #else
 	return sizeof(RT_VALUE_TYPE) <= sizeof(RT_PTR_ALLOC);
 #endif
@@ -691,6 +713,7 @@ struct RT_RADIX_TREE
 	/* leaf_context is used only for single-value leaves */
 	MemoryContextData *leaf_context;
 #endif
+	MemoryContextData *iter_context;
 };
 
 /*
@@ -1615,10 +1638,11 @@ RT_EXTEND_DOWN(RT_RADIX_TREE * tree, RT_PTR_ALLOC * parent_slot, uint64 key, int
 		node = child;
 		shift -= RT_SPAN;
 	}
+	Assert(shift == 0);
 
 	/* Reserve slot for the value. */
 	n4 = (RT_NODE_4 *) node.local;
-	n4->chunks[0] = RT_GET_KEY_CHUNK(key, shift);
+	n4->chunks[0] = RT_GET_KEY_CHUNK(key, 0);
 	n4->base.count = 1;
 
 	return &n4->children[0];
@@ -1727,6 +1751,15 @@ have_slot:
 	{
 		/* store value directly in child pointer slot */
 		memcpy(slot, value_p, value_sz);
+
+#ifdef RT_RUNTIME_EMBEDDABLE_VALUE
+		/* tag child pointer */
+#ifdef RT_SHMEM
+		*slot |= 1;
+#else
+		*((uintptr_t *) slot) |= 1;
+#endif
+#endif
 	}
 	else
 	{
@@ -1794,6 +1827,14 @@ RT_CREATE(MemoryContext ctx)
 
 	tree = (RT_RADIX_TREE *) palloc0(sizeof(RT_RADIX_TREE));
 	tree->context = ctx;
+
+	/*
+	 * Separate context for iteration in case the tree context doesn't support
+	 * pfree
+	 */
+	tree->iter_context = AllocSetContextCreate(ctx,
+											   RT_STR(RT_PREFIX) "radix_tree iter context",
+											   ALLOCSET_SMALL_SIZES);
 
 #ifdef RT_SHMEM
 	tree->dsa = dsa;
@@ -2037,7 +2078,7 @@ RT_BEGIN_ITERATE(RT_RADIX_TREE * tree)
 	RT_ITER    *iter;
 	RT_CHILD_PTR root;
 
-	iter = (RT_ITER *) MemoryContextAllocZero(tree->context,
+	iter = (RT_ITER *) MemoryContextAllocZero(tree->iter_context,
 											  sizeof(RT_ITER));
 	iter->tree = tree;
 
@@ -2498,7 +2539,7 @@ RT_REMOVE_CHILD_4(RT_RADIX_TREE * tree, RT_PTR_ALLOC * parent_slot, RT_CHILD_PTR
 	}
 	else
 	{
-		int			deletepos = slot - n4->children;;
+		int			deletepos = slot - n4->children;
 
 		Assert(deletepos >= 0);
 		Assert(n4->chunks[deletepos] == chunk);
@@ -2878,6 +2919,7 @@ RT_DUMP_NODE(RT_NODE * node)
 #undef RT_DEFINE
 #undef RT_VALUE_TYPE
 #undef RT_VARLEN_VALUE_SIZE
+#undef RT_RUNTIME_EMBEDDABLE_VALUE
 #undef RT_SHMEM
 #undef RT_USE_DELETE
 #undef RT_DEBUG

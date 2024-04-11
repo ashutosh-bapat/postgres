@@ -66,6 +66,7 @@
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "access/relation.h"
 
 /* Hook for plugins to get control in ProcessUtility() */
 ProcessUtility_hook_type ProcessUtility_hook = NULL;
@@ -1159,6 +1160,9 @@ ProcessUtilitySlow(ParseState *pstate,
 							CreateStmt *cstmt = (CreateStmt *) stmt;
 							Datum		toast_options;
 							static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+							const TableAmRoutine *tableam = NULL;
+							Oid			accessMethodId;
+							Relation	rel;
 
 							/* Remember transformed RangeVar for LIKE */
 							table_rv = cstmt->relation;
@@ -1188,9 +1192,27 @@ ProcessUtilitySlow(ParseState *pstate,
 																validnsps,
 																true,
 																false);
-							(void) heap_reloptions(RELKIND_TOASTVALUE,
-												   toast_options,
-												   true);
+
+							/*
+							 * Get toast table AM to validate its options.
+							 * Only relevant if table itself has a table AM.
+							 * We don't need to place the lock given that
+							 * DefineRelation() already placed the
+							 * AccessExclusiveLock.
+							 */
+							rel = relation_open(address.objectId, NoLock);
+							accessMethodId = rel->rd_tableam ?
+								table_relation_toast_am(rel) : InvalidOid;
+							relation_close(rel, NoLock);
+
+							if (OidIsValid(accessMethodId))
+							{
+								tableam = GetTableAmRoutineByAmOid(accessMethodId);
+								(void) tableam_reloptions(tableam, RELKIND_TOASTVALUE,
+														  toast_options,
+														  NULL,
+														  true);
+							}
 
 							NewRelationCreateToastTable(address.objectId,
 														toast_options);
@@ -2150,11 +2172,10 @@ QueryReturnsTuples(Query *parsetree)
 		case CMD_SELECT:
 			/* returns tuples */
 			return true;
-		case CMD_MERGE:
-			return false;
 		case CMD_INSERT:
 		case CMD_UPDATE:
 		case CMD_DELETE:
+		case CMD_MERGE:
 			/* the forms with RETURNING return tuples */
 			if (parsetree->returningList)
 				return true;

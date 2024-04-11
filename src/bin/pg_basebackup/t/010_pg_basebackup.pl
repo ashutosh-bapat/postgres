@@ -77,7 +77,7 @@ $node->command_fails([ @pg_basebackup_defs, '-D', "$tempdir/backup", '-n' ],
 ok(-d "$tempdir/backup", 'backup directory was created and left behind');
 rmtree("$tempdir/backup");
 
-open my $conf, '>>', "$pgdata/postgresql.conf";
+open my $conf, '>>', "$pgdata/postgresql.conf" or die $!;
 print $conf "max_replication_slots = 10\n";
 print $conf "max_wal_senders = 10\n";
 print $conf "wal_level = replica\n";
@@ -175,7 +175,7 @@ foreach my $filename (
 	qw(backup_label tablespace_map postgresql.auto.conf.tmp
 	current_logfiles.tmp global/pg_internal.init.123))
 {
-	open my $file, '>>', "$pgdata/$filename";
+	open my $file, '>>', "$pgdata/$filename" or die $!;
 	print $file "DONOTCOPY";
 	close $file;
 }
@@ -185,7 +185,7 @@ foreach my $filename (
 # unintended side effects.
 if ($Config{osname} ne 'darwin')
 {
-	open my $file, '>>', "$pgdata/.DS_Store";
+	open my $file, '>>', "$pgdata/.DS_Store" or die $!;
 	print $file "DONOTCOPY";
 	close $file;
 }
@@ -423,7 +423,7 @@ SKIP:
 	my $tblspcoid = $1;
 	my $escapedRepTsDir = $realRepTsDir;
 	$escapedRepTsDir =~ s/\\/\\\\/g;
-	open my $mapfile, '>', $node2->data_dir . '/tablespace_map';
+	open my $mapfile, '>', $node2->data_dir . '/tablespace_map' or die $!;
 	print $mapfile "$tblspcoid $escapedRepTsDir\n";
 	close $mapfile;
 
@@ -782,6 +782,19 @@ like(
 my $checksum = $node->safe_psql('postgres', 'SHOW data_checksums;');
 is($checksum, 'on', 'checksums are enabled');
 rmtree("$tempdir/backupxs_sl_R");
+
+$node->command_ok(
+	[
+		@pg_basebackup_defs, '-D', "$tempdir/backup_dbname_R", '-X',
+		'stream', '-d', "dbname=db1", '-R',
+	],
+	'pg_basebackup with dbname and -R runs');
+like(
+	slurp_file("$tempdir/backup_dbname_R/postgresql.auto.conf"),
+	qr/dbname=db1/m,
+	'recovery conf file sets dbname');
+
+rmtree("$tempdir/backup_dbname_R");
 
 # create tables to corrupt and get their relfilenodes
 my $file_corrupt1 = $node->safe_psql('postgres',

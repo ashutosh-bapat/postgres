@@ -1783,6 +1783,30 @@ elif cc.links('''
 endif
 
 
+# Check for __get_cpuid_count() and __cpuidex() in a similar fashion.
+if cc.links('''
+    #include <cpuid.h>
+    int main(int arg, char **argv)
+    {
+        unsigned int exx[4] = {0, 0, 0, 0};
+        __get_cpuid_count(7, 0, &exx[0], &exx[1], &exx[2], &exx[3]);
+    }
+    ''', name: '__get_cpuid_count',
+    args: test_c_args)
+  cdata.set('HAVE__GET_CPUID_COUNT', 1)
+elif cc.links('''
+    #include <intrin.h>
+    int main(int arg, char **argv)
+    {
+        unsigned int exx[4] = {0, 0, 0, 0};
+        __cpuidex(exx, 7, 0);
+    }
+    ''', name: '__cpuidex',
+    args: test_c_args)
+  cdata.set('HAVE__CPUIDEX', 1)
+endif
+
+
 # Defend against clang being used on x86-32 without SSE2 enabled.  As current
 # versions of clang do not understand -fexcess-precision=standard, the use of
 # x87 floating point operations leads to problems like isinf possibly returning
@@ -1995,6 +2019,69 @@ int main(void)
 
 endif
 
+
+###############################################################
+# Check for the availability of XSAVE intrinsics.
+###############################################################
+
+cflags_xsave = []
+if host_cpu == 'x86' or host_cpu == 'x86_64'
+
+  prog = '''
+#include <immintrin.h>
+
+int main(void)
+{
+    return _xgetbv(0) & 0xe0;
+}
+'''
+
+  if cc.links(prog, name: 'XSAVE intrinsics without -mxsave',
+        args: test_c_args)
+    cdata.set('HAVE_XSAVE_INTRINSICS', 1)
+  elif cc.links(prog, name: 'XSAVE intrinsics with -mxsave',
+        args: test_c_args + ['-mxsave'])
+    cdata.set('HAVE_XSAVE_INTRINSICS', 1)
+    cflags_xsave += '-mxsave'
+  endif
+
+endif
+
+
+###############################################################
+# Check for the availability of AVX-512 popcount intrinsics.
+###############################################################
+
+cflags_popcnt = []
+if host_cpu == 'x86_64'
+
+  prog = '''
+#include <immintrin.h>
+
+int main(void)
+{
+    const char buf[sizeof(__m512i)];
+    INT64 popcnt = 0;
+    __m512i accum = _mm512_setzero_si512();
+    const __m512i val = _mm512_maskz_loadu_epi8((__mmask64) 0xf0f0f0f0f0f0f0f0, (const __m512i *) buf);
+    const __m512i cnt = _mm512_popcnt_epi64(val);
+    accum = _mm512_add_epi64(accum, cnt);
+    popcnt = _mm512_reduce_add_epi64(accum);
+    /* return computed value, to prevent the above being optimized away */
+    return popcnt == 0;
+}
+'''
+
+  if cc.links(prog, name: 'AVX-512 popcount without -mavx512vpopcntdq -mavx512bw',
+        args: test_c_args + ['-DINT64=@0@'.format(cdata.get('PG_INT64_TYPE'))])
+    cdata.set('USE_AVX512_POPCNT_WITH_RUNTIME_CHECK', 1)
+  elif cc.links(prog, name: 'AVX-512 popcount with -mavx512vpopcntdq -mavx512bw',
+        args: test_c_args + ['-DINT64=@0@'.format(cdata.get('PG_INT64_TYPE'))] + ['-mavx512vpopcntdq'] + ['-mavx512bw'])
+    cdata.set('USE_AVX512_POPCNT_WITH_RUNTIME_CHECK', 1)
+    cflags_popcnt += ['-mavx512vpopcntdq'] + ['-mavx512bw']
+  endif
+
+endif
 
 
 ###############################################################
@@ -3356,6 +3443,74 @@ run_target('help',
     files('doc/src/sgml/targets-meson.txt'),
   ]
 )
+
+
+
+###############################################################
+# Distribution archive
+###############################################################
+
+# Meson has its own distribution building command (meson dist), but we
+# are not using that at this point.  The main problem is that, the way
+# they have implemented it, it is not deterministic.  Also, we want it
+# to be equivalent to the "make" version for the time being.  But the
+# target name "dist" in meson is reserved for that reason, so we call
+# the custom target "pgdist".
+
+git = find_program('git', required: false, native: true, disabler: true)
+bzip2 = find_program('bzip2', required: false, native: true)
+
+distdir = meson.project_name() + '-' + meson.project_version()
+
+# Note: core.autocrlf=false is needed to avoid line-ending conversion
+# in case the environment has a different setting.  Without this, a
+# tarball created on Windows might be different than on, and unusable
+# on, Unix machines.
+
+tar_gz = custom_target('tar.gz',
+  build_always_stale: true,
+  command: [git, '-C', '@SOURCE_ROOT@',
+            '-c', 'core.autocrlf=false',
+            'archive',
+            '--format', 'tar.gz',
+            '-9',
+            '--prefix', distdir + '/',
+            '-o', join_paths(meson.build_root(), '@OUTPUT@'),
+            'HEAD', '.'],
+  output: distdir + '.tar.gz',
+)
+
+if bzip2.found()
+  tar_bz2 = custom_target('tar.bz2',
+    build_always_stale: true,
+    command: [git, '-C', '@SOURCE_ROOT@',
+              '-c', 'core.autocrlf=false',
+              '-c', 'tar.tar.bz2.command="@0@" -c'.format(bzip2.path()),
+              'archive',
+              '--format', 'tar.bz2',
+              '--prefix', distdir + '/',
+              '-o', join_paths(meson.build_root(), '@OUTPUT@'),
+              'HEAD', '.'],
+    output: distdir + '.tar.bz2',
+  )
+else
+  tar_bz2 = custom_target('tar.bz2',
+    command: [perl, '-e', 'exit 1'],
+    output: distdir + '.tar.bz2',
+  )
+endif
+
+alias_target('pgdist', [tar_gz, tar_bz2])
+
+# Make the standard "dist" command fail, to prevent accidental use.
+# But not if we are in a subproject, in case the parent project wants to
+# create a dist using the standard Meson command.
+if not meson.is_subproject()
+  # We can only pass the identifier perl here when we depend on >= 0.55
+  if meson.version().version_compare('>=0.55')
+    meson.add_dist_script(perl, '-e', 'exit 1')
+  endif
+endif
 
 
 

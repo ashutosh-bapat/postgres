@@ -1640,7 +1640,7 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 </synopsis>
    where <replaceable>salt</replaceable>, <replaceable>StoredKey</replaceable> and
    <replaceable>ServerKey</replaceable> are in Base64 encoded format. This format is
-   the same as that specified by <ulink url="https://tools.ietf.org/html/rfc5803">RFC 5803</ulink>.
+   the same as that specified by <ulink url="https://datatracker.ietf.org/doc/html/rfc5803">RFC 5803</ulink>.
   </para>
 
   <para>
@@ -2003,9 +2003,13 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        (references <link linkend="catalog-pg-am"><structname>pg_am</structname></link>.<structfield>oid</structfield>)
       </para>
       <para>
-       If this is a table or an index, the access method used (heap,
-       B-tree, hash, etc.); otherwise zero (zero occurs for sequences,
-       as well as relations without storage, such as views)
+       The access method used to access this table or index.
+       Not meaningful if the relation is a sequence or
+       has no on-disk file,
+       except for partitioned tables, where, if set, it takes
+       precedence over <varname>default_table_access_method</varname>
+       when determining the access method to use for partitions created
+       when one is not specified in the creation command.
       </para></entry>
      </row>
 
@@ -2026,9 +2030,12 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        (references <link linkend="catalog-pg-tablespace"><structname>pg_tablespace</structname></link>.<structfield>oid</structfield>)
       </para>
       <para>
-       The tablespace in which this relation is stored.  If zero,
-       the database's default tablespace is implied.  (Not meaningful
-       if the relation has no on-disk file.)
+       The tablespace in which this relation is stored.
+       If zero, the database's default tablespace is implied.
+       Not meaningful if the relation has no on-disk file,
+       except for partitioned tables, where this is the tablespace
+       in which partitions will be created when one is not
+       specified in the creation command.
       </para></entry>
      </row>
 
@@ -2741,7 +2748,8 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
       </para>
       <para>
        This constraint is defined with <literal>WITHOUT OVERLAPS</literal>
-       (for primary keys and unique constraints).
+       (for primary keys and unique constraints) or <literal>PERIOD</literal>
+       (for foreign keys).
       </para></entry>
      </row>
 
@@ -7705,23 +7713,6 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
 
      <row>
       <entry role="catalog_table_entry"><para role="column_definition">
-       <structfield>stxstattarget</structfield> <type>int2</type>
-      </para>
-      <para>
-       <structfield>stxstattarget</structfield> controls the level of detail
-       of statistics accumulated for this statistics object by
-       <link linkend="sql-analyze"><command>ANALYZE</command></link>.
-       A zero value indicates that no statistics should be collected.
-       A negative value says to use the maximum of the statistics targets of
-       the referenced columns, if set, or the system default statistics target.
-       Positive values of <structfield>stxstattarget</structfield>
-       determine the target number of <quote>most common values</quote>
-       to collect.
-      </para></entry>
-     </row>
-
-     <row>
-      <entry role="catalog_table_entry"><para role="column_definition">
        <structfield>stxkeys</structfield> <type>int2vector</type>
        (references <link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.<structfield>attnum</structfield>)
       </para>
@@ -7730,6 +7721,23 @@ SCRAM-SHA-256$<replaceable>&lt;iteration count&gt;</replaceable>:<replaceable>&l
        covered by this statistics object;
        for example a value of <literal>1 3</literal> would
        mean that the first and the third table columns are covered
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>stxstattarget</structfield> <type>int2</type>
+      </para>
+      <para>
+       <structfield>stxstattarget</structfield> controls the level of detail
+       of statistics accumulated for this statistics object by
+       <link linkend="sql-analyze"><command>ANALYZE</command></link>.
+       A zero value indicates that no statistics should be collected.
+       A null value says to use the maximum of the statistics targets of
+       the referenced columns, if set, or the system default statistics target.
+       Positive values of <structfield>stxstattarget</structfield>
+       determine the target number of <quote>most common values</quote>
+       to collect.
       </para></entry>
      </row>
 

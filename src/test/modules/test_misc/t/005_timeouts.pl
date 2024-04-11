@@ -3,6 +3,8 @@
 
 use strict;
 use warnings;
+use locale;
+
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Time::HiRes qw(usleep);
@@ -35,16 +37,18 @@ my $psql_session = $node->background_psql('postgres');
 
 # The following query will generate a stream of SELECT 1 queries. This is done
 # so to exercise transaction timeout in the presence of short queries.
+# Note: the interval value is parsed with locale-aware strtod()
 $psql_session->query_until(
-	qr/starting_bg_psql/, q(
-   \echo starting_bg_psql
-   SET transaction_timeout to '10ms';
-   BEGIN;
-   SELECT 1 \watch 0.001
-   \q
-));
+	qr/starting_bg_psql/,
+	sprintf(
+		q(\echo starting_bg_psql
+		SET transaction_timeout to '10ms';
+		BEGIN;
+		SELECT 1 \watch %g
+		\q
+), 0.001));
 
-# Wait until the backend is in the timeout injection point. Will get an error
+# Wait until the backend enters the timeout injection point. Will get an error
 # here if anything goes wrong.
 $node->wait_for_event('client backend', 'transaction-timeout');
 
@@ -58,13 +62,13 @@ $node->safe_psql('postgres',
 $node->wait_for_log('terminating connection due to transaction timeout',
 	$log_offset);
 
-# If we send \q with $psql_session->quit it can get to pump already closed.
-# So \q is in initial script, here we only finish IPC::Run.
+# If we send \q with $psql_session->quit the command can be sent to the session
+# already closed. So \q is in initial script, here we only finish IPC::Run.
 $psql_session->{run}->finish;
 
 
 #
-# 2. Test of the sidle in transaction timeout
+# 2. Test of the idle in transaction timeout
 #
 
 $node->safe_psql('postgres',
@@ -80,7 +84,7 @@ $psql_session->query_until(
    BEGIN;
 ));
 
-# Wait until the backend is in the timeout injection point.
+# Wait until the backend enters the timeout injection point.
 $node->wait_for_event('client backend',
 	'idle-in-transaction-session-timeout');
 
@@ -111,7 +115,7 @@ $psql_session->query_until(
    SET idle_session_timeout to '10ms';
 ));
 
-# Wait until the backend is in the timeout injection point.
+# Wait until the backend enters the timeout injection point.
 $node->wait_for_event('client backend', 'idle-session-timeout');
 
 $log_offset = -s $node->logfile;

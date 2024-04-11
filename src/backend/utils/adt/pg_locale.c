@@ -1676,7 +1676,6 @@ pg_newlocale_from_collation(Oid collid)
 
 			collversionstr = TextDatumGetCString(datum);
 
-			Assert(collform->collprovider != COLLPROVIDER_BUILTIN);
 			if (collform->collprovider == COLLPROVIDER_LIBC)
 				datum = SysCacheGetAttrNotNull(COLLOID, tp, Anum_pg_collation_collcollate);
 			else
@@ -1731,9 +1730,25 @@ get_collation_actual_version(char collprovider, const char *collcollate)
 {
 	char	   *collversion = NULL;
 
-	/* the builtin collation provider is not versioned */
+	/*
+	 * The only two supported locales (C and C.UTF-8) are both based on memcmp
+	 * and are not expected to change, but track the version anyway.
+	 *
+	 * Note that the character semantics may change for some locales, but the
+	 * collation version only tracks changes to sort order.
+	 */
 	if (collprovider == COLLPROVIDER_BUILTIN)
-		return NULL;
+	{
+		if (strcmp(collcollate, "C") == 0)
+			return "1";
+		else if (strcmp(collcollate, "C.UTF-8") == 0)
+			return "1";
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("invalid locale name \"%s\" for builtin provider",
+							collcollate)));
+	}
 
 #ifdef USE_ICU
 	if (collprovider == COLLPROVIDER_ICU)
@@ -2501,14 +2516,47 @@ pg_strnxfrm_prefix(char *dest, size_t destsize, const char *src,
 	return result;
 }
 
+/*
+ * Return required encoding ID for the given locale, or -1 if any encoding is
+ * valid for the locale.
+ *
+ * The only supported locale for the builtin provider is "C", and it's
+ * available for any encoding.
+ */
+int
+builtin_locale_encoding(const char *locale)
+{
+	if (strcmp(locale, "C") == 0)
+		return -1;
+	if (strcmp(locale, "C.UTF-8") == 0)
+		return PG_UTF8;
+
+	ereport(ERROR,
+			(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+			 errmsg("invalid locale name \"%s\" for builtin provider",
+					locale)));
+
+	return 0;					/* keep compiler quiet */
+}
+
+
+/*
+ * Validate the locale and encoding combination, and return the canonical form
+ * of the locale name.
+ *
+ * The only supported locale for the builtin provider is "C", and it's
+ * available for any encoding.
+ */
 const char *
 builtin_validate_locale(int encoding, const char *locale)
 {
 	const char *canonical_name = NULL;
-	int			required_encoding = -1;
+	int			required_encoding;
 
 	if (strcmp(locale, "C") == 0)
 		canonical_name = "C";
+	else if (strcmp(locale, "C.UTF-8") == 0 || strcmp(locale, "C.UTF8") == 0)
+		canonical_name = "C.UTF-8";
 
 	if (!canonical_name)
 		ereport(ERROR,
@@ -2516,6 +2564,7 @@ builtin_validate_locale(int encoding, const char *locale)
 				 errmsg("invalid locale name \"%s\" for builtin provider",
 						locale)));
 
+	required_encoding = builtin_locale_encoding(canonical_name);
 	if (required_encoding >= 0 && encoding != required_encoding)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),

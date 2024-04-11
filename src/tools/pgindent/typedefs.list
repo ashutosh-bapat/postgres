@@ -208,8 +208,10 @@ BTPageStat
 BTPageState
 BTParallelScanDesc
 BTPendingFSM
+BTReadPageState
 BTScanInsert
 BTScanInsertData
+BTScanKeyPreproc
 BTScanOpaque
 BTScanOpaqueData
 BTScanPos
@@ -231,6 +233,7 @@ BY_HANDLE_FILE_INFORMATION
 Backend
 BackendId
 BackendParameters
+BackendStartupData
 BackendState
 BackendType
 BackgroundWorker
@@ -334,6 +337,8 @@ BulkInsertState
 BulkInsertStateData
 BulkWriteBuffer
 BulkWriteState
+BumpBlock
+BumpContext
 CACHESIGN
 CAC_state
 CCFastEqualFN
@@ -437,6 +442,7 @@ CommentStmt
 CommitTimestampEntry
 CommitTimestampShared
 CommonEntry
+CommonRdOptions
 CommonTableExpr
 CompareScalarsContext
 CompiledExprState
@@ -479,6 +485,8 @@ CopyFromState
 CopyFromStateData
 CopyHeaderChoice
 CopyInsertMethod
+CopyMethod
+CopyLogVerbosityChoice
 CopyMultiInsertBuffer
 CopyMultiInsertInfo
 CopyOnErrorChoice
@@ -598,6 +606,7 @@ DiscardMode
 DiscardStmt
 DistanceValue
 DistinctExpr
+DoState
 DoStmt
 DocRepresentation
 DomainConstraintCache
@@ -711,6 +720,7 @@ ExplainForeignModify_function
 ExplainForeignScan_function
 ExplainFormat
 ExplainOneQuery_hook_type
+ExplainSerializeOption
 ExplainState
 ExplainStmt
 ExplainWorkersState
@@ -850,6 +860,7 @@ FormData_pg_ts_parser
 FormData_pg_ts_template
 FormData_pg_type
 FormData_pg_user_mapping
+FormExtraData_pg_attribute
 Form_pg_aggregate
 Form_pg_am
 Form_pg_amop
@@ -1119,8 +1130,10 @@ HbaLine
 HeadlineJsonState
 HeadlineParsedText
 HeadlineWordEntry
+HeapAlterRdOptions
 HeapCheckContext
 HeapPageFreeze
+HeapRdOptions
 HeapScanDesc
 HeapTuple
 HeapTupleData
@@ -1209,9 +1222,11 @@ InitSampleScan_function
 InitializeDSMForeignScan_function
 InitializeWorkerForeignScan_function
 InjectionPointCacheEntry
+InjectionPointCondition
 InjectionPointEntry
 InjectionPointSharedState
 InlineCodeBlock
+InProgressIO
 InsertStmt
 Instrumentation
 Int128AggState
@@ -1260,6 +1275,7 @@ Join
 JoinCostWorkspace
 JoinDomain
 JoinExpr
+JsonFuncExpr
 JoinHashEntry
 JoinPath
 JoinPathExtraData
@@ -1270,17 +1286,24 @@ JsObject
 JsValue
 JsonAggConstructor
 JsonAggState
+JsonArgument
 JsonArrayAgg
 JsonArrayConstructor
 JsonArrayQueryConstructor
 JsonBaseObjectInfo
+JsonBehavior
+JsonBehaviorType
 JsonConstructorExpr
 JsonConstructorExprState
 JsonConstructorType
 JsonEncoding
+JsonExpr
+JsonExprOp
+JsonExprState
 JsonFormat
 JsonFormatType
 JsonHashEntry
+JsonIncrementalState
 JsonIsPredicate
 JsonIterateStringValuesAction
 JsonKeyValue
@@ -1288,17 +1311,22 @@ JsonLexContext
 JsonLikeRegexContext
 JsonManifestFileField
 JsonManifestParseContext
+JsonManifestParseIncrementalState
 JsonManifestParseState
 JsonManifestSemanticState
 JsonManifestWALRangeField
+JsonNonTerminal
 JsonObjectAgg
 JsonObjectConstructor
 JsonOutput
 JsonParseExpr
 JsonParseContext
 JsonParseErrorType
+JsonParserSem
+JsonParserStack
 JsonPath
 JsonPathBool
+JsonPathDatatypeStatus
 JsonPathExecContext
 JsonPathExecResult
 JsonPathGinAddPathItemFunc
@@ -1311,14 +1339,29 @@ JsonPathGinPathItem
 JsonPathItem
 JsonPathItemType
 JsonPathKeyword
+JsonPathMutableContext
 JsonPathParseItem
 JsonPathParseResult
 JsonPathPredicateCallback
 JsonPathString
+JsonPathVariable
+JsonQuotes
 JsonReturning
 JsonScalarExpr
 JsonSemAction
 JsonSerializeExpr
+JsonTable
+JsonTableColumn
+JsonTableColumnType
+JsonTableExecContext
+JsonTableParseContext
+JsonTablePath
+JsonTablePathScan
+JsonTablePathSpec
+JsonTablePlan
+JsonTablePlanRowSource
+JsonTablePlanState
+JsonTableSiblingJoin
 JsonTokenType
 JsonTransformStringValuesAction
 JsonTypeCategory
@@ -1331,6 +1374,7 @@ JsonValueExpr
 JsonValueList
 JsonValueListIterator
 JsonValueType
+JsonWrapper
 Jsonb
 JsonbAggState
 JsonbContainer
@@ -1574,9 +1618,11 @@ MergeAppendState
 MergeJoin
 MergeJoinClause
 MergeJoinState
+MergeMatchKind
 MergePath
 MergeScanSelCache
 MergeStmt
+MergeSupportFunc
 MergeWhenClause
 MetaCommand
 MinMaxAggInfo
@@ -1672,7 +1718,6 @@ ObjectAddressAndFlags
 ObjectAddressExtra
 ObjectAddressStack
 ObjectAddresses
-ObjectClass
 ObjectPropertyType
 ObjectType
 ObjectWithArgs
@@ -1960,6 +2005,7 @@ ParamsErrorCbData
 ParentMapEntry
 ParseCallbackState
 ParseExprKind
+ParseLoc
 ParseNamespaceColumn
 ParseNamespaceItem
 ParseParamRefHook
@@ -2134,6 +2180,7 @@ PortalStrategy
 PostParseColumnRefHook
 PostgresPollingStatusType
 PostingItem
+PostmasterChildType
 PreParseColumnRefHook
 PredClass
 PredIterInfo
@@ -2175,7 +2222,8 @@ ProjectionPath
 PromptInterruptContext
 ProtocolVersion
 PrsStorage
-PruneResult
+PruneReason
+PruneFreezeResult
 PruneState
 PruneStepResult
 PsqlScanCallbacks
@@ -2269,11 +2317,14 @@ ReInitializeDSMForeignScan_function
 ReScanForeignScan_function
 ReadBufPtrType
 ReadBufferMode
+ReadBuffersFlags
+ReadBuffersOperation
 ReadBytePtrType
 ReadExtraTocPtrType
 ReadFunc
 ReadLocalXLogPageNoWaitPrivate
 ReadReplicationSlotCmd
+ReadStream
 ReassignOwnedStmt
 RecheckForeignScan_function
 RecordCacheArrayEntry
@@ -2425,6 +2476,7 @@ RuleLock
 RuleStmt
 RunningTransactions
 RunningTransactionsData
+SASLStatus
 SC_HANDLE
 SECURITY_ATTRIBUTES
 SECURITY_STATUS
@@ -2481,6 +2533,8 @@ ScalarIOData
 ScalarItem
 ScalarMCVItem
 Scan
+ScanAnalyzeNextBlockFunc
+ScanAnalyzeNextTupleFunc
 ScanDirection
 ScanKey
 ScanKeyData
@@ -2512,6 +2566,8 @@ SerCommitSeqNo
 SerialControl
 SerialIOData
 SerializableXactHandle
+SerializeDestReceiver
+SerializeMetrics
 SerializedActiveRelMaps
 SerializedClientConnectionInfo
 SerializedRanges
@@ -2584,6 +2640,7 @@ SimpleStats
 SimpleStringList
 SimpleStringListCell
 SingleBoundSortItem
+SinglePartitionSpec
 Size
 SkipPages
 SlabBlock
@@ -2647,6 +2704,7 @@ SpecialJoinInfo
 SpinDelayStatus
 SplitInterval
 SplitLR
+SplitPartitionContext
 SplitPageLayout
 SplitPoint
 SplitTextOutputData
@@ -2668,7 +2726,6 @@ StatsElem
 StatsExtInfo
 StdAnalyzeData
 StdRdOptIndexCleanup
-StdRdOptions
 Step
 StopList
 StrategyNumber
@@ -2788,6 +2845,7 @@ TableFunc
 TableFuncRoutine
 TableFuncScan
 TableFuncScanState
+TableFuncType
 TableInfo
 TableLikeClause
 TableSampleClause
@@ -2965,7 +3023,7 @@ UserMapping
 UserOpts
 VacAttrStats
 VacAttrStatsP
-VacDeadItems
+VacDeadItemsInfo
 VacErrPhase
 VacObjFilter
 VacOptValue
@@ -3035,6 +3093,8 @@ WaitEventIO
 WaitEventIPC
 WaitEventSet
 WaitEventTimeout
+WaitLSNProcInfo
+WaitLSNState
 WaitPMResult
 WalCloseMethod
 WalCompression
@@ -3257,6 +3317,7 @@ check_network_data
 check_object_relabel_type
 check_password_hook_type
 check_ungrouped_columns_context
+child_process_kind
 chr
 cmpEntriesArg
 codes_t
@@ -3949,8 +4010,6 @@ xl_hash_update_meta_page
 xl_hash_vacuum_one_page
 xl_heap_confirm
 xl_heap_delete
-xl_heap_freeze_page
-xl_heap_freeze_plan
 xl_heap_header
 xl_heap_inplace
 xl_heap_insert
@@ -3962,7 +4021,6 @@ xl_heap_prune
 xl_heap_rewrite_mapping
 xl_heap_truncate
 xl_heap_update
-xl_heap_vacuum
 xl_heap_visible
 xl_invalid_page
 xl_invalid_page_key
@@ -4002,6 +4060,9 @@ xl_xact_stats_items
 xl_xact_subxacts
 xl_xact_twophase
 xl_xact_xinfo
+xlhp_freeze_plan
+xlhp_freeze_plans
+xlhp_prune_items
 xmlBuffer
 xmlBufferPtr
 xmlChar
@@ -4040,6 +4101,7 @@ BlockRefTableReader
 BlockRefTableSerializedEntry
 BlockRefTableWriter
 SummarizerReadLocalXLogPrivate
+SysloggerStartupData
 WalSummarizerData
 WalSummaryFile
 WalSummaryIO
@@ -4058,6 +4120,12 @@ rfile
 ws_options
 ws_file_info
 PathKeyInfo
+TidStore
+TidStoreIter
+TidStoreIterResult
+BlocktableEntry
+ItemArray
+bh_nodeidx_entry
 
 # TODO
 AlterPropGraphElementKind

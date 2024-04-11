@@ -285,6 +285,7 @@
    &pgarchivecleanup;
    &pgChecksums;
    &pgControldata;
+   &pgCreateSubscriber;
    &pgCtl;
    &pgResetwal;
    &pgRewind;

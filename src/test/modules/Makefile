@@ -22,6 +22,7 @@ SUBDIRS = \
 		  test_extensions \
 		  test_ginpostinglist \
 		  test_integerset \
+		  test_json_parser \
 		  test_lfind \
 		  test_misc \
 		  test_oat_hooks \
@@ -35,6 +36,8 @@ SUBDIRS = \
 		  test_rls_hooks \
 		  test_shm_mq \
 		  test_slru \
+		  test_tam_options \
+		  test_tidstore \
 		  unsafe_tests \
 		  worker_spi \
 		  xid_wraparound

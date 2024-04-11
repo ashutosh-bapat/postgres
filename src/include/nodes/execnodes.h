@@ -544,9 +544,11 @@ typedef struct ResultRelInfo
 	/* ON CONFLICT evaluation state */
 	OnConflictSetState *ri_onConflict;
 
-	/* for MERGE, lists of MergeActionState */
-	List	   *ri_matchedMergeAction;
-	List	   *ri_notMatchedMergeAction;
+	/* for MERGE, lists of MergeActionState (one per MergeMatchKind) */
+	List	   *ri_MergeActions[3];
+
+	/* for MERGE, expr state for checking the join condition */
+	ExprState  *ri_MergeJoinCondition;
 
 	/* partition check expression state (NULL if not set up yet) */
 	ExprState  *ri_PartitionCheckExpr;
@@ -1008,6 +1010,79 @@ typedef struct DomainConstraintState
 	ExprState  *check_exprstate;	/* check_expr's eval state, or NULL */
 } DomainConstraintState;
 
+/*
+ * State for JsonExpr evaluation, too big to inline.
+ *
+ * This contains the information going into and coming out of the
+ * EEOP_JSONEXPR_PATH eval step.
+ */
+typedef struct JsonExprState
+{
+	/* original expression node */
+	JsonExpr   *jsexpr;
+
+	/* value/isnull for formatted_expr */
+	NullableDatum formatted_expr;
+
+	/* value/isnull for pathspec */
+	NullableDatum pathspec;
+
+	/* JsonPathVariable entries for passing_values */
+	List	   *args;
+
+	/*
+	 * Output variables that drive the EEOP_JUMP_IF_NOT_TRUE steps that are
+	 * added for ON ERROR and ON EMPTY expressions, if any.
+	 *
+	 * Reset for each evaluation of EEOP_JSONEXPR_PATH.
+	 */
+
+	/* Set to true if jsonpath evaluation cause an error.  */
+	NullableDatum error;
+
+	/* Set to true if the jsonpath evaluation returned 0 items. */
+	NullableDatum empty;
+
+	/*
+	 * Addresses of steps that implement the non-ERROR variant of ON EMPTY and
+	 * ON ERROR behaviors, respectively.
+	 */
+	int			jump_empty;
+	int			jump_error;
+
+	/*
+	 * Address of the step to coerce the result value of jsonpath evaluation
+	 * to the RETURNING type using JsonExpr.coercion_expr.  -1 if no coercion
+	 * is necessary or if either JsonExpr.use_io_coercion or
+	 * JsonExpr.use_json_coercion is true.
+	 */
+	int			jump_eval_coercion;
+
+	/*
+	 * Address to jump to when skipping all the steps after performing
+	 * ExecEvalJsonExprPath() so as to return whatever the JsonPath* function
+	 * returned as is, that is, in the cases where there's no error and no
+	 * coercion is necessary.
+	 */
+	int			jump_end;
+
+	/*
+	 * RETURNING type input function invocation info when
+	 * JsonExpr.use_io_coercion is true.
+	 */
+	FmgrInfo   *input_finfo;
+	FunctionCallInfo input_fcinfo;
+
+	/*
+	 * For error-safe evaluation of coercions.  When the ON ERROR behavior is
+	 * not ERROR, a pointer to this is passed to ExecInitExprRec() when
+	 * initializing the coercion expressions or to ExecInitJsonCoercion().
+	 *
+	 * Reset for each evaluation of EEOP_JSONEXPR_PATH.
+	 */
+	ErrorSaveContext escontext;
+} JsonExprState;
+
 
 /* ----------------------------------------------------------------
  *				 Executor State Trees
@@ -1324,6 +1399,16 @@ typedef struct ModifyTableState
 
 	/* Flags showing which subcommands are present INS/UPD/DEL/DO NOTHING */
 	int			mt_merge_subcommands;
+
+	/* For MERGE, the action currently being executed */
+	MergeActionState *mt_merge_action;
+
+	/*
+	 * For MERGE, if there is a pending NOT MATCHED [BY TARGET] action to be
+	 * performed, this will be the last tuple read from the subplan; otherwise
+	 * it will be NULL --- see the comments in ExecMerge().
+	 */
+	TupleTableSlot *mt_merge_pending_not_matched;
 
 	/* tuple counters for MERGE */
 	double		mt_merge_inserted;
@@ -1709,10 +1794,7 @@ typedef struct ParallelBitmapHeapState
  *		tbm				   bitmap obtained from child index scan(s)
  *		tbmiterator		   iterator for scanning current pages
  *		tbmres			   current-page data
- *		can_skip_fetch	   can we potentially skip tuple fetches in this scan?
- *		return_empty_tuples number of empty tuples to return
- *		vmbuffer		   buffer for visibility-map lookups
- *		pvmbuffer		   ditto, for prefetched pages
+ *		pvmbuffer		   buffer for visibility-map lookups of prefetched pages
  *		exact_pages		   total number of exact pages retrieved
  *		lossy_pages		   total number of lossy pages retrieved
  *		prefetch_iterator  iterator for prefetching ahead of current page
@@ -1732,9 +1814,6 @@ typedef struct BitmapHeapScanState
 	TIDBitmap  *tbm;
 	TBMIterator *tbmiterator;
 	TBMIterateResult *tbmres;
-	bool		can_skip_fetch;
-	int			return_empty_tuples;
-	Buffer		vmbuffer;
 	Buffer		pvmbuffer;
 	long		exact_pages;
 	long		lossy_pages;
@@ -1878,6 +1957,8 @@ typedef struct TableFuncScanState
 	ExprState  *rowexpr;		/* state for row-generating expression */
 	List	   *colexprs;		/* state for column-generating expression */
 	List	   *coldefexprs;	/* state for column default expressions */
+	List	   *colvalexprs;	/* state for column value expressions */
+	List	   *passingvalexprs;	/* state for PASSING argument expressions */
 	List	   *ns_names;		/* same as TableFunc.ns_names */
 	List	   *ns_uris;		/* list of states of namespace URI exprs */
 	Bitmapset  *notnulls;		/* nullability flag for each output column */

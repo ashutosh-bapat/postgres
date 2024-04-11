@@ -25,6 +25,15 @@
  * which slot sync worker can perform the sync periodically or user can call
  * pg_sync_replication_slots() periodically to perform the syncs.
  *
+ * If synchronized slots fail to build a consistent snapshot from the
+ * restart_lsn before reaching confirmed_flush_lsn, they would become
+ * unreliable after promotion due to potential data loss from changes
+ * before reaching a consistent point. This can happen because the slots can
+ * be synced at some random time and we may not reach the consistent point
+ * at the same WAL location as the primary. So, we mark such slots as
+ * RS_TEMPORARY. Once the decoding from corresponding LSNs can reach a
+ * consistent point, they will be marked as RS_PERSISTENT.
+ *
  * The slot sync worker waits for some time before the next synchronization,
  * with the duration varying based on whether any slots were updated during
  * the last cycle. Refer to the comments above wait_for_slot_activity() for
@@ -49,8 +58,9 @@
 #include "postmaster/fork_process.h"
 #include "postmaster/interrupt.h"
 #include "postmaster/postmaster.h"
-#include "replication/slot.h"
+#include "replication/logical.h"
 #include "replication/slotsync.h"
+#include "replication/snapbuild.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -139,12 +149,8 @@ typedef struct RemoteSlot
 	ReplicationSlotInvalidationCause invalidated;
 } RemoteSlot;
 
-#ifdef EXEC_BACKEND
-static pid_t slotsyncworker_forkexec(void);
-#endif
-NON_EXEC_STATIC void ReplSlotSyncWorkerMain(int argc, char *argv[]) pg_attribute_noreturn();
-
 static void slotsync_failure_callback(int code, Datum arg);
+static void update_synced_slots_inactive_since(void);
 
 /*
  * If necessary, update the local synced slot's metadata based on the data
@@ -152,50 +158,85 @@ static void slotsync_failure_callback(int code, Datum arg);
  *
  * If no update was needed (the data of the remote slot is the same as the
  * local slot) return false, otherwise true.
+ *
+ * *found_consistent_snapshot will be true iff the remote slot's LSN or xmin is
+ * modified, and decoding from the corresponding LSN's can reach a
+ * consistent snapshot.
  */
 static bool
-update_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid)
+update_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid,
+						 bool *found_consistent_snapshot)
 {
 	ReplicationSlot *slot = MyReplicationSlot;
-	bool		xmin_changed;
-	bool		restart_lsn_changed;
-	NameData	plugin_name;
+	bool		slot_updated = false;
 
 	Assert(slot->data.invalidated == RS_INVAL_NONE);
 
-	xmin_changed = (remote_slot->catalog_xmin != slot->data.catalog_xmin);
-	restart_lsn_changed = (remote_slot->restart_lsn != slot->data.restart_lsn);
+	if (found_consistent_snapshot)
+		*found_consistent_snapshot = false;
 
-	if (!xmin_changed &&
-		!restart_lsn_changed &&
-		remote_dbid == slot->data.database &&
-		remote_slot->two_phase == slot->data.two_phase &&
-		remote_slot->failover == slot->data.failover &&
-		remote_slot->confirmed_lsn == slot->data.confirmed_flush &&
-		strcmp(remote_slot->plugin, NameStr(slot->data.plugin)) == 0)
-		return false;
+	if (remote_slot->confirmed_lsn != slot->data.confirmed_flush ||
+		remote_slot->restart_lsn != slot->data.restart_lsn ||
+		remote_slot->catalog_xmin != slot->data.catalog_xmin)
+	{
+		/*
+		 * We can't directly copy the remote slot's LSN or xmin unless there
+		 * exists a consistent snapshot at that point. Otherwise, after
+		 * promotion, the slots may not reach a consistent point before the
+		 * confirmed_flush_lsn which can lead to a data loss. To avoid data
+		 * loss, we let slot machinery advance the slot which ensures that
+		 * snapbuilder/slot statuses are updated properly.
+		 */
+		if (SnapBuildSnapshotExists(remote_slot->restart_lsn))
+		{
+			/*
+			 * Update the slot info directly if there is a serialized snapshot
+			 * at the restart_lsn, as the slot can quickly reach consistency
+			 * at restart_lsn by restoring the snapshot.
+			 */
+			SpinLockAcquire(&slot->mutex);
+			slot->data.restart_lsn = remote_slot->restart_lsn;
+			slot->data.confirmed_flush = remote_slot->confirmed_lsn;
+			slot->data.catalog_xmin = remote_slot->catalog_xmin;
+			slot->effective_catalog_xmin = remote_slot->catalog_xmin;
+			SpinLockRelease(&slot->mutex);
 
-	/* Avoid expensive operations while holding a spinlock. */
-	namestrcpy(&plugin_name, remote_slot->plugin);
+			if (found_consistent_snapshot)
+				*found_consistent_snapshot = true;
+		}
+		else
+		{
+			LogicalSlotAdvanceAndCheckSnapState(remote_slot->confirmed_lsn,
+												found_consistent_snapshot);
+		}
 
-	SpinLockAcquire(&slot->mutex);
-	slot->data.plugin = plugin_name;
-	slot->data.database = remote_dbid;
-	slot->data.two_phase = remote_slot->two_phase;
-	slot->data.failover = remote_slot->failover;
-	slot->data.restart_lsn = remote_slot->restart_lsn;
-	slot->data.confirmed_flush = remote_slot->confirmed_lsn;
-	slot->data.catalog_xmin = remote_slot->catalog_xmin;
-	slot->effective_catalog_xmin = remote_slot->catalog_xmin;
-	SpinLockRelease(&slot->mutex);
-
-	if (xmin_changed)
 		ReplicationSlotsComputeRequiredXmin(false);
-
-	if (restart_lsn_changed)
 		ReplicationSlotsComputeRequiredLSN();
 
-	return true;
+		slot_updated = true;
+	}
+
+	if (remote_dbid != slot->data.database ||
+		remote_slot->two_phase != slot->data.two_phase ||
+		remote_slot->failover != slot->data.failover ||
+		strcmp(remote_slot->plugin, NameStr(slot->data.plugin)) != 0)
+	{
+		NameData	plugin_name;
+
+		/* Avoid expensive operations while holding a spinlock. */
+		namestrcpy(&plugin_name, remote_slot->plugin);
+
+		SpinLockAcquire(&slot->mutex);
+		slot->data.plugin = plugin_name;
+		slot->data.database = remote_dbid;
+		slot->data.two_phase = remote_slot->two_phase;
+		slot->data.failover = remote_slot->failover;
+		SpinLockRelease(&slot->mutex);
+
+		slot_updated = true;
+	}
+
+	return slot_updated;
 }
 
 /*
@@ -418,6 +459,7 @@ static bool
 update_and_persist_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 {
 	ReplicationSlot *slot = MyReplicationSlot;
+	bool		found_consistent_snapshot = false;
 
 	/*
 	 * Check if the primary server has caught up. Refer to the comment atop
@@ -448,9 +490,22 @@ update_and_persist_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 		return false;
 	}
 
-	/* First time slot update, the function must return true */
-	if (!update_local_synced_slot(remote_slot, remote_dbid))
-		elog(ERROR, "failed to update slot");
+	(void) update_local_synced_slot(remote_slot, remote_dbid,
+									&found_consistent_snapshot);
+
+	/*
+	 * Don't persist the slot if it cannot reach the consistent point from the
+	 * restart_lsn. See comments atop this file.
+	 */
+	if (!found_consistent_snapshot)
+	{
+		ereport(LOG,
+				errmsg("could not sync slot \"%s\"", remote_slot->name),
+				errdetail("Logical decoding cannot find consistent point from local slot's LSN %X/%X.",
+						  LSN_FORMAT_ARGS(slot->data.restart_lsn)));
+
+		return false;
+	}
 
 	ReplicationSlotPersist();
 
@@ -530,6 +585,11 @@ synchronize_one_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 		 * overwriting 'invalidated' flag to remote_slot's value. See
 		 * InvalidatePossiblyObsoleteSlot() where it invalidates slot directly
 		 * if the slot is not acquired by other processes.
+		 *
+		 * XXX: If it ever turns out that slot acquire/release is costly for
+		 * cases when none of the slot properties is changed then we can do a
+		 * pre-check to ensure that at least one of the slot properties is
+		 * changed before acquiring the slot.
 		 */
 		ReplicationSlotAcquire(remote_slot->name, true);
 
@@ -583,7 +643,7 @@ synchronize_one_slot(RemoteSlot *remote_slot, Oid remote_dbid)
 					 LSN_FORMAT_ARGS(remote_slot->restart_lsn));
 
 			/* Make sure the slot changes persist across server restart */
-			if (update_local_synced_slot(remote_slot, remote_dbid))
+			if (update_local_synced_slot(remote_slot, remote_dbid, NULL))
 			{
 				ReplicationSlotMarkDirty();
 				ReplicationSlotSave();
@@ -668,7 +728,7 @@ synchronize_slots(WalReceiverConn *wrconn)
 	bool		started_tx = false;
 	const char *query = "SELECT slot_name, plugin, confirmed_flush_lsn,"
 		" restart_lsn, catalog_xmin, two_phase, failover,"
-		" database, conflict_reason"
+		" database, invalidation_reason"
 		" FROM pg_catalog.pg_replication_slots"
 		" WHERE failover and NOT temporary";
 
@@ -1113,14 +1173,16 @@ wait_for_slot_activity(bool some_slot_updated)
  * It connects to the primary server, fetches logical failover slots
  * information periodically in order to create and sync the slots.
  */
-NON_EXEC_STATIC void
-ReplSlotSyncWorkerMain(int argc, char *argv[])
+void
+ReplSlotSyncWorkerMain(char *startup_data, size_t startup_data_len)
 {
 	WalReceiverConn *wrconn = NULL;
 	char	   *dbname;
 	char	   *err;
 	sigjmp_buf	local_sigjmp_buf;
 	StringInfoData app_name;
+
+	Assert(startup_data_len == 0);
 
 	MyBackendType = B_SLOTSYNC_WORKER;
 
@@ -1249,7 +1311,7 @@ ReplSlotSyncWorkerMain(int argc, char *argv[])
 	if (cluster_name[0])
 		appendStringInfo(&app_name, "%s_%s", cluster_name, "slotsync worker");
 	else
-		appendStringInfo(&app_name, "%s", "slotsync worker");
+		appendStringInfoString(&app_name, "slotsync worker");
 
 	/*
 	 * Establish the connection to the primary server for slot
@@ -1300,65 +1362,52 @@ ReplSlotSyncWorkerMain(int argc, char *argv[])
 }
 
 /*
- * Main entry point for slot sync worker process, to be called from the
- * postmaster.
+ * Update the inactive_since property for synced slots.
+ *
+ * Note that this function is currently called when we shutdown the slot
+ * sync machinery.
  */
-int
-StartSlotSyncWorker(void)
+static void
+update_synced_slots_inactive_since(void)
 {
-	pid_t		pid;
+	TimestampTz now = 0;
 
-#ifdef EXEC_BACKEND
-	switch ((pid = slotsyncworker_forkexec()))
+	/*
+	 * We need to update inactive_since only when we are promoting standby to
+	 * correctly interpret the inactive_since if the standby gets promoted
+	 * without a restart. We don't want the slots to appear inactive for a
+	 * long time after promotion if they haven't been synchronized recently.
+	 * Whoever acquires the slot i.e.makes the slot active will reset it.
+	 */
+	if (!StandbyMode)
+		return;
+
+	/* The slot sync worker mustn't be running by now */
+	Assert(SlotSyncCtx->pid == InvalidPid);
+
+	LWLockAcquire(ReplicationSlotControlLock, LW_SHARED);
+
+	for (int i = 0; i < max_replication_slots; i++)
 	{
-#else
-	switch ((pid = fork_process()))
-	{
-		case 0:
-			/* in postmaster child ... */
-			InitPostmasterChild();
+		ReplicationSlot *s = &ReplicationSlotCtl->replication_slots[i];
 
-			/* Close the postmaster's sockets */
-			ClosePostmasterPorts(false);
+		/* Check if it is a synchronized slot */
+		if (s->in_use && s->data.synced)
+		{
+			Assert(SlotIsLogical(s));
 
-			ReplSlotSyncWorkerMain(0, NULL);
-			break;
-#endif
-		case -1:
-			ereport(LOG,
-					(errmsg("could not fork slot sync worker process: %m")));
-			return 0;
+			/* Use the same inactive_since time for all the slots. */
+			if (now == 0)
+				now = GetCurrentTimestamp();
 
-		default:
-			return (int) pid;
+			SpinLockAcquire(&s->mutex);
+			s->inactive_since = now;
+			SpinLockRelease(&s->mutex);
+		}
 	}
 
-	/* shouldn't get here */
-	return 0;
+	LWLockRelease(ReplicationSlotControlLock);
 }
-
-#ifdef EXEC_BACKEND
-/*
- * The forkexec routine for the slot sync worker process.
- *
- * Format up the arglist, then fork and exec.
- */
-static pid_t
-slotsyncworker_forkexec(void)
-{
-	char	   *av[10];
-	int			ac = 0;
-
-	av[ac++] = "postgres";
-	av[ac++] = "--forkssworker";
-	av[ac++] = NULL;			/* filled in by postmaster_forkexec */
-	av[ac] = NULL;
-
-	Assert(ac < lengthof(av));
-
-	return postmaster_forkexec(ac, av);
-}
-#endif
 
 /*
  * Shut down the slot sync worker.
@@ -1373,6 +1422,7 @@ ShutDownSlotSync(void)
 	if (SlotSyncCtx->pid == InvalidPid)
 	{
 		SpinLockRelease(&SlotSyncCtx->mutex);
+		update_synced_slots_inactive_since();
 		return;
 	}
 	SpinLockRelease(&SlotSyncCtx->mutex);
@@ -1405,6 +1455,8 @@ ShutDownSlotSync(void)
 	}
 
 	SpinLockRelease(&SlotSyncCtx->mutex);
+
+	update_synced_slots_inactive_since();
 }
 
 /*

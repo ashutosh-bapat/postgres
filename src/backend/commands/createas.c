@@ -85,6 +85,9 @@ create_ctas_internal(List *attrList, IntoClause *into)
 	Datum		toast_options;
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 	ObjectAddress intoRelationAddr;
+	const TableAmRoutine *tableam = NULL;
+	Oid			accessMethodId = InvalidOid;
+	Relation	rel;
 
 	/* This code supports both CREATE TABLE AS and CREATE MATERIALIZED VIEW */
 	is_matview = (into->viewQuery != NULL);
@@ -125,7 +128,15 @@ create_ctas_internal(List *attrList, IntoClause *into)
 										validnsps,
 										true, false);
 
-	(void) heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
+	rel = relation_open(intoRelationAddr.objectId, AccessShareLock);
+	accessMethodId = table_relation_toast_am(rel);
+	relation_close(rel, AccessShareLock);
+
+	if (OidIsValid(accessMethodId))
+	{
+		tableam = GetTableAmRoutineByAmOid(accessMethodId);
+		(void) tableam_reloptions(tableam, RELKIND_TOASTVALUE, toast_options, NULL, true);
+	}
 
 	NewRelationCreateToastTable(intoRelationAddr.objectId, toast_options);
 
@@ -578,6 +589,7 @@ static bool
 intorel_receive(TupleTableSlot *slot, DestReceiver *self)
 {
 	DR_intorel *myState = (DR_intorel *) self;
+	bool		insertIndexes;
 
 	/* Nothing to insert if WITH NO DATA is specified. */
 	if (!myState->into->skipData)
@@ -594,7 +606,8 @@ intorel_receive(TupleTableSlot *slot, DestReceiver *self)
 						   slot,
 						   myState->output_cid,
 						   myState->ti_options,
-						   myState->bistate);
+						   myState->bistate,
+						   &insertIndexes);
 	}
 
 	/* We know this is a newly created relation, so there are no indexes */

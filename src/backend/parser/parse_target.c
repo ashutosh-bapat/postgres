@@ -1825,6 +1825,10 @@ FigureColnameInternal(Node *node, char **name)
 			/* make GROUPING() act like a regular function */
 			*name = "grouping";
 			return 2;
+		case T_MergeSupportFunc:
+			/* make MERGE_ACTION() act like a regular function */
+			*name = "merge_action";
+			return 2;
 		case T_SubLink:
 			switch (((SubLink *) node)->subLinkType)
 			{
@@ -2007,6 +2011,25 @@ FigureColnameInternal(Node *node, char **name)
 			/* make JSON_ARRAYAGG act like a regular function */
 			*name = "json_arrayagg";
 			return 2;
+		case T_JsonFuncExpr:
+			/* make SQL/JSON functions act like a regular function */
+			switch (((JsonFuncExpr *) node)->op)
+			{
+				case JSON_EXISTS_OP:
+					*name = "json_exists";
+					return 2;
+				case JSON_QUERY_OP:
+					*name = "json_query";
+					return 2;
+				case JSON_VALUE_OP:
+					*name = "json_value";
+					return 2;
+					/* JSON_TABLE_OP can't happen here. */
+				default:
+					elog(ERROR, "unrecognized JsonExpr op: %d",
+						 (int) ((JsonFuncExpr *) node)->op);
+			}
+			break;
 		default:
 			break;
 	}

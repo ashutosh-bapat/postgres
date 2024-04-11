@@ -45,6 +45,7 @@ volatile uint32 CritSectionCount = 0;
 int			MyProcPid;
 pg_time_t	MyStartTime;
 TimestampTz MyStartTimestamp;
+struct ClientSocket *MyClientSocket;
 struct Port *MyProcPort;
 int32		MyCancelKey;
 int			MyPMChildSlot;
@@ -142,7 +143,7 @@ int			max_parallel_workers = 8;
 int			MaxBackends = 0;
 
 /* GUC parameters for vacuum */
-int			VacuumBufferUsageLimit = 256;
+int			VacuumBufferUsageLimit = 2048;
 
 int			VacuumCostPageHit = 1;
 int			VacuumCostPageMiss = 2;
