@@ -120,3 +120,7 @@ SELECT pg_get_viewdef('customers_us'::regclass);
 
 -- leave for pg_upgrade/pg_dump tests
 --DROP SCHEMA graph_table_tests CASCADE;
+
+-- TODO: Create two property graphs with some same named tables and properties
+-- but differing definitions to test that properties and labels corresponding
+-- to a property graph mentioned in the query are picked up.
