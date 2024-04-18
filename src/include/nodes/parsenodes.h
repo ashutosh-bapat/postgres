@@ -994,6 +994,10 @@ typedef enum GraphElementPatternKind
 	PAREN_EXPR,
 } GraphElementPatternKind;
 
+#define IS_EDGE_PATTERN(kind) ((kind) == EDGE_PATTERN_ANY || \
+							   (kind) == EDGE_PATTERN_RIGHT || \
+							   (kind) == EDGE_PATTERN_LEFT)
+
 typedef struct GraphElementPattern
 {
 	NodeTag		type;
