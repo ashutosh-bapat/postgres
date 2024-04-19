@@ -61,9 +61,9 @@ INSERT INTO customers VALUES
     (2, 'customer2', 'CA'),
     (3, 'customer3', 'GL');
 INSERT INTO orders VALUES
-    (1, '2024-01-01'),
-    (2, '2024-01-02'),
-    (3, '2024-01-03');
+    (1, date '2024-01-01'),
+    (2, date '2024-01-02'),
+    (3, date '2024-01-03');
 INSERT INTO order_items (order_items_id, order_id, product_no, quantity) VALUES
     (1, 1, 1, 5),
     (2, 1, 2, 10),
@@ -73,7 +73,7 @@ INSERT INTO customer_orders (customer_orders_id, customer_id, order_id) VALUES
     (2, 2, 2);
 
 SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
-SELECT * FROM GRAPH_TABLE (myshop MATCH (c:customers)-[co:customer_orders]->(o:orders WHERE o.ordered_when = '2024-01-02') COLUMNS (c.name, c.address));
+SELECT * FROM GRAPH_TABLE (myshop MATCH (c:customers)-[co:customer_orders]->(o:orders WHERE o.ordered_when = date '2024-01-02') COLUMNS (c.name, c.address));
 SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)-[IS customer_orders]->(c IS customers) COLUMNS (c.name, o.ordered_when));
 SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)<-[IS customer_orders]-(c IS customers) COLUMNS (c.name, o.ordered_when));
 
@@ -85,7 +85,7 @@ SELECT pg_get_viewdef('customers_us'::regclass);
 
 CREATE VIEW customers_view AS SELECT customer_id, 'redacted' || customer_id AS name_redacted, address FROM customers;
 SELECT * FROM customers;
-SELECT * FROm customers_view;
+SELECT * FROM customers_view;
 
 CREATE PROPERTY GRAPH myshop2
     VERTEX TABLES (
