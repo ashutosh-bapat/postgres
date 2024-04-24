@@ -1,0 +1,4 @@
+# palloc_test extension
+comment = 'Testing performance of memory context'
+default_version = '1.1'
+module_pathname = '$libdir/palloc_test'
