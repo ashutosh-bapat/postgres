@@ -1073,7 +1073,7 @@ PinBufferForBlock(Relation rel,
 
 	/*
 	 * If there is no Relation it usually implies recovery and thus permanent,
-	 * but we take an argmument because CreateAndCopyRelationData can reach us
+	 * but we take an argument because CreateAndCopyRelationData can reach us
 	 * with only an SMgrRelation for an unlogged relation that we don't want
 	 * to flag with BM_PERMANENT.
 	 */
@@ -3014,7 +3014,6 @@ BufferSync(int flags)
 	 */
 	ts_heap = binaryheap_allocate(num_spaces,
 								  ts_ckpt_progress_comparator,
-								  false,
 								  NULL);
 
 	for (i = 0; i < num_spaces; i++)

@@ -1843,6 +1843,8 @@ typedef struct JsonFuncExpr
 {
 	NodeTag		type;
 	JsonExprOp	op;				/* expression type */
+	char	   *column_name;	/* JSON_TABLE() column name or NULL if this is
+								 * not for a JSON_TABLE() */
 	JsonValueExpr *context_item;	/* context item expression */
 	Node	   *pathspec;		/* JSON path specification expression */
 	List	   *passing;		/* list of PASSING clause arguments, if any */
@@ -1851,7 +1853,7 @@ typedef struct JsonFuncExpr
 	JsonBehavior *on_error;		/* ON ERROR behavior */
 	JsonWrapper wrapper;		/* array wrapper behavior (JSON_QUERY only) */
 	JsonQuotes	quotes;			/* omit or keep quotes? (JSON_QUERY only) */
-	int			location;		/* token location, or -1 if unknown */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } JsonFuncExpr;
 
 /*
@@ -1865,8 +1867,8 @@ typedef struct JsonTablePathSpec
 
 	Node	   *string;
 	char	   *name;
-	int			name_location;
-	int			location;		/* location of 'string' */
+	ParseLoc	name_location;
+	ParseLoc	location;		/* location of 'string' */
 } JsonTablePathSpec;
 
 /*
@@ -1883,7 +1885,7 @@ typedef struct JsonTable
 	JsonBehavior *on_error;		/* ON ERROR behavior */
 	Alias	   *alias;			/* table alias in FROM clause */
 	bool		lateral;		/* does it have LATERAL prefix? */
-	int			location;		/* token location, or -1 if unknown */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } JsonTable;
 
 /*
@@ -1916,7 +1918,7 @@ typedef struct JsonTableColumn
 	List	   *columns;		/* nested columns */
 	JsonBehavior *on_empty;		/* ON EMPTY behavior */
 	JsonBehavior *on_error;		/* ON ERROR behavior */
-	int			location;		/* token location, or -1 if unknown */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } JsonTableColumn;
 
 /*
@@ -4203,7 +4205,12 @@ typedef struct DeallocateStmt
 	NodeTag		type;
 	/* The name of the plan to remove, NULL if DEALLOCATE ALL */
 	char	   *name pg_node_attr(query_jumble_ignore);
-	/* true if DEALLOCATE ALL */
+
+	/*
+	 * True if DEALLOCATE ALL.  This is redundant with "name == NULL", but we
+	 * make it a separate field so that exactly this condition (and not the
+	 * precise name) will be accounted for in query jumbling.
+	 */
 	bool		isall;
 	/* token location, or -1 if unknown */
 	ParseLoc	location pg_node_attr(query_jumble_location);

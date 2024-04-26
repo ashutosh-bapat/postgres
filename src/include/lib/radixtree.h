@@ -64,7 +64,7 @@
  * small enough.
  *
  * There are two other techniques described in the paper that are not
- * impemented here:
+ * implemented here:
  * - path compression "...removes all inner nodes that have only a single child."
  * - lazy path expansion "...inner nodes are only created if they are required
  *   to distinguish at least two leaf nodes."
@@ -385,7 +385,7 @@ typedef struct RT_NODE
 
 	/*
 	 * Number of children. uint8 is sufficient for all node kinds, because
-	 * nodes shrink when this number gets lower than some thresold. Since
+	 * nodes shrink when this number gets lower than some threshold. Since
 	 * node256 cannot possibly have zero children, we let the counter overflow
 	 * and we interpret zero as "256" for this node kind.
 	 */
@@ -1581,7 +1581,7 @@ RT_EXTEND_UP(RT_RADIX_TREE * tree, uint64 key)
 
 	Assert(shift < target_shift);
 
-	/* Grow tree upwards until start shift can accomodate the key */
+	/* Grow tree upwards until start shift can accommodate the key */
 	while (shift < target_shift)
 	{
 		RT_CHILD_PTR node;
@@ -1749,6 +1749,10 @@ have_slot:
 
 	if (RT_VALUE_IS_EMBEDDABLE(value_p))
 	{
+		/* free the existing leaf */
+		if (found && !RT_CHILDPTR_IS_VALUE(*slot))
+			RT_FREE_LEAF(tree, *slot);
+
 		/* store value directly in child pointer slot */
 		memcpy(slot, value_p, value_sz);
 
@@ -1765,7 +1769,7 @@ have_slot:
 	{
 		RT_CHILD_PTR leaf;
 
-		if (found)
+		if (found && !RT_CHILDPTR_IS_VALUE(*slot))
 		{
 			Assert(RT_PTR_ALLOC_IS_VALID(*slot));
 			leaf.alloc = *slot;

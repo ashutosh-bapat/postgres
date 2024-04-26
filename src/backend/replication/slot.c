@@ -237,7 +237,7 @@ ReplicationSlotShmemExit(int code, Datum arg)
 		ReplicationSlotRelease();
 
 	/* Also cleanup all the temporary slots. */
-	ReplicationSlotCleanup();
+	ReplicationSlotCleanup(false);
 }
 
 /*
@@ -736,10 +736,13 @@ ReplicationSlotRelease(void)
 }
 
 /*
- * Cleanup all temporary slots created in current session.
+ * Cleanup temporary slots created in current session.
+ *
+ * Cleanup only synced temporary slots if 'synced_only' is true, else
+ * cleanup all temporary slots.
  */
 void
-ReplicationSlotCleanup(void)
+ReplicationSlotCleanup(bool synced_only)
 {
 	int			i;
 
@@ -755,7 +758,8 @@ restart:
 			continue;
 
 		SpinLockAcquire(&s->mutex);
-		if (s->active_pid == MyProcPid)
+		if ((s->active_pid == MyProcPid &&
+			 (!synced_only || s->data.synced)))
 		{
 			Assert(s->data.persistency == RS_TEMPORARY);
 			SpinLockRelease(&s->mutex);
@@ -1545,8 +1549,8 @@ InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
 	int			last_signaled_pid = 0;
 	bool		released_lock = false;
 	bool		terminated = false;
-	XLogRecPtr	initial_effective_xmin = InvalidXLogRecPtr;
-	XLogRecPtr	initial_catalog_effective_xmin = InvalidXLogRecPtr;
+	TransactionId initial_effective_xmin = InvalidTransactionId;
+	TransactionId initial_catalog_effective_xmin = InvalidTransactionId;
 	XLogRecPtr	initial_restart_lsn = InvalidXLogRecPtr;
 	ReplicationSlotInvalidationCause invalidation_cause_prev PG_USED_FOR_ASSERTS_ONLY = RS_INVAL_NONE;
 

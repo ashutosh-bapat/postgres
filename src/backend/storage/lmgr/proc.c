@@ -36,7 +36,6 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xlogutils.h"
-#include "commands/waitlsn.h"
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "postmaster/autovacuum.h"
@@ -863,11 +862,6 @@ ProcKill(int code, Datum arg)
 	 */
 	LWLockReleaseAll();
 
-	/*
-	 * Cleanup waiting for LSN if any.
-	 */
-	WaitLSNCleanup();
-
 	/* Cancel any pending condition variable sleep, too */
 	ConditionVariableCancelSleep();
 
@@ -1053,7 +1047,7 @@ AuxiliaryPidGetProc(int pid)
  * called, because it could be that when we try to find a position at which
  * to insert ourself into the wait queue, we discover that we must be inserted
  * ahead of everyone who wants a lock that conflict with ours. In that case,
- * we get the lock immediately. Beause of this, it's sensible for this function
+ * we get the lock immediately. Because of this, it's sensible for this function
  * to have a dontWait argument, despite the name.
  *
  * The lock table's partition lock must be held at entry, and will be held

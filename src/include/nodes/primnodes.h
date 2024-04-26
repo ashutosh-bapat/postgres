@@ -1756,7 +1756,7 @@ typedef struct JsonBehavior
 	JsonBehaviorType btype;
 	Node	   *expr;
 	bool		coerce;
-	int			location;		/* token location, or -1 if unknown */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } JsonBehavior;
 
 /*
@@ -1782,13 +1782,16 @@ typedef struct JsonExpr
 
 	JsonExprOp	op;
 
+	char	   *column_name;	/* JSON_TABLE() column name or NULL if this is
+								 * not for a JSON_TABLE() */
+
 	/* jsonb-valued expression to query */
 	Node	   *formatted_expr;
 
 	/* Format of the above expression needed by ruleutils.c */
 	JsonFormat *format;
 
-	/* jsopath-valued expression containing the query pattern */
+	/* jsonpath-valued expression containing the query pattern */
 	Node	   *path_spec;
 
 	/* Expected type/format of the output. */
@@ -1825,7 +1828,7 @@ typedef struct JsonExpr
 	Oid			collation;
 
 	/* Original JsonFuncExpr's location */
-	int			location;
+	ParseLoc	location;
 } JsonExpr;
 
 /*
@@ -1966,6 +1969,8 @@ typedef enum MergeMatchKind
 	MERGE_WHEN_NOT_MATCHED_BY_SOURCE,
 	MERGE_WHEN_NOT_MATCHED_BY_TARGET
 } MergeMatchKind;
+
+#define NUM_MERGE_MATCH_KINDS (MERGE_WHEN_NOT_MATCHED_BY_TARGET + 1)
 
 typedef struct MergeAction
 {

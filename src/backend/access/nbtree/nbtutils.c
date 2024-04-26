@@ -392,7 +392,6 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 		elemtype = cur->sk_subtype;
 		if (elemtype == InvalidOid)
 			elemtype = rel->rd_opcintype[cur->sk_attno - 1];
-		Assert(elemtype == ARR_ELEMTYPE(arrayval));
 
 		/*
 		 * If the comparison operator is not equality, then the array qual
@@ -1756,7 +1755,7 @@ _bt_start_prim_scan(IndexScanDesc scan, ScanDirection dir)
  *
  * (The rules are the same for backwards scans, except that the operators are
  * flipped: just replace the precondition's >= operator with a <=, and the
- * postcondition's <= operator with with a >=.  In other words, just swap the
+ * postcondition's <= operator with a >=.  In other words, just swap the
  * precondition with the postcondition.)
  *
  * We also deal with "advancing" non-required arrays here.  Callers whose
@@ -2573,19 +2572,16 @@ _bt_preprocess_keys(IndexScanDesc scan)
 	int		   *keyDataMap = NULL;
 	int			arrayidx = 0;
 
-	/*
-	 * We're called at the start of each primitive index scan during scans
-	 * that use equality array keys.  We can just reuse the scan keys that
-	 * were output at the start of the scan's first primitive index scan.
-	 */
 	if (so->numberOfKeys > 0)
 	{
 		/*
-		 * An earlier call to _bt_advance_array_keys already set everything up
-		 * already.  Just assert that the scan's existing output scan keys are
-		 * consistent with its current array elements.
+		 * Only need to do preprocessing once per btrescan, at most.  All
+		 * calls after the first are handled as no-ops.
+		 *
+		 * If there are array scan keys in so->keyData[], then the now-current
+		 * array elements must already be present in each array's scan key.
+		 * Verify that that happened using an assertion.
 		 */
-		Assert(so->numArrayKeys);
 		Assert(_bt_verify_keys_with_arraykeys(scan));
 		return;
 	}
@@ -3394,6 +3390,13 @@ _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption)
 		return true;
 	}
 
+	if (skey->sk_strategy == InvalidStrategy)
+	{
+		/* Already-eliminated array scan key; don't need to fix anything */
+		Assert(skey->sk_flags & SK_SEARCHARRAY);
+		return true;
+	}
+
 	/* Adjust strategy for DESC, if we didn't already */
 	if ((addflags & SK_BT_DESC) && !(skey->sk_flags & SK_BT_DESC))
 		skey->sk_strategy = BTCommuteStrategyNumber(skey->sk_strategy);
@@ -4126,7 +4129,7 @@ _bt_checkkeys_look_ahead(IndexScanDesc scan, BTReadPageState *pstate,
 	else
 	{
 		/*
-		 * Failure -- "ahead" tuple is too far ahead (we were too aggresive).
+		 * Failure -- "ahead" tuple is too far ahead (we were too aggressive).
 		 *
 		 * Reset the number of rechecks, and aggressively reduce the target
 		 * distance (we're much more aggressive here than we were when the

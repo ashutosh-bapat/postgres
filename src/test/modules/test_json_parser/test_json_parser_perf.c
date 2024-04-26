@@ -1,14 +1,14 @@
 /*-------------------------------------------------------------------------
  *
  * test_json_parser_perf.c
- *    Performancet est program for both flavors of the JSON parser
+ *    Performance test program for both flavors of the JSON parser
  *
- * Copyright (c) 2023, PostgreSQL Global Development Group
+ * Copyright (c) 2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *    src/test/modules/test_json_parser/test_json_parser_perf.c
  *
- * This progam tests either the standard (recursive descent) JSON parser
+ * This program tests either the standard (recursive descent) JSON parser
  * or the incremental (table driven) parser, but without breaking the input
  * into chunks in the latter case. Thus it can be used to compare the pure
  * parsing speed of the two parsers. If the "-i" option is used, then the
@@ -23,16 +23,18 @@
 
 #include "postgres_fe.h"
 #include "common/jsonapi.h"
+#include "common/logging.h"
 #include "lib/stringinfo.h"
 #include "mb/pg_wchar.h"
 #include <stdio.h>
 #include <string.h>
 
+#define BUFSIZE 6000
+
 int
 main(int argc, char **argv)
 {
-	/* max delicious line length is less than this */
-	char		buff[6001];
+	char		buff[BUFSIZE];
 	FILE	   *json_file;
 	JsonParseErrorType result;
 	JsonLexContext *lex;
@@ -40,6 +42,8 @@ main(int argc, char **argv)
 	int			n_read;
 	int			iter;
 	int			use_inc = 0;
+
+	pg_logging_init(argv[0]);
 
 	initStringInfo(&json);
 
@@ -51,7 +55,9 @@ main(int argc, char **argv)
 
 	sscanf(argv[1], "%d", &iter);
 
-	json_file = fopen(argv[2], "r");
+	if ((json_file = fopen(argv[2], "r")) == NULL)
+		pg_fatal("Could not open input file '%s': %m", argv[2]);
+
 	while ((n_read = fread(buff, 1, 6000, json_file)) > 0)
 	{
 		appendBinaryStringInfo(&json, buff, n_read);
@@ -75,12 +81,8 @@ main(int argc, char **argv)
 			freeJsonLexContext(lex);
 		}
 		if (result != JSON_SUCCESS)
-		{
-			fprintf(stderr,
-					"unexpected result %d (expecting %d) on parse\n",
-					result, JSON_SUCCESS);
-			exit(1);
-		}
+			pg_fatal("unexpected result %d (expecting %d) on parse",
+					 result, JSON_SUCCESS);
 	}
 	exit(0);
 }

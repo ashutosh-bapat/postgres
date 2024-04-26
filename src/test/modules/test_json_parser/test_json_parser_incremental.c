@@ -3,16 +3,20 @@
  * test_json_parser_incremental.c
  *    Test program for incremental JSON parser
  *
- * Copyright (c) 2023, PostgreSQL Global Development Group
+ * Copyright (c) 2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *    src/test/modules/test_json_parser/test_json_parser_incremental.c
  *
- * This progam tests incremental parsing of json. The input is fed into
+ * This program tests incremental parsing of json. The input is fed into
  * the parser in very small chunks. In practice you would normally use
  * much larger chunks, but doing this makes it more likely that the
- * full range of incement handling, especially in the lexer, is exercised.
- * If the "-c SIZE" option is provided, that chunk size is used instead.
+ * full range of increment handling, especially in the lexer, is exercised.
+ * If the "-c SIZE" option is provided, that chunk size is used instead
+ * of the default of 60.
+ *
+ * If the -s flag is given, the program does semantic processing. This should
+ * just mirror back the json, albeit with white space changes.
  *
  * The argument specifies the file containing the JSON input.
  *
@@ -27,9 +31,13 @@
 #include <unistd.h>
 
 #include "common/jsonapi.h"
+#include "common/logging.h"
 #include "lib/stringinfo.h"
 #include "mb/pg_wchar.h"
 #include "pg_getopt.h"
+
+#define BUFSIZE 6000
+#define DEFAULT_CHUNK_SIZE 60
 
 typedef struct DoState
 {
@@ -67,14 +75,13 @@ JsonSemAction sem = {
 int
 main(int argc, char **argv)
 {
-	/* max delicious line length is less than this */
-	char		buff[6001];
+	char		buff[BUFSIZE];
 	FILE	   *json_file;
 	JsonParseErrorType result;
 	JsonLexContext lex;
 	StringInfoData json;
 	int			n_read;
-	size_t		chunk_size = 60;
+	size_t		chunk_size = DEFAULT_CHUNK_SIZE;
 	struct stat statbuf;
 	off_t		bytes_left;
 	JsonSemAction *testsem = &nullSemAction;
@@ -82,12 +89,16 @@ main(int argc, char **argv)
 	int			c;
 	bool		need_strings = false;
 
+	pg_logging_init(argv[0]);
+
 	while ((c = getopt(argc, argv, "c:s")) != -1)
 	{
 		switch (c)
 		{
 			case 'c':			/* chunksize */
 				sscanf(optarg, "%zu", &chunk_size);
+				if (chunk_size > BUFSIZE)
+					pg_fatal("chunk size cannot exceed %d", BUFSIZE);
 				break;
 			case 's':			/* do semantic processing */
 				testsem = &sem;
@@ -113,14 +124,32 @@ main(int argc, char **argv)
 	makeJsonLexContextIncremental(&lex, PG_UTF8, need_strings);
 	initStringInfo(&json);
 
-	json_file = fopen(testfile, "r");
-	fstat(fileno(json_file), &statbuf);
+	if ((json_file = fopen(testfile, "r")) == NULL)
+		pg_fatal("error opening input: %m");
+
+	if (fstat(fileno(json_file), &statbuf) != 0)
+		pg_fatal("error statting input: %m");
+
 	bytes_left = statbuf.st_size;
 
 	for (;;)
 	{
+		/* We will break when there's nothing left to read */
+
+		if (bytes_left < chunk_size)
+			chunk_size = bytes_left;
+
 		n_read = fread(buff, 1, chunk_size, json_file);
+		if (n_read < chunk_size)
+			pg_fatal("error reading input file: %d", ferror(json_file));
+
 		appendBinaryStringInfo(&json, buff, n_read);
+
+		/*
+		 * Append some trailing junk to the buffer passed to the parser. This
+		 * helps us ensure that the parser does the right thing even if the
+		 * chunk isn't terminated with a '\0'.
+		 */
 		appendStringInfoString(&json, "1+23 trailing junk");
 		bytes_left -= n_read;
 		if (bytes_left > 0)

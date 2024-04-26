@@ -153,7 +153,7 @@ transform_MERGE_to_join(Query *parse)
 {
 	RangeTblEntry *joinrte;
 	JoinExpr   *joinexpr;
-	bool		have_action[3];
+	bool		have_action[NUM_MERGE_MATCH_KINDS];
 	JoinType	jointype;
 	int			joinrti;
 	List	   *vars;
@@ -1857,6 +1857,10 @@ pull_up_constant_function(PlannerInfo *root, Node *jtnode,
 	 */
 	if (rtf->funccolcount != 1)
 		return jtnode;			/* definitely composite */
+
+	/* If it has a coldeflist, it certainly returns RECORD */
+	if (rtf->funccolnames != NIL)
+		return jtnode;			/* must be a one-column RECORD type */
 
 	functypclass = get_expr_result_type(rtf->funcexpr,
 										&funcrettype,

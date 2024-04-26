@@ -126,7 +126,7 @@ main(int argc, char *argv[])
 		{"dry-run", no_argument, NULL, 'n'},
 		{"no-sync", no_argument, NULL, 'N'},
 		{"output", required_argument, NULL, 'o'},
-		{"tablespace-mapping", no_argument, NULL, 'T'},
+		{"tablespace-mapping", required_argument, NULL, 'T'},
 		{"manifest-checksums", required_argument, NULL, 1},
 		{"no-manifest", no_argument, NULL, 2},
 		{"sync-method", required_argument, NULL, 3},
@@ -163,7 +163,7 @@ main(int argc, char *argv[])
 	opt.copy_method = COPY_METHOD_COPY;
 
 	/* process command-line options */
-	while ((c = getopt_long(argc, argv, "dnNPo:T:",
+	while ((c = getopt_long(argc, argv, "dnNo:T:",
 							long_options, &optindex)) != -1)
 	{
 		switch (c)
@@ -583,6 +583,8 @@ check_control_files(int n_backups, char **backup_dirs)
 {
 	int			i;
 	uint64		system_identifier = 0;	/* placate compiler */
+	uint32		data_checksum_version = 0;	/* placate compiler */
+	bool		data_checksum_mismatch = false;
 
 	/* Try to read each control file in turn, last to first. */
 	for (i = n_backups - 1; i >= 0; --i)
@@ -612,6 +614,16 @@ check_control_files(int n_backups, char **backup_dirs)
 					 controlpath, (unsigned long long) system_identifier,
 					 (unsigned long long) control_file->system_identifier);
 
+		/*
+		 * Detect checksum mismatches, but only if the last backup in the
+		 * chain has checksums enabled.
+		 */
+		if (i == n_backups - 1)
+			data_checksum_version = control_file->data_checksum_version;
+		else if (data_checksum_version != 0 &&
+				 data_checksum_version != control_file->data_checksum_version)
+			data_checksum_mismatch = true;
+
 		/* Release memory. */
 		pfree(control_file);
 		pfree(controlpath);
@@ -623,6 +635,16 @@ check_control_files(int n_backups, char **backup_dirs)
 	 */
 	pg_log_debug("system identifier is %llu",
 				 (unsigned long long) system_identifier);
+
+	/*
+	 * Warn the user if not all backups are in the same state with regards to
+	 * checksums.
+	 */
+	if (data_checksum_mismatch)
+	{
+		pg_log_warning("only some backups have checksums enabled");
+		pg_log_warning_hint("disable, and optionally reenable, checksums on the output directory to avoid failures");
+	}
 
 	return system_identifier;
 }
@@ -727,17 +749,18 @@ help(const char *progname)
 	printf(_("  %s [OPTION]... DIRECTORY...\n"), progname);
 	printf(_("\nOptions:\n"));
 	printf(_("  -d, --debug               generate lots of debugging output\n"));
-	printf(_("  -n, --dry-run             don't actually do anything\n"));
+	printf(_("  -n, --dry-run             do not actually do anything\n"));
 	printf(_("  -N, --no-sync             do not wait for changes to be written safely to disk\n"));
 	printf(_("  -o, --output              output directory\n"));
 	printf(_("  -T, --tablespace-mapping=OLDDIR=NEWDIR\n"
 			 "                            relocate tablespace in OLDDIR to NEWDIR\n"));
+	printf(_("      --clone               clone (reflink) instead of copying files\n"));
+	printf(_("      --copy-file-range     copy using copy_file_range() syscall\n"));
 	printf(_("      --manifest-checksums=SHA{224,256,384,512}|CRC32C|NONE\n"
 			 "                            use algorithm for manifest checksums\n"));
 	printf(_("      --no-manifest         suppress generation of backup manifest\n"));
 	printf(_("      --sync-method=METHOD  set method for syncing files to disk\n"));
-	printf(_("      --clone               clone (reflink) instead of copying files\n"));
-	printf(_("      --copy-file-range     copy using copy_file_range() syscall\n"));
+	printf(_("  -V, --version             output version information, then exit\n"));
 	printf(_("  -?, --help                show this help, then exit\n"));
 
 	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
@@ -799,25 +822,45 @@ process_directory_recursively(Oid tsoid,
 	char		manifest_prefix[MAXPGPATH];
 	DIR		   *dir;
 	struct dirent *de;
-	bool		is_pg_tblspc;
-	bool		is_pg_wal;
+	bool		is_pg_tblspc = false;
+	bool		is_pg_wal = false;
+	bool		is_incremental_dir = false;
 	manifest_data *latest_manifest = manifests[n_prior_backups];
 	pg_checksum_type checksum_type;
 
 	/*
-	 * pg_tblspc and pg_wal are special cases, so detect those here.
+	 * Classify this directory.
 	 *
-	 * pg_tblspc is only special at the top level, but subdirectories of
-	 * pg_wal are just as special as the top level directory.
+	 * We set is_pg_tblspc only for the toplevel pg_tblspc directory, because
+	 * the symlinks in that specific directory require special handling.
 	 *
-	 * Since incremental backup does not exist in pre-v10 versions, we don't
-	 * have to worry about the old pg_xlog naming.
+	 * We set is_pg_wal for the toplevel WAL directory and all of its
+	 * subdirectories, because those files are not included in the backup
+	 * manifest and hence need special treatement. (Since incremental backup
+	 * does not exist in pre-v10 versions, we don't have to worry about the
+	 * old pg_xlog naming.)
+	 *
+	 * We set is_incremental_dir for directories that can contain incremental
+	 * files requiring reconstruction. If such files occur outside these
+	 * directories, we want to just copy them straight to the output
+	 * directory. This is to protect against a user creating a file with a
+	 * strange name like INCREMENTAL.config and then compaining that
+	 * incremental backups don't work properly. The test here is a bit tricky:
+	 * incremental files occur in subdirectories of base, in pg_global itself,
+	 * and in subdirectories of pg_tblspc only if in-place tablespaces are
+	 * used.
 	 */
-	is_pg_tblspc = !OidIsValid(tsoid) && relative_path != NULL &&
-		strcmp(relative_path, "pg_tblspc") == 0;
-	is_pg_wal = !OidIsValid(tsoid) && relative_path != NULL &&
-		(strcmp(relative_path, "pg_wal") == 0 ||
-		 strncmp(relative_path, "pg_wal/", 7) == 0);
+	if (OidIsValid(tsoid))
+		is_incremental_dir = true;
+	else if (relative_path != NULL)
+	{
+		is_pg_tblspc = strcmp(relative_path, "pg_tblspc") == 0;
+		is_pg_wal = (strcmp(relative_path, "pg_wal") == 0 ||
+					 strncmp(relative_path, "pg_wal/", 7) == 0);
+		is_incremental_dir = strncmp(relative_path, "base/", 5) == 0 ||
+			strcmp(relative_path, "global") == 0 ||
+			strncmp(relative_path, "pg_tblspc/", 10) == 0;
+	}
 
 	/*
 	 * If we're under pg_wal, then we don't need checksums, because these
@@ -955,7 +998,8 @@ process_directory_recursively(Oid tsoid,
 		 * If it's an incremental file, hand it off to the reconstruction
 		 * code, which will figure out what to do.
 		 */
-		if (strncmp(de->d_name, INCREMENTAL_PREFIX,
+		if (is_incremental_dir &&
+			strncmp(de->d_name, INCREMENTAL_PREFIX,
 					INCREMENTAL_PREFIX_LENGTH) == 0)
 		{
 			/* Output path should not include "INCREMENTAL." prefix. */
@@ -969,7 +1013,7 @@ process_directory_recursively(Oid tsoid,
 
 			/* Reconstruction logic will do the rest. */
 			reconstruct_from_incremental_file(ifullpath, ofullpath,
-											  relative_path,
+											  manifest_prefix,
 											  de->d_name + INCREMENTAL_PREFIX_LENGTH,
 											  n_prior_backups,
 											  prior_backup_dirs,
@@ -1156,7 +1200,7 @@ remember_to_cleanup_directory(char *target_path, bool rmtopdir)
 }
 
 /*
- * Empty out the list of directories scheduled for cleanup a exit.
+ * Empty out the list of directories scheduled for cleanup at exit.
  *
  * We want to remove the output directories only on a failure, so call this
  * function when we know that the operation has succeeded.

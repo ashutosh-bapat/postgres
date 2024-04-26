@@ -320,24 +320,21 @@ extern void heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 						int options, BulkInsertState bistate);
 extern void heap_multi_insert(Relation relation, struct TupleTableSlot **slots,
 							  int ntuples, CommandId cid, int options,
-							  BulkInsertState bistate, bool *insert_indexes);
+							  BulkInsertState bistate);
 extern TM_Result heap_delete(Relation relation, ItemPointer tid,
-							 CommandId cid, Snapshot crosscheck, int options,
-							 struct TM_FailureData *tmfd, bool changingPart,
-							 TupleTableSlot *oldSlot);
+							 CommandId cid, Snapshot crosscheck, bool wait,
+							 struct TM_FailureData *tmfd, bool changingPart);
 extern void heap_finish_speculative(Relation relation, ItemPointer tid);
 extern void heap_abort_speculative(Relation relation, ItemPointer tid);
 extern TM_Result heap_update(Relation relation, ItemPointer otid,
 							 HeapTuple newtup,
-							 CommandId cid, Snapshot crosscheck, int options,
+							 CommandId cid, Snapshot crosscheck, bool wait,
 							 struct TM_FailureData *tmfd, LockTupleMode *lockmode,
-							 TU_UpdateIndexes *update_indexes,
-							 TupleTableSlot *oldSlot);
-extern TM_Result heap_lock_tuple(Relation relation, ItemPointer tid,
-								 TupleTableSlot *slot,
-								 CommandId cid, LockTupleMode mode,
-								 LockWaitPolicy wait_policy, bool follow_updates,
-								 struct TM_FailureData *tmfd);
+							 TU_UpdateIndexes *update_indexes);
+extern TM_Result heap_lock_tuple(Relation relation, HeapTuple tuple,
+								 CommandId cid, LockTupleMode mode, LockWaitPolicy wait_policy,
+								 bool follow_updates,
+								 Buffer *buffer, struct TM_FailureData *tmfd);
 
 extern void heap_inplace_update(Relation relation, HeapTuple tuple);
 extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
@@ -411,14 +408,6 @@ extern void HeapTupleSetHintBits(HeapTupleHeader tuple, Buffer buffer,
 extern bool HeapTupleHeaderIsOnlyLocked(HeapTupleHeader tuple);
 extern bool HeapTupleIsSurelyDead(HeapTuple htup,
 								  struct GlobalVisState *vistest);
-
-/* in heap/heapam_handler.c*/
-extern bool heapam_scan_analyze_next_block(TableScanDesc scan,
-										   ReadStream *stream);
-extern bool heapam_scan_analyze_next_tuple(TableScanDesc scan,
-										   TransactionId OldestXmin,
-										   double *liverows, double *deadrows,
-										   TupleTableSlot *slot);
 
 /*
  * To avoid leaking too much knowledge about reorderbuffer implementation
