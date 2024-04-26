@@ -728,7 +728,6 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %token <ival>	ICONST PARAM
 %token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
-%token			BRACKET_RIGHT_ARROW LEFT_ARROW_BRACKET MINUS_LEFT_BRACKET RIGHT_BRACKET_MINUS
 
 /*
  * If you want to make any keyword changes, update the keyword table in
@@ -923,7 +922,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %nonassoc	UNBOUNDED NESTED /* ideally would have same precedence as IDENT */
 %nonassoc	IDENT PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
 			SET KEYS OBJECT_P SCALAR VALUE_P WITH WITHOUT PATH
-%left		Op OPERATOR LEFT_ARROW RIGHT_ARROW '|'	/* multi-character ops and user-defined operators */
+%left		Op OPERATOR RIGHT_ARROW '|'	/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
 %left		'^'
@@ -15378,8 +15377,6 @@ a_expr:		c_expr									{ $$ = $1; }
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2); }
 			| a_expr NOT_EQUALS a_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2); }
-			| a_expr LEFT_ARROW a_expr
-				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<-", $1, $3, @2); }
 			| a_expr RIGHT_ARROW a_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "->", $1, $3, @2); }
 			| a_expr '|' a_expr
@@ -15863,8 +15860,6 @@ b_expr:		c_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2); }
 			| b_expr NOT_EQUALS b_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2); }
-			| b_expr LEFT_ARROW b_expr
-				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<-", $1, $3, @2); }
 			| b_expr RIGHT_ARROW b_expr
 				{ $$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "->", $1, $3, @2); }
 			| b_expr '|' b_expr
@@ -17037,7 +17032,6 @@ MathOp:		 '+'									{ $$ = "+"; }
 			| LESS_EQUALS							{ $$ = "<="; }
 			| GREATER_EQUALS						{ $$ = ">="; }
 			| NOT_EQUALS							{ $$ = "<>"; }
-			| LEFT_ARROW							{ $$ = "<-"; }
 			| RIGHT_ARROW							{ $$ = "->"; }
 			| '|'									{ $$ = "|"; }
 		;
@@ -17695,50 +17689,71 @@ path_primary:
 					$$ = (Node *) gep;
 				}
 			/* full edge pointing left: <-[ xxx ]- */
-			| LEFT_ARROW_BRACKET opt_colid opt_is_label_expression where_clause RIGHT_BRACKET_MINUS
+			| '<' '-' '[' opt_colid opt_is_label_expression where_clause ']' '-'
 				{
 					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
 					gep->kind = EDGE_PATTERN_LEFT;
-					gep->variable = $2;
-					gep->labelexpr = $3;
-					gep->whereClause = $4;
+					gep->variable = $4;
+					gep->labelexpr = $5;
+					gep->whereClause = $6;
 					gep->location = @1;
 
 					$$ = (Node *) gep;
 				}
 			/* full edge pointing right: -[ xxx ]-> */
-			| MINUS_LEFT_BRACKET opt_colid opt_is_label_expression where_clause BRACKET_RIGHT_ARROW
+			| '-' '[' opt_colid opt_is_label_expression where_clause ']' '-' '>'
 				{
 					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
 					gep->kind = EDGE_PATTERN_RIGHT;
-					gep->variable = $2;
-					gep->labelexpr = $3;
-					gep->whereClause = $4;
+					gep->variable = $3;
+					gep->labelexpr = $4;
+					gep->whereClause = $5;
+					gep->location = @1;
+
+					$$ = (Node *) gep;
+				}
+			| '-' '[' opt_colid opt_is_label_expression where_clause ']' RIGHT_ARROW
+				{
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
+
+					gep->kind = EDGE_PATTERN_RIGHT;
+					gep->variable = $3;
+					gep->labelexpr = $4;
+					gep->whereClause = $5;
 					gep->location = @1;
 
 					$$ = (Node *) gep;
 				}
 			/* full edge any direction: -[ xxx ]- */
-			| MINUS_LEFT_BRACKET opt_colid opt_is_label_expression where_clause RIGHT_BRACKET_MINUS
+			| '-' '[' opt_colid opt_is_label_expression where_clause ']' '-'
 				{
 					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
 					gep->kind = EDGE_PATTERN_ANY;
-					gep->variable = $2;
-					gep->labelexpr = $3;
-					gep->whereClause = $4;
+					gep->variable = $3;
+					gep->labelexpr = $4;
+					gep->whereClause = $5;
 					gep->location = @1;
 
 					$$ = (Node *) gep;
 				}
 			/* abbreviated edge patterns */
-			| LEFT_ARROW
+			| '<' '-'
 				{
 					GraphElementPattern *gep = makeNode(GraphElementPattern);
 
 					gep->kind = EDGE_PATTERN_LEFT;
+					gep->location = @1;
+
+					$$ = (Node *) gep;
+				}
+			| '-' '>'
+				{
+					GraphElementPattern *gep = makeNode(GraphElementPattern);
+
+					gep->kind = EDGE_PATTERN_RIGHT;
 					gep->location = @1;
 
 					$$ = (Node *) gep;

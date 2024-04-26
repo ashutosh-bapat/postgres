@@ -335,6 +335,8 @@ less_equals		"<="
 greater_equals	">="
 less_greater	"<>"
 not_equals		"!="
+/* Note there is no need for left_arrow, since "<-" is not a single operator. */
+right_arrow		"->"
 
 /*
  * "self" is the set of chars that should be returned as single-character
@@ -818,6 +820,10 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 					return NOT_EQUALS;
 				}
 
+{right_arrow}	{
+					return RIGHT_ARROW;
+				}
+
 {informix_special}	{
 			  /* are we simulating Informix? */
 				if (INFORMIX_MODE)
@@ -929,6 +935,8 @@ cppline			{space}*#([^i][A-Za-z]*|{if}|{ifdef}|{ifndef}|{import})((\/\*[^*/]*\*+
 								return NOT_EQUALS;
 							if (yytext[0] == '!' && yytext[1] == '=')
 								return NOT_EQUALS;
+							if (yytext[0] == '-' && yytext[1] == '>')
+								return RIGHT_ARROW;
 						}
 					}
 

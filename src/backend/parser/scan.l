@@ -353,11 +353,6 @@ typecast		"::"
 dot_dot			\.\.
 colon_equals	":="
 
-bracket_right_arrow	"]->"
-left_arrow_bracket	"<-["
-minus_left_bracket	"-["
-right_bracket_minus	"]-"
-
 /*
  * These operator-like tokens (unlike the above ones) also match the {operator}
  * rule, which means that they might be overridden by a longer match if they
@@ -371,8 +366,7 @@ less_equals		"<="
 greater_equals	">="
 less_greater	"<>"
 not_equals		"!="
-
-left_arrow		"<-"
+/* Note there is no need for left_arrow, since "<-" is not a single operator. */
 right_arrow		"->"
 
 /*
@@ -858,26 +852,6 @@ other			.
 					return COLON_EQUALS;
 				}
 
-{bracket_right_arrow} {
-					SET_YYLLOC();
-					return BRACKET_RIGHT_ARROW;
-				}
-
-{left_arrow_bracket} {
-					SET_YYLLOC();
-					return LEFT_ARROW_BRACKET;
-				}
-
-{minus_left_bracket} {
-					SET_YYLLOC();
-					return MINUS_LEFT_BRACKET;
-				}
-
-{right_bracket_minus} {
-					SET_YYLLOC();
-					return RIGHT_BRACKET_MINUS;
-				}
-
 {equals_greater} {
 					SET_YYLLOC();
 					return EQUALS_GREATER;
@@ -903,11 +877,6 @@ other			.
 					/* We accept both "<>" and "!=" as meaning NOT_EQUALS */
 					SET_YYLLOC();
 					return NOT_EQUALS;
-				}
-
-{left_arrow}	{
-					SET_YYLLOC();
-					return LEFT_ARROW;
 				}
 
 {right_arrow}	{
@@ -1012,6 +981,8 @@ other			.
 								return NOT_EQUALS;
 							if (yytext[0] == '!' && yytext[1] == '=')
 								return NOT_EQUALS;
+							if (yytext[0] == '-' && yytext[1] == '>')
+								return RIGHT_ARROW;
 						}
 					}
 

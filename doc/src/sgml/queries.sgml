@@ -2808,6 +2808,13 @@ SELECT ... FROM GRAPH_TABLE (mygraph MATCH ... COLUMNS (...)) AS myresult (a, b,
     <literal>-[]-></literal> are an edge pattern.
    </para>
 
+   <para>
+    These characters can also be separated by whitespace, for example:
+<programlisting>
+( ) - [ ] - > ( )
+</programlisting>
+   </para>
+
    <tip>
     <para>
      A way to remember these symbols is that in visual representations of
