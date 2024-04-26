@@ -313,7 +313,7 @@ not_equals		"!="
  * If you change either set, adjust the character lists appearing in the
  * rule for "operator"!
  */
-self			[,()\[\].;\:\+\-\*\/\%\^\<\>\=]
+self			[,()\[\].;\:\|\+\-\*\/\%\^\<\>\=]
 op_chars		[\~\!\@\#\^\&\|\`\?\+\-\*\/\%\<\>\=]
 operator		{op_chars}+
 
