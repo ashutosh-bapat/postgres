@@ -49,7 +49,9 @@ ERROR:  "pg_class" is not a property graph
 LINE 1: SELECT customer_name FROM GRAPH_TABLE (pg_class MATCH (c IS ...
                                                ^
 SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (cx.name AS customer_name));  -- error
-ERROR:  graph pattern variable "cx" does not exist
+ERROR:  missing FROM-clause entry for table "cx"
+LINE 1: ...US')-[IS customer_orders]->(o IS orders) COLUMNS (cx.name AS...
+                                                             ^
 SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.namex AS customer_name));  -- error
 ERROR:  property "namex" does not exist
 INSERT INTO products VALUES
@@ -95,6 +97,16 @@ SELECT * FROM GRAPH_TABLE (myshop MATCH (o IS orders)<-[IS customer_orders]-(c I
  customer2 | 01-02-2024
 (2 rows)
 
+-- lateral test
+CREATE TABLE x1 (a int, b text);
+INSERT INTO x1 VALUES (1, 'one'), (2, 'two');
+SELECT * FROM x1, GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US' AND c.customer_id = x1.a)-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name, c.customer_id AS cid));
+ a |  b  | customer_name | cid 
+---+-----+---------------+-----
+ 1 | one | customer1     |   1
+(1 row)
+
+DROP TABLE x1;
 CREATE VIEW customers_us AS SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));
 SELECT pg_get_viewdef('customers_us'::regclass);
                                                                           pg_get_viewdef                                                                           

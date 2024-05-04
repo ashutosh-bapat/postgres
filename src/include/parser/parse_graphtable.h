@@ -24,8 +24,8 @@ typedef struct GraphTableParseState
 	List	   *variables;
 } GraphTableParseState;
 
-extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref);
+extern Node *graph_table_property_reference(ParseState *pstate, ColumnRef *cref, Node *var);
 
-Node	   *transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern);
+extern Node *transformGraphPattern(ParseState *pstate, GraphTableParseState *gpstate, GraphPattern *graph_pattern);
 
 #endif							/* PARSE_GRAPHTABLE_H */

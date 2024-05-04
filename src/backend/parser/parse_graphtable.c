@@ -75,12 +75,9 @@ get_property_type(Oid graphid, const char *propname)
  * Resolve a property reference.
  */
 Node *
-graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
+graph_table_property_reference(ParseState *pstate, ColumnRef *cref, Node *var)
 {
 	GraphTableParseState *gpstate = pstate->p_ref_hook_state;
-	GraphPropertyRef *gpr = makeNode(GraphPropertyRef);
-
-	gpr->location = cref->location;
 
 	if (list_length(cref->fields) == 2)
 	{
@@ -92,22 +89,20 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref)
 		elvarname = strVal(field1);
 		propname = strVal(field2);
 
-		if (!list_member(gpstate->variables, field1))
-			ereport(ERROR,
-					errcode(ERRCODE_SYNTAX_ERROR),
-					errmsg("graph pattern variable \"%s\" does not exist", elvarname),
-					parser_errposition(pstate, cref->location));
+		if (list_member(gpstate->variables, field1))
+		{
+			GraphPropertyRef *gpr = makeNode(GraphPropertyRef);
 
-		gpr->elvarname = elvarname;
-		gpr->propname = propname;
+			gpr->location = cref->location;
+			gpr->elvarname = elvarname;
+			gpr->propname = propname;
+			gpr->typeId = get_property_type(gpstate->graphid, gpr->propname);
 
+			return (Node *) gpr;
+		}
 	}
-	else
-		elog(ERROR, "invalid property reference");
 
-	gpr->typeId = get_property_type(gpstate->graphid, gpr->propname);
-
-	return (Node *) gpr;
+	return NULL;
 }
 
 /*
@@ -174,21 +169,15 @@ transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
  * Transform a GraphElementPattern.
  */
 static Node *
-transformGraphElementPattern(GraphTableParseState *gpstate, GraphElementPattern *gep)
+transformGraphElementPattern(ParseState *pstate, GraphTableParseState *gpstate, GraphElementPattern *gep)
 {
-	ParseState *pstate2;
-
-	pstate2 = make_parsestate(NULL);
-	pstate2->p_pre_columnref_hook = graph_table_property_reference;
-	pstate2->p_ref_hook_state = gpstate;
-
 	if (gep->variable)
 		gpstate->variables = lappend(gpstate->variables, makeString(pstrdup(gep->variable)));
 
 	gep->labelexpr = transformLabelExpr(gpstate, gep->labelexpr);
 
-	gep->whereClause = transformExpr(pstate2, gep->whereClause, EXPR_KIND_OTHER);
-	assign_expr_collations(pstate2, gep->whereClause);
+	gep->whereClause = transformExpr(pstate, gep->whereClause, EXPR_KIND_OTHER);
+	assign_expr_collations(pstate, gep->whereClause);
 
 	return (Node *) gep;
 }
@@ -197,14 +186,14 @@ transformGraphElementPattern(GraphTableParseState *gpstate, GraphElementPattern 
  * Transform a path term (list of GraphElementPattern's).
  */
 static Node *
-transformPathTerm(GraphTableParseState *gpstate, List *path_term)
+transformPathTerm(ParseState *pstate, GraphTableParseState *gpstate, List *path_term)
 {
 	List	   *result = NIL;
 	ListCell   *lc;
 
 	foreach(lc, path_term)
 	{
-		Node	   *n = transformGraphElementPattern(gpstate, lfirst_node(GraphElementPattern, lc));
+		Node	   *n = transformGraphElementPattern(pstate, gpstate, lfirst_node(GraphElementPattern, lc));
 
 		result = lappend(result, n);
 	}
@@ -216,14 +205,14 @@ transformPathTerm(GraphTableParseState *gpstate, List *path_term)
  * Transform a path pattern list (list of path terms).
  */
 static Node *
-transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
+transformPathPatternList(ParseState *pstate, GraphTableParseState *gpstate, List *path_pattern)
 {
 	List	   *result = NIL;
 	ListCell   *lc;
 
 	foreach(lc, path_pattern)
 	{
-		Node	   *n = transformPathTerm(gpstate, lfirst(lc));
+		Node	   *n = transformPathTerm(pstate, gpstate, lfirst(lc));
 
 		result = lappend(result, n);
 	}
@@ -235,17 +224,11 @@ transformPathPatternList(GraphTableParseState *gpstate, List *path_pattern)
  * Transform a GraphPattern.
  */
 Node *
-transformGraphPattern(GraphTableParseState *gpstate, GraphPattern *graph_pattern)
+transformGraphPattern(ParseState *pstate, GraphTableParseState *gpstate, GraphPattern *graph_pattern)
 {
-	ParseState *pstate2;
-
-	pstate2 = make_parsestate(NULL);
-	pstate2->p_pre_columnref_hook = graph_table_property_reference;
-	pstate2->p_ref_hook_state = gpstate;
-
-	graph_pattern->path_pattern_list = (List *) transformPathPatternList(gpstate, graph_pattern->path_pattern_list);
-	graph_pattern->whereClause = transformExpr(pstate2, graph_pattern->whereClause, EXPR_KIND_OTHER);
-	assign_expr_collations(pstate2, graph_pattern->whereClause);
+	graph_pattern->path_pattern_list = (List *) transformPathPatternList(pstate, gpstate, graph_pattern->path_pattern_list);
+	graph_pattern->whereClause = transformExpr(pstate, graph_pattern->whereClause, EXPR_KIND_OTHER);
+	assign_expr_collations(pstate, graph_pattern->whereClause);
 
 	return (Node *) graph_pattern;
 }

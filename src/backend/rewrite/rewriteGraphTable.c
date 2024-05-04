@@ -211,6 +211,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 
 	rte->rtekind = RTE_SUBQUERY;
 	rte->subquery = newsubquery;
+	rte->lateral = true;
 
 	/*
 	 * Reset no longer applicable fields, to appease
@@ -325,7 +326,21 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 {
 	if (node == NULL)
 		return NULL;
-	if (IsA(node, GraphPropertyRef))
+	if (IsA(node, Var))
+	{
+		Var		   *var = (Var *) node;
+		Var		   *newvar = copyObject(var);
+
+		/*
+		 * If it's already a Var, then it was a lateral reference.  Since we
+		 * are in a subquery after the rewrite, we have to increase the level
+		 * by one.
+		 */
+		newvar->varlevelsup++;
+
+		return (Node *) newvar;
+	}
+	else if (IsA(node, GraphPropertyRef))
 	{
 		GraphPropertyRef *gpr = (GraphPropertyRef *) node;
 		HeapTuple	tup;

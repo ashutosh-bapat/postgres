@@ -911,7 +911,6 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 {
 	Relation	rel;
 	Oid			graphid;
-	ParseState *pstate2;
 	GraphTableParseState *gpstate = palloc0_object(GraphTableParseState);
 	Node	   *gp;
 	List	   *columns = NIL;
@@ -931,11 +930,12 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 	gpstate->graphid = graphid;
 
-	gp = transformGraphPattern(gpstate, rgt->graph_pattern);
+	pstate->p_post_columnref_hook = graph_table_property_reference;
+	pstate->p_ref_hook_state = gpstate;
+	Assert(!pstate->p_lateral_active);
+	pstate->p_lateral_active = true;
 
-	pstate2 = make_parsestate(NULL);
-	pstate2->p_pre_columnref_hook = graph_table_property_reference;
-	pstate2->p_ref_hook_state = gpstate;
+	gp = transformGraphPattern(pstate, gpstate, rgt->graph_pattern);
 
 	foreach(lc, rgt->columns)
 	{
@@ -944,7 +944,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 		TargetEntry *te;
 		char	   *colname;
 
-		colexpr = transformExpr(pstate2, rt->val, EXPR_KIND_OTHER);
+		colexpr = transformExpr(pstate, rt->val, EXPR_KIND_OTHER);
 
 		if (rt->name)
 			colname = rt->name;
@@ -969,6 +969,10 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	}
 
 	table_close(rel, NoLock);
+
+	pstate->p_pre_columnref_hook = NULL;
+	pstate->p_ref_hook_state = NULL;
+	pstate->p_lateral_active = false;
 
 	return addRangeTableEntryForGraphTable(pstate, graphid, castNode(GraphPattern, gp), columns, colnames, rgt->alias, false, true);
 }
