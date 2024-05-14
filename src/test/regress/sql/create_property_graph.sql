@@ -121,6 +121,25 @@ CREATE PROPERTY GRAPH gx
     );
 ALTER PROPERTY GRAPH g2 ALTER VERTEX TABLE t1 ADD LABEL foo PROPERTIES (b AS k);  -- type mismatch
 
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i AS a, j AS b, k)  -- mismatching number of properties on label
+    );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i AS a)  -- mismatching number of properties on label
+    );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i AS a, j AS j)  -- mismatching property names on label
+    );
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a AS x, b AS yy, b AS zz);  -- mismatching number of properties on label
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a AS x, b AS zz);  -- mismatching property names on label
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a AS x);  -- mismatching number of properties on label
+
 
 ALTER PROPERTY GRAPH g1 OWNER TO regress_graph_user1;
 SET ROLE regress_graph_user1;

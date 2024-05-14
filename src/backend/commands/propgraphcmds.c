@@ -74,10 +74,14 @@ static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
 static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
 static void insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr);
 static void check_element_properties(Oid peoid);
+static void check_label_properties(Oid labeloid);
+static void check_all_labels_properties(Oid pgrelid);
 static void check_propgraph_properties(Oid pgrelid);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
+static List *get_graph_label_ids(Oid graphid);
+static List *get_label_property_names(Oid labeloid);
 
 
 /*
@@ -294,6 +298,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 
 	foreach_oid(peoid, element_oids)
 		check_element_properties(peoid);
+	check_all_labels_properties(pgaddress.objectId);
 	check_propgraph_properties(pgaddress.objectId);
 
 	return pgaddress;
@@ -775,9 +780,9 @@ insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *prop
  *
  * We check this after all the catalog records are already inserted.  This
  * makes it easier to share this code between CREATE PROPERTY GRAPH and ALTER
- * PROPERTY GRAPH.  We pass in the element OID so that ALTER TABLE only has to
- * check the element it has just operated on.  CREATE PROPERTY GROUP checks
- * all elements it has created.
+ * PROPERTY GRAPH.  We pass in the element OID so that ALTER PROPERTY GRAPH
+ * only has to check the element it has just operated on.  CREATE PROPERTY
+ * GROUP checks all elements it has created.
  */
 static void
 check_element_properties(Oid peoid)
@@ -879,6 +884,125 @@ check_element_properties(Oid peoid)
 
 	systable_endscan(scan1);
 	table_close(rel1, AccessShareLock);
+}
+
+/*
+ * Check that for the given label, all labels of the same name in the graph
+ * have the same number and names of properties (independent of which element
+ * they are on).  (See SQL/PGQ subclause "Consistency check of a tabular
+ * property graph descriptor".)
+ *
+ * We check this after all the catalog records are already inserted.  This
+ * makes it easier to share this code between CREATE PROPERTY GRAPH and ALTER
+ * PROPERTY GRAPH.  We pass in the label OID so that some variants of ALTER
+ * PROPERTY GRAPH only have to check the label it has just operated on.
+ * CREATE PROPERTY GROUP and other ALTER PROPERTY GRAPH VARIANTS checks all
+ * labels.
+ */
+static void
+check_label_properties(Oid labeloid)
+{
+	Relation	rel;
+	SysScanDesc scan;
+	ScanKeyData key[2];
+	HeapTuple	tuple;
+	char	   *labelname;
+	Oid			graphid = InvalidOid;
+	Oid			ref_labeloid = InvalidOid;
+	List	   *myprops,
+			   *refprops;
+	List	   *diff1,
+			   *diff2;
+
+	rel = table_open(PropgraphLabelRelationId, AccessShareLock);
+
+	/*
+	 * Get label name and graph
+	 */
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_oid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(labeloid));
+	scan = systable_beginscan(rel, PropgraphLabelObjectIndexId, true, NULL, 1, key);
+	if (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tuple);
+
+		graphid = label->pglpgid;
+		labelname = pstrdup(NameStr(label->pgllabel));
+	}
+	systable_endscan(scan);
+	if (!graphid || !labelname)
+		elog(ERROR, "label %u not found", labeloid);
+
+	/*
+	 * Find a reference label to fetch label properties.  The reference label
+	 * should be some label other than the one being checked.
+	 */
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pglpgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	ScanKeyInit(&key[1],
+				Anum_pg_propgraph_label_pgllabel,
+				BTEqualStrategyNumber,
+				F_NAMEEQ, CStringGetDatum(labelname));
+	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId, true, NULL, 2, key);
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_label otherlabel = (Form_pg_propgraph_label) GETSTRUCT(tuple);
+
+		if (otherlabel->oid != labeloid)
+		{
+			ref_labeloid = otherlabel->oid;
+			break;
+		}
+	}
+	systable_endscan(scan);
+
+	table_close(rel, AccessShareLock);
+
+	/*
+	 * If there is not previous definition of this label, then we are done.
+	 */
+	if (!ref_labeloid)
+		return;
+
+	/*
+	 * Now check number and names.
+	 *
+	 * XXX We could provide more detail in the error messages, but that would
+	 * probably only be useful for some ALTER commands, because otherwise it's
+	 * not really clear which label definition is the wrong one, and so you'd
+	 * have to construct a rather verbose report to be of any use.  Let's keep
+	 * it simple for now.
+	 */
+
+	myprops = get_label_property_names(labeloid);
+	refprops = get_label_property_names(ref_labeloid);
+
+	if (list_length(refprops) != list_length(myprops))
+		ereport(ERROR,
+				errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				errmsg("mismatching number of properties in definition of label \"%s\"", labelname));
+
+	diff1 = list_difference(myprops, refprops);
+	diff2 = list_difference(refprops, myprops);
+
+	if (diff1 || diff2)
+		ereport(ERROR,
+				errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				errmsg("mismatching properties names in definition of label \"%s\"", labelname));
+}
+
+/*
+ * As above, but check all labels of a graph.
+ */
+static void
+check_all_labels_properties(Oid pgrelid)
+{
+	foreach_oid(labeloid, get_graph_label_ids(pgrelid))
+		check_label_properties(labeloid);
 }
 
 /*
@@ -1009,6 +1133,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
+		check_all_labels_properties(pgrelid);
 		check_propgraph_properties(pgrelid);
 	}
 
@@ -1069,6 +1194,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
+		check_all_labels_properties(pgrelid);
 		check_propgraph_properties(pgrelid);
 	}
 
@@ -1115,6 +1241,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
+		check_label_properties(labeloid);
 		check_propgraph_properties(pgrelid);
 	}
 
@@ -1172,6 +1299,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
+		check_label_properties(labeloid);
 		check_propgraph_properties(pgrelid);
 	}
 
@@ -1216,6 +1344,8 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 			ObjectAddressSet(obj, PropgraphPropertyRelationId, propoid);
 			performDeletion(&obj, stmt->drop_behavior, 0);
 		}
+
+		check_label_properties(labeloid);
 	}
 
 	return pgaddress;
@@ -1303,4 +1433,69 @@ get_element_relid(Oid peid)
 	ReleaseSysCache(tuple);
 
 	return pgerelid;
+}
+
+/*
+ * Get a list of all label OIDs of a graph.
+ */
+static List *
+get_graph_label_ids(Oid graphid)
+{
+	Relation	rel;
+	SysScanDesc scan;
+	ScanKeyData key[1];
+	HeapTuple	tuple;
+	List	   *result = NIL;
+
+	rel = table_open(PropgraphLabelRelationId, AccessShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_label_pglpgid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(graphid));
+	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId, true, NULL, 1, key);
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		result = lappend_oid(result, ((Form_pg_propgraph_label) GETSTRUCT(tuple))->oid);
+	}
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+
+	return result;
+}
+
+/*
+ * Get the names of properties associated with the given label OID.
+ *
+ * The result is a list of String nodes (so we can use list functions to
+ * detect differences).
+ */
+static List *
+get_label_property_names(Oid labeloid)
+{
+	Relation	rel;
+	SysScanDesc scan;
+	ScanKeyData key[1];
+	HeapTuple	tuple;
+	List	   *result = NIL;
+
+	rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
+
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_property_pgplabelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(labeloid));
+
+	scan = systable_beginscan(rel, PropgraphPropertyNameIndexId, true, NULL, 1, key);
+
+	while ((tuple = systable_getnext(scan)))
+	{
+		Form_pg_propgraph_property pgpform = (Form_pg_propgraph_property) GETSTRUCT(tuple);
+
+		result = lappend(result, makeString(pstrdup(NameStr(pgpform->pgpname))));
+	}
+
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+
+	return result;
 }
