@@ -2376,6 +2376,7 @@ psql_completion(const char *text, int start, int end)
 					  "OWNER TO", "SET", "VALIDATE CONSTRAINT",
 					  "REPLICA IDENTITY", "ATTACH PARTITION",
 					  "DETACH PARTITION", "FORCE ROW LEVEL SECURITY",
+					  "SPLIT PARTITION", "MERGE PARTITIONS (",
 					  "OF", "NOT OF");
 	/* ALTER TABLE xxx ADD */
 	else if (Matches("ALTER", "TABLE", MatchAny, "ADD"))
@@ -2632,16 +2633,29 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH("FROM (", "IN (", "WITH (");
 
 	/*
-	 * If we have ALTER TABLE <foo> DETACH PARTITION, provide a list of
+	 * If we have ALTER TABLE <foo> DETACH|SPLIT PARTITION, provide a list of
 	 * partitions of <foo>.
 	 */
-	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH", "PARTITION"))
+	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH|SPLIT", "PARTITION"))
 	{
 		set_completion_reference(prev3_wd);
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_partition_of_table);
 	}
 	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH", "PARTITION", MatchAny))
 		COMPLETE_WITH("CONCURRENTLY", "FINALIZE");
+
+	/* ALTER TABLE <name> SPLIT PARTITION <name> */
+	else if (Matches("ALTER", "TABLE", MatchAny, "SPLIT", "PARTITION", MatchAny))
+		COMPLETE_WITH("INTO ( PARTITION");
+
+	/* ALTER TABLE <name> MERGE PARTITIONS ( */
+	else if (Matches("ALTER", "TABLE", MatchAny, "MERGE", "PARTITIONS", "("))
+	{
+		set_completion_reference(prev4_wd);
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_partition_of_table);
+	}
+	else if (Matches("ALTER", "TABLE", MatchAny, "MERGE", "PARTITIONS", "(*)"))
+		COMPLETE_WITH("INTO");
 
 	/* ALTER TABLE <name> OF */
 	else if (Matches("ALTER", "TABLE", MatchAny, "OF"))
@@ -3906,9 +3920,12 @@ psql_completion(const char *text, int start, int end)
 		 */
 		if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
 			COMPLETE_WITH("ANALYZE", "VERBOSE", "COSTS", "SETTINGS", "GENERIC_PLAN",
-						  "BUFFERS", "WAL", "TIMING", "SUMMARY", "FORMAT");
-		else if (TailMatches("ANALYZE|VERBOSE|COSTS|SETTINGS|GENERIC_PLAN|BUFFERS|WAL|TIMING|SUMMARY"))
+						  "BUFFERS", "SERIALIZE", "WAL", "TIMING", "SUMMARY",
+						  "MEMORY", "FORMAT");
+		else if (TailMatches("ANALYZE|VERBOSE|COSTS|SETTINGS|GENERIC_PLAN|BUFFERS|WAL|TIMING|SUMMARY|MEMORY"))
 			COMPLETE_WITH("ON", "OFF");
+		else if (TailMatches("SERIALIZE"))
+			COMPLETE_WITH("TEXT", "NONE", "BINARY");
 		else if (TailMatches("FORMAT"))
 			COMPLETE_WITH("TEXT", "XML", "JSON", "YAML");
 	}

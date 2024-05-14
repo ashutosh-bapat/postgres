@@ -3045,7 +3045,6 @@ transformWindowDefinitions(ParseState *pstate,
 											 rangeopfamily, rangeopcintype,
 											 &wc->endInRangeFunc,
 											 windef->endOffset);
-		wc->runCondition = NIL;
 		wc->winref = winref;
 
 		result = lappend(result, wc);

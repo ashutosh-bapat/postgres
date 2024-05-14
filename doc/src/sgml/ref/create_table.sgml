@@ -77,7 +77,6 @@ CREATE [ [ GLOBAL | LOCAL ] { TEMPORARY | TEMP } | UNLOGGED ] TABLE [ IF NOT EXI
 
 [ CONSTRAINT <replaceable class="parameter">constraint_name</replaceable> ]
 { CHECK ( <replaceable class="parameter">expression</replaceable> ) [ NO INHERIT ] |
-  NOT NULL <replaceable class="parameter">column_name</replaceable> [ NO INHERIT ] |
   UNIQUE [ NULLS [ NOT ] DISTINCT ] ( <replaceable class="parameter">column_name</replaceable> [, ... ] [, <replaceable class="parameter">column_name</replaceable> WITHOUT OVERLAPS ] ) <replaceable class="parameter">index_parameters</replaceable> |
   PRIMARY KEY ( <replaceable class="parameter">column_name</replaceable> [, ... ] [, <replaceable class="parameter">column_name</replaceable> WITHOUT OVERLAPS ] ) <replaceable class="parameter">index_parameters</replaceable> |
   EXCLUDE [ USING <replaceable class="parameter">index_method</replaceable> ] ( <replaceable class="parameter">exclude_element</replaceable> WITH <replaceable class="parameter">operator</replaceable> [, ... ] ) <replaceable class="parameter">index_parameters</replaceable> [ WHERE ( <replaceable class="parameter">predicate</replaceable> ) ] |
@@ -1184,11 +1183,13 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
       referent for its entire duration.  This column must be a range or
       multirange type.  In addition, the referenced table must have a primary
       key or unique constraint declared with <literal>WITHOUT
-      OVERLAPS</literal>.  Finally, if one side of the foreign key uses
-      <literal>PERIOD</literal>, the other side must too.  If the <replaceable
-      class="parameter">refcolumn</replaceable> list is omitted, the
-      <literal>WITHOUT OVERLAPS</literal> part of the primary key is treated
-      as if marked with <literal>PERIOD</literal>.
+      OVERLAPS</literal>. Finally, if the foreign key has a PERIOD
+      <replaceable class="parameter">column_name</replaceable> specification
+      the corresponding <replaceable class="parameter">refcolumn</replaceable>,
+      if present, must also be marked <literal>PERIOD</literal>.  If the
+      <replaceable class="parameter">refcolumn</replaceable> clause is omitted,
+      and thus the reftable's primary key constraint chosen, the primary key
+      must have its final column marked <literal>WITHOUT OVERLAPS</literal>.
      </para>
 
      <para>
@@ -2389,6 +2390,13 @@ CREATE TABLE cities_partdef
     constraints), because the associated index is named the same as the
     constraint, and index names must be unique across all relations within
     the same schema.
+   </para>
+
+   <para>
+    Currently, <productname>PostgreSQL</productname> does not record names
+    for not-null constraints at all, so they are not
+    subject to the uniqueness restriction.  This might change in a future
+    release.
    </para>
   </refsect2>
 

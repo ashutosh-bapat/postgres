@@ -456,7 +456,7 @@ drop_local_obsolete_slots(List *remote_slot_list)
 							   0, AccessShareLock);
 
 			ereport(LOG,
-					errmsg("dropped replication slot \"%s\" of dbid %d",
+					errmsg("dropped replication slot \"%s\" of dbid %u",
 						   NameStr(local_slot->data.name),
 						   local_slot->data.database));
 		}
@@ -599,7 +599,7 @@ update_and_persist_local_synced_slot(RemoteSlot *remote_slot, Oid remote_dbid)
  * metadata of the slot as per the data received from the primary server.
  *
  * The slot is created as a temporary slot and stays in the same state until the
- * the remote_slot catches up with locally reserved position and local slot is
+ * remote_slot catches up with locally reserved position and local slot is
  * updated. The slot is then persisted and is considered as sync-ready for
  * periodic syncs.
  *
@@ -1041,8 +1041,8 @@ ValidateSlotSyncParams(int elevel)
 	/*
 	 * Logical slot sync/creation requires wal_level >= logical.
 	 *
-	 * Sincle altering the wal_level requires a server restart, so error out
-	 * in this case regardless of elevel provided by caller.
+	 * Since altering the wal_level requires a server restart, so error out in
+	 * this case regardless of elevel provided by caller.
 	 */
 	if (wal_level < WAL_LEVEL_LOGICAL)
 		ereport(ERROR,

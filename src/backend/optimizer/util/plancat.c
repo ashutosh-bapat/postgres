@@ -815,7 +815,7 @@ infer_arbiter_indexes(PlannerInfo *root)
 		 */
 		if (indexOidFromConstraint == idxForm->indexrelid)
 		{
-			if (!idxForm->indisunique && onconflict->action == ONCONFLICT_UPDATE)
+			if (idxForm->indisexclusion && onconflict->action == ONCONFLICT_UPDATE)
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("ON CONFLICT DO UPDATE not supported with exclusion constraints")));
@@ -838,6 +838,13 @@ infer_arbiter_indexes(PlannerInfo *root)
 		 * skipped if it's not unique
 		 */
 		if (!idxForm->indisunique)
+			goto next;
+
+		/*
+		 * So-called unique constraints with WITHOUT OVERLAPS are really
+		 * exclusion constraints, so skip those too.
+		 */
+		if (idxForm->indisexclusion)
 			goto next;
 
 		/* Build BMS representation of plain (non expression) index attrs */
@@ -1673,8 +1680,6 @@ relation_excluded_by_constraints(PlannerInfo *root,
 	 * Currently, attnotnull constraints must be treated as NO INHERIT unless
 	 * this is a partitioned table.  In future we might track their
 	 * inheritance status more accurately, allowing this to be refined.
-	 *
-	 * XXX do we need/want to change this?
 	 */
 	include_notnull = (!rte->inh || rte->relkind == RELKIND_PARTITIONED_TABLE);
 

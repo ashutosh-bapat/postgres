@@ -50,16 +50,16 @@ typedef enum					/* contexts of JSON parser */
  * tokens, non-terminals, and semantic action markers.
  */
 
-typedef enum
+enum JsonNonTerminal
 {
 	JSON_NT_JSON = 32,
 	JSON_NT_ARRAY_ELEMENTS,
 	JSON_NT_MORE_ARRAY_ELEMENTS,
 	JSON_NT_KEY_PAIRS,
 	JSON_NT_MORE_KEY_PAIRS,
-} JsonNonTerminal;
+};
 
-typedef enum
+enum JsonParserSem
 {
 	JSON_SEM_OSTART = 64,
 	JSON_SEM_OEND,
@@ -72,7 +72,7 @@ typedef enum
 	JSON_SEM_AELEM_END,
 	JSON_SEM_SCALAR_INIT,
 	JSON_SEM_SCALAR_CALL,
-} JsonParserSem;
+};
 
 /*
  * struct containing the 3 stacks used in non-recursive parsing,
@@ -1689,8 +1689,8 @@ json_lex_string(JsonLexContext *lex)
 	} while (0)
 #define FAIL_AT_CHAR_END(code) \
 	do { \
-		lex->token_terminator = \
-			s + pg_encoding_mblen_bounded(lex->input_encoding, s); \
+		char	   *term = s + pg_encoding_mblen(lex->input_encoding, s); \
+		lex->token_terminator = (term <= end) ? term : end; \
 		return code; \
 	} while (0)
 
@@ -2105,7 +2105,7 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 	 * A helper for error messages that should print the current token. The
 	 * format must contain exactly one %.*s specifier.
 	 */
-#define token_error(lex, format) \
+#define json_token_error(lex, format) \
 	appendStringInfo((lex)->errormsg, _(format), \
 					 (int) ((lex)->token_terminator - (lex)->token_start), \
 					 (lex)->token_start);
@@ -2124,7 +2124,7 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 		case JSON_NESTING_TOO_DEEP:
 			return (_("JSON nested too deep, maximum permitted depth is 6400"));
 		case JSON_ESCAPING_INVALID:
-			token_error(lex, "Escape sequence \"\\%.*s\" is invalid.");
+			json_token_error(lex, "Escape sequence \"\\%.*s\" is invalid.");
 			break;
 		case JSON_ESCAPING_REQUIRED:
 			appendStringInfo(lex->errormsg,
@@ -2132,33 +2132,33 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 							 (unsigned char) *(lex->token_terminator));
 			break;
 		case JSON_EXPECTED_END:
-			token_error(lex, "Expected end of input, but found \"%.*s\".");
+			json_token_error(lex, "Expected end of input, but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_ARRAY_FIRST:
-			token_error(lex, "Expected array element or \"]\", but found \"%.*s\".");
+			json_token_error(lex, "Expected array element or \"]\", but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_ARRAY_NEXT:
-			token_error(lex, "Expected \",\" or \"]\", but found \"%.*s\".");
+			json_token_error(lex, "Expected \",\" or \"]\", but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_COLON:
-			token_error(lex, "Expected \":\", but found \"%.*s\".");
+			json_token_error(lex, "Expected \":\", but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_JSON:
-			token_error(lex, "Expected JSON value, but found \"%.*s\".");
+			json_token_error(lex, "Expected JSON value, but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_MORE:
 			return _("The input string ended unexpectedly.");
 		case JSON_EXPECTED_OBJECT_FIRST:
-			token_error(lex, "Expected string or \"}\", but found \"%.*s\".");
+			json_token_error(lex, "Expected string or \"}\", but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_OBJECT_NEXT:
-			token_error(lex, "Expected \",\" or \"}\", but found \"%.*s\".");
+			json_token_error(lex, "Expected \",\" or \"}\", but found \"%.*s\".");
 			break;
 		case JSON_EXPECTED_STRING:
-			token_error(lex, "Expected string, but found \"%.*s\".");
+			json_token_error(lex, "Expected string, but found \"%.*s\".");
 			break;
 		case JSON_INVALID_TOKEN:
-			token_error(lex, "Token \"%.*s\" is invalid.");
+			json_token_error(lex, "Token \"%.*s\" is invalid.");
 			break;
 		case JSON_UNICODE_CODE_POINT_ZERO:
 			return _("\\u0000 cannot be converted to text.");
@@ -2189,7 +2189,7 @@ json_errdetail(JsonParseErrorType error, JsonLexContext *lex)
 			/* fall through to the error code after switch */
 			break;
 	}
-#undef token_error
+#undef json_token_error
 
 	/*
 	 * We don't use a default: case, so that the compiler will warn about

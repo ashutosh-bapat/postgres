@@ -1122,7 +1122,7 @@ heap_beginscan(Relation relation, Snapshot snapshot,
 	/*
 	 * Set up a read stream for sequential scans and TID range scans. This
 	 * should be done after initscan() because initscan() allocates the
-	 * BufferAccessStrategy object passed to the streaming read API.
+	 * BufferAccessStrategy object passed to the read stream API.
 	 */
 	if (scan->rs_base.rs_flags & SO_TYPE_SEQSCAN ||
 		scan->rs_base.rs_flags & SO_TYPE_TIDRANGESCAN)
@@ -5907,7 +5907,6 @@ heap_abort_speculative(Relation relation, ItemPointer tid)
 	Page		page;
 	BlockNumber block;
 	Buffer		buffer;
-	TransactionId prune_xid;
 
 	Assert(ItemPointerIsValid(tid));
 
@@ -5960,11 +5959,16 @@ heap_abort_speculative(Relation relation, ItemPointer tid)
 	 * TransactionXmin, so there's no race here).
 	 */
 	Assert(TransactionIdIsValid(TransactionXmin));
-	if (TransactionIdPrecedes(TransactionXmin, relation->rd_rel->relfrozenxid))
-		prune_xid = relation->rd_rel->relfrozenxid;
-	else
-		prune_xid = TransactionXmin;
-	PageSetPrunable(page, prune_xid);
+	{
+		TransactionId relfrozenxid = relation->rd_rel->relfrozenxid;
+		TransactionId prune_xid;
+
+		if (TransactionIdPrecedes(TransactionXmin, relfrozenxid))
+			prune_xid = relfrozenxid;
+		else
+			prune_xid = TransactionXmin;
+		PageSetPrunable(page, prune_xid);
+	}
 
 	/* store transaction information of xact deleting the tuple */
 	tp.t_data->t_infomask &= ~(HEAP_XMAX_BITS | HEAP_MOVED);
