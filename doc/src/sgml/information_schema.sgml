@@ -4207,24 +4207,250 @@ ORDER BY c.ordinal_position;
   <title><literal>pg_element_tables</literal></title>
 
   <para>
-   TODO
+   The view <literal>pg_element_tables</literal> contains information about
+   the element tables of property graphs defined in the current database.
+   Only those property graphs are shown that the current user has access to
+   (by way of being the owner or having some privilege).
   </para>
+
+  <table>
+   <title><structname>pg_element_tables</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_catalog</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the database that contains the property graph (always the current database)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_schema</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the schema that contains the property graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the property_graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>element_table_alias</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Element table alias (unique identifier of an element table within a
+       property graph)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>element_table_kind</structfield> <type>character_data</type>
+      </para>
+      <para>
+       The kind of the element table: <literal>EDGE</literal> or <literal>VERTEX</literal>
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>table_catalog</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the database that contains the referenced table (always the current database)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>table_schema</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the schema that contains the referenced table
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>table_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the table being referenced by the element table definition
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>element_table_definition</structfield> <type>character_data</type>
+      </para>
+      <para>
+       Applies to a feature not available in <productname>PostgreSQL</productname>
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
  </sect1>
 
  <sect1 id="infoschema-pg-label-properties">
-  <title><literal>pg_element_label_properties</literal></title>
+  <title><literal>pg_label_properties</literal></title>
 
   <para>
-   TODO
+   The view <literal>pg_label_properties</literal> shows which properties are
+   defined on labels defined in property graphs defined in the current
+   database.  Only those property graphs are shown that the current user has
+   access to (by way of being the owner or having some privilege).
   </para>
+
+  <table>
+   <title><structname>pg_label_properties</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_catalog</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the database that contains the property graph (always the current database)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_schema</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the schema that contains the property graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the property_graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>label_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the label
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the property
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
  </sect1>
 
  <sect1 id="infoschema-pg-labels">
-  <title><literal>pg_element_labels</literal></title>
+  <title><literal>pg_labels</literal></title>
 
   <para>
-   TODO
+   The view <literal>pg_labels</literal> contains all the labels defined in
+   property graphs defined in the current database.  Only those property
+   graphs are shown that the current user has access to (by way of being the
+   owner or having some privilege).
   </para>
+
+  <table>
+   <title><structname>pg_labels</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_catalog</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the database that contains the property graph (always the current database)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_schema</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the schema that contains the property graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the property_graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>label_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the label
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
  </sect1>
 
  <sect1 id="infoschema-pg-property-data-types">
@@ -4239,16 +4465,149 @@ ORDER BY c.ordinal_position;
   <title><literal>pg_property_graph_privileges</literal></title>
 
   <para>
-   TODO
+   The view <literal>property_graph_privileges</literal> identifies all
+   privileges granted on property graphs to a currently enabled role or by a
+   currently enabled role.  There is one row for each combination of property
+   graph, grantor, and grantee.
   </para>
+
+  <table>
+   <title><structname>property_graph_privileges</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>grantor</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the role that granted the privilege
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>grantee</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the role that the privilege was granted to
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_catalog</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the database that contains the property graph (always the current database)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_schema</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the schema that contains the property graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the property graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>privilege_type</structfield> <type>character_data</type>
+      </para>
+      <para>
+       Type of the privilege: <literal>SELECT</literal> is the only privilege
+       type applicable to property graphs.
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>is_grantable</structfield> <type>yes_or_no</type>
+      </para>
+      <para>
+       <literal>YES</literal> if the privilege is grantable, <literal>NO</literal> if not
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
  </sect1>
 
  <sect1 id="infoschema-property-graphs">
   <title><literal>property_graphs</literal></title>
 
   <para>
-   TODO
+   The view <literal>property_graphs</literal> contains all property graphs
+   defined in the current database.  Only those property graphs are shown that
+   the current user has access to (by way of being the owner or having some
+   privilege).
   </para>
+
+  <table>
+   <title><structname>property_graphs</structname> Columns</title>
+   <tgroup cols="1">
+    <thead>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       Column Type
+      </para>
+      <para>
+       Description
+      </para></entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_catalog</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the database that contains the property graph (always the current database)
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_schema</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the schema that contains the property graph
+      </para></entry>
+     </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>property_graph_name</structfield> <type>sql_identifier</type>
+      </para>
+      <para>
+       Name of the property_graph
+      </para></entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
  </sect1>
 
  <sect1 id="infoschema-referential-constraints">
