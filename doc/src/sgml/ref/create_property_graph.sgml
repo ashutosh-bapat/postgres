@@ -195,6 +195,84 @@ CREATE [ TEMP | TEMPORARY ] PROPERTY GRAPH <replaceable class="parameter">name</
   <title>Notes</title>
 
   <para>
+   The following consistency checks must be satisfied by a property graph definition:
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      In a property graph, labels with the same name applied to different
+      property graph elements must have the same number of properties and
+      those properties must have the same names.  For example, the following
+      would be allowed:
+<programlisting>
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (
+        v1 LABEL foo PROPERTIES (x, y),
+        v2 LABEL foo PROPERTIES (x, y)
+    ) ...
+</programlisting>
+      but this would not:
+<programlisting>
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (
+        v1 LABEL foo PROPERTIES (x, y),
+        v2 LABEL foo PROPERTIES (z)
+    ) ...
+</programlisting></para>
+    </listitem>
+
+    <listitem>
+     <para>
+      In a property graph, all properties with the same name must have the
+      same data type, independent of which label they are on.  For example,
+      this would be allowed:
+<programlisting>
+CREATE TABLE v1 (a int, b int);
+CREATE TABLE v2 (a int, b int);
+
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (
+        v1 LABEL foo PROPERTIES (a, b),
+        v2 LABEL bar PROPERTIES (a, b)
+    ) ...
+</programlisting>
+      but this would not:
+<programlisting>
+CREATE TABLE v1 (a int, b int);
+CREATE TABLE v2 (a int, b varchar);
+
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (
+        v1 LABEL foo PROPERTIES (a, b),
+        v2 LABEL bar PROPERTIES (a, b)
+    ) ...
+</programlisting></para>
+    </listitem>
+
+    <listitem>
+     <para>
+      For each property graph element, all properties with the same name must
+      have the same expression for each label.  For example, this would be
+      allowed:
+<programlisting>
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (
+        v1 LABEL foo PROPERTIES (x AS a * 2) LABEL bar PROPERTIES (x AS a * 2)
+    ) ...
+</programlisting>
+      but this would not:
+<programlisting>
+CREATE PROPERTY GRAPH g1
+    VERTEX TABLES (
+        v1 LABEL foo PROPERTIES (x AS a * 2) LABEL bar PROPERTIES (x AS a * 10)
+    ) ...
+</programlisting></para>
+    </listitem>
+
+   </itemizedlist>
+  </para>
+
+  <para>
    Property graphs are queried using the <literal>GRAPH_TABLE</literal> clause
    of <xref linkend="sql-select"/>.
   </para>
