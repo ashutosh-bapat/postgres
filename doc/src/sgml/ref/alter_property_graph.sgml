@@ -22,8 +22,8 @@ PostgreSQL documentation
  <refsynopsisdiv>
 <synopsis>
 ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> ADD
-    [ {VERTEX|NODE} TABLES ( <replaceable class="parameter">vertex_table_name</replaceable> [, ...] ) ]
-    [ {EDGE|RELATIONSHIP} TABLES ( { <replaceable class="parameter">edge_table_name</replaceable> SOURCE <replaceable class="parameter">source_table_name</replaceable> DESTINATION <replaceable class="parameter">dest_table_name</replaceable> } [, ...] ) ]
+    [ {VERTEX|NODE} TABLES ( <replaceable class="parameter">vertex_table_definition</replaceable> [, ...] ) ]
+    [ {EDGE|RELATIONSHIP} TABLES ( <replaceable class="parameter">edge_table_definition</replaceable> [, ...] ) ]
 
 ALTER PROPERTY GRAPH <replaceable class="parameter">name</replaceable> DROP
     {VERTEX|NODE} TABLES ( <replaceable class="parameter">vertex_table_alias</replaceable> [, ...] ) [ CASCADE | RESTRICT ]
@@ -57,7 +57,112 @@ ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replacea
   <title>Description</title>
 
   <para>
-   TODO
+   <command>ALTER PROPERTY GRAPH</command> changes the definition of an
+   existing property graph.  There are several subforms:
+
+   <variablelist>
+    <varlistentry>
+     <term><literal>ADD {VERTEX|NODE|EDGE|RELATIONSHIP} TABLES</literal></term>
+     <listitem>
+      <para>
+       This form adds new vertex or edge tables, using the same syntax as
+       <link linkend="sql-create-property-graph"><command>CREATE PROPERTY
+       GRAPH</command></link>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>DROP {VERTEX|NODE|EDGE|RELATIONSHIP} TABLES</literal></term>
+     <listitem>
+      <para>
+       This form removes a vertex or edge table from the property graph.
+       (Only the association of the table with the graph removed.  The table
+       itself is not dropped.)
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ALTER {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE ... ADD LABEL</literal></term>
+     <listitem>
+      <para>
+       This form adds a new label to an existing vertex or edge table, using
+       the same syntax as <link
+       linkend="sql-create-property-graph"><command>CREATE PROPERTY
+       GRAPH</command></link>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ALTER {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE ... DROP LABEL</literal></term>
+     <listitem>
+      <para>
+       This form removes a new label from an existing vertex or edge table.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ALTER {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE ... ALTER LABEL ... ADD PROPERTIES</literal></term>
+     <listitem>
+      <para>
+       This form adds new properties to an existing label on an existing
+       vertex or edge table.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>ALTER {VERTEX|NODE|EDGE|RELATIONSHIP} TABLE ... ALTER LABEL ... DROP PROPERTIES</literal></term>
+     <listitem>
+      <para>
+       This form removes properties from an existing label on an existing
+       vertex or edge table.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>OWNER</literal></term>
+     <listitem>
+      <para>
+       This form changes the owner of the property graph to the specified user.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>RENAME</literal></term>
+     <listitem>
+      <para>
+       This form changes the name of a property graph.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><literal>SET SCHEMA</literal></term>
+     <listitem>
+      <para>
+       This form moves the property graph into another schema.
+      </para>
+     </listitem>
+    </varlistentry>
+   </variablelist>
+  </para>
+
+  <para>
+   You must own the property graph to use <command>ALTER PROPERTY
+   GRAPH</command>.  To change a property graph's schema, you must also have
+   <literal>CREATE</literal> privilege on the new schema.  To alter the owner,
+   you must be able to <literal>SET ROLE</literal> to the new owning role, and
+   that role must have <literal>CREATE</literal> privilege on the property
+   graph's schema.  (These restrictions enforce that altering the owner
+   doesn't do anything you couldn't do by dropping and recreating the property
+   graph.  However, a superuser can alter ownership of any property graph
+   anyway.)
   </para>
  </refsect1>
 
@@ -85,10 +190,37 @@ ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replacea
    </varlistentry>
 
    <varlistentry>
-    <term>TODO</term>
+    <term><replaceable class="parameter">vertex_table_definition</replaceable></term>
+    <term><replaceable class="parameter">edge_table_definition</replaceable></term>
     <listitem>
      <para>
-      TODO
+      See <link linkend="sql-create-property-graph"><command>CREATE PROPERTY
+      GRAPH</command></link>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">vertex_table_alias</replaceable></term>
+    <term><replaceable class="parameter">edge_table_alias</replaceable></term>
+    <listitem>
+     <para>
+      The alias of an existing vertex or edge table to operate on.  (Note that
+      the alias is potentially different from the name of the underlying
+      table, if the vertex or edge table was created with <literal>AS
+      <replaceable class="parameter">alias</replaceable></literal>.)
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">label_name</replaceable></term>
+    <term><replaceable class="parameter">property_name</replaceable></term>
+    <term><replaceable class="parameter">expression</replaceable></term>
+    <listitem>
+     <para>
+      See <link linkend="sql-create-property-graph"><command>CREATE PROPERTY
+      GRAPH</command></link>.
      </para>
     </listitem>
    </varlistentry>
@@ -123,10 +255,26 @@ ALTER PROPERTY GRAPH [ IF EXISTS ] <replaceable class="parameter">name</replacea
  </refsect1>
 
  <refsect1>
+  <title>Notes</title>
+
+  <para>
+   The consistency checks on a property graph described at <xref
+   linkend="sql-create-property-graph-notes"/> must be maintained by
+   <command>ALTER PROPERTY GRAPH</command> operations.  In some cases, it
+   might be necessary to make multiple alterations in a single command to
+   satisfy the checks.
+  </para>
+ </refsect1>
+
+ <refsect1>
   <title>Examples</title>
 
   <para>
 <programlisting>
+ALTER PROPERTY GRAPH g1 ADD VERTEX TABLES (v2);
+
+ALTER PROPERTY GRAPH g1 ALTER VERTEX TABLE v1 DROP LABEL foo;
+
 ALTER PROPERTY GRAPH g1 RENAME TO g2;
 </programlisting></para>
  </refsect1>
@@ -135,7 +283,8 @@ ALTER PROPERTY GRAPH g1 RENAME TO g2;
   <title>Compatibility</title>
 
   <para>
-   TODO
+   <command>CREATE PROPERTY GRAPH</command> conforms to ISO/IEC 9075-16
+   (SQL/PGQ).
   </para>
  </refsect1>
 

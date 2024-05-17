@@ -42,7 +42,7 @@ CREATE [ TEMP | TEMPORARY ] PROPERTY GRAPH <replaceable class="parameter">name</
 
 <phrase>or:</phrase>
 
-   { { LABEL <replaceable class="parameter">label</replaceable> | DEFAULT LABEL } [ NO PROPERTIES | PROPERTIES ALL COLUMNS | PROPERTIES ( { <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">property_name</replaceable> ] } [, ...] ) ] } [...]
+   { { LABEL <replaceable class="parameter">label_name</replaceable> | DEFAULT LABEL } [ NO PROPERTIES | PROPERTIES ALL COLUMNS | PROPERTIES ( { <replaceable class="parameter">expression</replaceable> [ AS <replaceable class="parameter">property_name</replaceable> ] } [, ...] ) ] } [...]
 </synopsis>
 </refsynopsisdiv>
 
@@ -191,7 +191,7 @@ CREATE [ TEMP | TEMPORARY ] PROPERTY GRAPH <replaceable class="parameter">name</
   </variablelist>
  </refsect1>
 
- <refsect1>
+ <refsect1 id="sql-create-property-graph-notes">
   <title>Notes</title>
 
   <para>
