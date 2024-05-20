@@ -722,7 +722,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 
 	table_close(rel, NoLock);
 
-	tp = transformTargetList(pstate, proplist, EXPR_KIND_OTHER);
+	tp = transformTargetList(pstate, proplist, EXPR_KIND_PROPGRAPH_PROPERTY);
 
 	foreach(lc, tp)
 	{

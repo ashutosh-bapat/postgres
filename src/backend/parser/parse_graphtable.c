@@ -176,7 +176,7 @@ transformGraphElementPattern(ParseState *pstate, GraphTableParseState *gpstate, 
 
 	gep->labelexpr = transformLabelExpr(gpstate, gep->labelexpr);
 
-	gep->whereClause = transformExpr(pstate, gep->whereClause, EXPR_KIND_OTHER);
+	gep->whereClause = transformExpr(pstate, gep->whereClause, EXPR_KIND_WHERE);
 	assign_expr_collations(pstate, gep->whereClause);
 
 	return (Node *) gep;
@@ -227,7 +227,7 @@ Node *
 transformGraphPattern(ParseState *pstate, GraphTableParseState *gpstate, GraphPattern *graph_pattern)
 {
 	graph_pattern->path_pattern_list = (List *) transformPathPatternList(pstate, gpstate, graph_pattern->path_pattern_list);
-	graph_pattern->whereClause = transformExpr(pstate, graph_pattern->whereClause, EXPR_KIND_OTHER);
+	graph_pattern->whereClause = transformExpr(pstate, graph_pattern->whereClause, EXPR_KIND_WHERE);
 	assign_expr_collations(pstate, graph_pattern->whereClause);
 
 	return (Node *) graph_pattern;

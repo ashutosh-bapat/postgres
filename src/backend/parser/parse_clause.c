@@ -944,7 +944,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 		TargetEntry *te;
 		char	   *colname;
 
-		colexpr = transformExpr(pstate, rt->val, EXPR_KIND_OTHER);
+		colexpr = transformExpr(pstate, rt->val, EXPR_KIND_SELECT_TARGET);
 
 		if (rt->name)
 			colname = rt->name;
