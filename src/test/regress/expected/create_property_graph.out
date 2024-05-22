@@ -10,8 +10,15 @@ ERROR:  relation "g1" already exists
 CREATE TABLE t1 (a int, b text);
 CREATE TABLE t2 (i int PRIMARY KEY, j int, k int);
 CREATE TABLE t3 (x int, y text, z text);
+CREATE TABLE t4 (a timestamp, b int);
 CREATE TABLE e1 (a int, i int, t text, PRIMARY KEY (a, i));
 CREATE TABLE e2 (a int, x int, t text);
+CREATE TABLE e3 (a int, b timestamp, t text);
+-- TODO: shared labels with edges referencing mismatching keys e.g. number,
+-- type etc. - this works
+-- TODO: shared labels with number, names or type of properties mismatch results in error
+-- TODO: shared labels with mismatching order of properties (number, names and types same) is acceptable
+-- TODO: keys inferred or explicitly declared, with non-compatible data types and same name
 CREATE PROPERTY GRAPH g2
     VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL, t3 KEY (x) LABEL t3l1 LABEL t3l2)
     EDGE TABLES (
@@ -63,7 +70,8 @@ CREATE PROPERTY GRAPH g4
     VERTEX TABLES (
         t1 KEY (a) NO PROPERTIES,
         t2 DEFAULT LABEL PROPERTIES (i + j AS i_j, k),
-        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y AS yy) LABEL t3l2 PROPERTIES (x, z AS zz)
+        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y AS yy)
+                    LABEL t3l2 PROPERTIES (x, z AS zz)
     )
     EDGE TABLES (
         e1
@@ -101,12 +109,27 @@ SELECT pg_get_propgraphdef('g5'::regclass);
 (1 row)
 
 -- error cases
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ADD LABEL t3l1 PROPERTIES (i as x, j as yy);
+ERROR:  property "yy" data type mismatch: text vs. integer
+DETAIL:  In a property graph, a property of the same name has to have the same data type in each label.
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a as x, b as yy, b as zz);
+ERROR:  mismatching number of properties in definition of label "t3l1"
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a as x, b as zz);
+ERROR:  mismatching properties names in definition of label "t3l1"
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a as x);
+ERROR:  mismatching number of properties in definition of label "t3l1"
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t3 ADD LABEL t3l3 PROPERTIES ( 2 * x as x, y as yy);
+ERROR:  element "t3" property "x" expression mismatch: (2 * x) vs. x
+DETAIL:  In a property graph element, a property of the same name has to have the same expression in each label.
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  relation "xx" does not exist
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));
 ERROR:  alias "t1" used more than once as element table
 LINE 1: ...Y GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a)...
                                                              ^
+CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t4 KEY (a));
+ERROR:  property "a" data type mismatch: integer vs. timestamp without time zone
+DETAIL:  In a property graph, a property of the same name has to have the same data type in each label.
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (t1 AS tt KEY (a), t2 KEY (i))
     EDGE TABLES (
@@ -123,6 +146,33 @@ CREATE PROPERTY GRAPH gx
 ERROR:  destination vertex "tx" of edge "e1" does not exist
 LINE 4:         e1 SOURCE t1 DESTINATION tx
                 ^
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a, j::text as b, k)
+    );
+ERROR:  mismatching number of properties in definition of label "l1"
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a)
+    );
+ERROR:  mismatching number of properties in definition of label "l1"
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a, j::text as j)
+    );
+ERROR:  mismatching properties names in definition of label "l1"
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b)
+                   LABEL l2 PROPERTIES (2 * a as a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a, j::text as b)
+    );
+ERROR:  element "t1" property "a" expression mismatch: (2 * a) vs. a
+DETAIL:  In a property graph element, a property of the same name has to have the same expression in each label.
+-- TODO: label shared by edge and vertex and referenced in one of the type of elements
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 ERROR:  relation "gx" does not exist
 CREATE PROPERTY GRAPH gx

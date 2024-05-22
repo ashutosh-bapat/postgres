@@ -14,9 +14,17 @@ CREATE PROPERTY GRAPH g1;  -- error: duplicate
 CREATE TABLE t1 (a int, b text);
 CREATE TABLE t2 (i int PRIMARY KEY, j int, k int);
 CREATE TABLE t3 (x int, y text, z text);
+CREATE TABLE t4 (a timestamp, b int);
 
 CREATE TABLE e1 (a int, i int, t text, PRIMARY KEY (a, i));
 CREATE TABLE e2 (a int, x int, t text);
+CREATE TABLE e3 (a int, b timestamp, t text);
+
+-- TODO: shared labels with edges referencing mismatching keys e.g. number,
+-- type etc. - this works
+-- TODO: shared labels with number, names or type of properties mismatch results in error
+-- TODO: shared labels with mismatching order of properties (number, names and types same) is acceptable
+-- TODO: keys inferred or explicitly declared, with non-compatible data types and same name
 
 CREATE PROPERTY GRAPH g2
     VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL, t3 KEY (x) LABEL t3l1 LABEL t3l2)
@@ -55,7 +63,8 @@ CREATE PROPERTY GRAPH g4
     VERTEX TABLES (
         t1 KEY (a) NO PROPERTIES,
         t2 DEFAULT LABEL PROPERTIES (i + j AS i_j, k),
-        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y AS yy) LABEL t3l2 PROPERTIES (x, z AS zz)
+        t3 KEY (x) LABEL t3l1 PROPERTIES (x, y AS yy)
+                    LABEL t3l2 PROPERTIES (x, z AS zz)
     )
     EDGE TABLES (
         e1
@@ -86,8 +95,14 @@ CREATE PROPERTY GRAPH g5
 SELECT pg_get_propgraphdef('g5'::regclass);
 
 -- error cases
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ADD LABEL t3l1 PROPERTIES (i as x, j as yy);
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a as x, b as yy, b as zz);
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a as x, b as zz);
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL t3l1 PROPERTIES (a as x);
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t3 ADD LABEL t3l3 PROPERTIES ( 2 * x as x, y as yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));
+CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t4 KEY (a));
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (t1 AS tt KEY (a), t2 KEY (i))
     EDGE TABLES (
@@ -98,6 +113,28 @@ CREATE PROPERTY GRAPH gx
     EDGE TABLES (
         e1 SOURCE t1 DESTINATION tx
     );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a, j::text as b, k)
+    );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a)
+    );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a, j::text as j)
+    );
+CREATE PROPERTY GRAPH gx
+    VERTEX TABLES (
+        t1 KEY (a) LABEL l1 PROPERTIES (a, b)
+                   LABEL l2 PROPERTIES (2 * a as a, b),
+        t2 KEY (i) LABEL l1 PROPERTIES (i as a, j::text as b)
+    );
+-- TODO: label shared by edge and vertex and referenced in one of the type of elements
 COMMENT ON PROPERTY GRAPH gx IS 'not a graph';
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (t1 KEY (a), t2)
