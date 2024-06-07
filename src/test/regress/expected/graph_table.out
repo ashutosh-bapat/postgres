@@ -54,6 +54,8 @@ LINE 1: ...US')-[IS customer_orders]->(o IS orders) COLUMNS (cx.name AS...
                                                              ^
 SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.namex AS customer_name));  -- error
 ERROR:  property "namex" does not exist
+SELECT customer_name FROM GRAPH_TABLE (myshop MATCH (c IS customers|employees WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name));  -- error
+ERROR:  label "employees" does not exist in property graph "myshop"
 INSERT INTO products VALUES
     (1, 'product1', 10),
     (2, 'product2', 20),

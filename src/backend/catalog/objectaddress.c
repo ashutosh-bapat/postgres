@@ -48,6 +48,7 @@
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
@@ -388,10 +389,24 @@ static const ObjectPropertyType ObjectProperty[] =
 		false
 	},
 	{
+		"property graph element label",
+		PropgraphElementLabelRelationId,
+		PropgraphElementLabelObjectIndexId,
+		-1,
+		-1,
+		Anum_pg_propgraph_element_label_oid,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
 		"property graph label",
 		PropgraphLabelRelationId,
 		PropgraphLabelObjectIndexId,
-		-1,
+		PROPGRAPHLABELOID,
 		PROPGRAPHLABELNAME,
 		Anum_pg_propgraph_label_oid,
 		Anum_pg_propgraph_label_pgllabel,
@@ -4010,6 +4025,12 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				getRelationDescription(&buffer, pgeform->pgepgid, false);
 
 				ReleaseSysCache(tup);
+				break;
+			}
+
+		case PropgraphElementLabelRelationId:
+			{
+				appendStringInfo(&buffer, "TODO");
 				break;
 			}
 

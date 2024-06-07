@@ -51,6 +51,7 @@
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
@@ -1455,6 +1456,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case AccessMethodOperatorRelationId:
 		case AccessMethodProcedureRelationId:
 		case PropgraphElementRelationId:
+		case PropgraphElementLabelRelationId:
 		case PropgraphLabelRelationId:
 		case PropgraphPropertyRelationId:
 		case NamespaceRelationId:

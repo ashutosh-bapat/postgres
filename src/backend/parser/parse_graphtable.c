@@ -18,6 +18,7 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/table.h"
+#include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -26,7 +27,9 @@
 #include "parser/parse_graphtable.h"
 #include "parser/parse_node.h"
 #include "utils/fmgroids.h"
+#include "utils/lsyscache.h"
 #include "utils/relcache.h"
+#include "utils/syscache.h"
 
 
 /*
@@ -124,13 +127,20 @@ transformLabelExpr(GraphTableParseState *gpstate, Node *labelexpr)
 			{
 				ColumnRef  *cref = (ColumnRef *) labelexpr;
 				const char *labelname;
+				Oid			labelid;
 				GraphLabelRef *lref;
 
 				Assert(list_length(cref->fields) == 1);
 				labelname = strVal(linitial(cref->fields));
 
+				labelid = GetSysCacheOid2(PROPGRAPHLABELNAME, Anum_pg_propgraph_label_oid, ObjectIdGetDatum(gpstate->graphid), CStringGetDatum(labelname));
+				if (!labelid)
+					ereport(ERROR,
+							errcode(ERRCODE_UNDEFINED_OBJECT),
+							errmsg("label \"%s\" does not exist in property graph \"%s\"", labelname, get_rel_name(gpstate->graphid)));
+
 				lref = makeNode(GraphLabelRef);
-				lref->labelname = labelname;
+				lref->labelid = labelid;
 				lref->location = cref->location;
 
 				result = (Node *) lref;

@@ -35,6 +35,7 @@
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_statistic_ext.h"
@@ -350,7 +351,7 @@ static char *pg_get_indexdef_worker(Oid indexrelid, int colno,
 									int prettyFlags, bool missing_ok);
 static void make_propgraphdef_elements(StringInfo buf, Oid pgrelid, char pgekind);
 static void make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elrelid);
-static void make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid);
+static void make_propgraphdef_properties(StringInfo buf, Oid ellabelid, Oid elrelid);
 static char *pg_get_statisticsobj_worker(Oid statextid, bool columns_only,
 										 bool missing_ok);
 static char *pg_get_partkeydef_worker(Oid relid, int prettyFlags,
@@ -1766,15 +1767,15 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 	int			count;
 	HeapTuple	tup;
 
-	pglrel = table_open(PropgraphLabelRelationId, AccessShareLock);
+	pglrel = table_open(PropgraphElementLabelRelationId, AccessShareLock);
 
 	ScanKeyInit(&scankey[0],
-				Anum_pg_propgraph_label_pglelid,
+				Anum_pg_propgraph_element_label_pgelelid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(elid));
 
 	count = 0;
-	scan = systable_beginscan(pglrel, PropgraphLabelLabelIndexId, true, NULL, 1, scankey);
+	scan = systable_beginscan(pglrel, PropgraphElementLabelElementLabelIndexId, true, NULL, 1, scankey);
 	while ((tup = systable_getnext(scan)))
 	{
 		count++;
@@ -1783,27 +1784,34 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 
 	/* XXX need to re-init scan key for second scan */
 	ScanKeyInit(&scankey[0],
-				Anum_pg_propgraph_label_pglelid,
+				Anum_pg_propgraph_element_label_pgelelid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(elid));
 
-	scan = systable_beginscan(pglrel, PropgraphLabelLabelIndexId, true, NULL, 1, scankey);
+	scan = systable_beginscan(pglrel, PropgraphElementLabelElementLabelIndexId, true, NULL, 1, scankey);
 
 	while ((tup = systable_getnext(scan)))
 	{
-		Form_pg_propgraph_label pglform = (Form_pg_propgraph_label) GETSTRUCT(tup);
+		Form_pg_propgraph_element_label pgelform = (Form_pg_propgraph_element_label) GETSTRUCT(tup);
+		HeapTuple	tup2;
+		const char *labelname;
 
-		if (strcmp(NameStr(pglform->pgllabel), elalias) == 0)
+		tup2 = SearchSysCache1(PROPGRAPHLABELOID, ObjectIdGetDatum(pgelform->pgellabelid));
+		if (!tup2)
+			elog(ERROR, "cache lookup failed for label %u", pgelform->pgellabelid);
+		labelname = DatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHLABELOID, tup2, Anum_pg_propgraph_label_pgllabel));
+
+		if (strcmp(labelname, elalias) == 0)
 		{
 			/* If the default label is the only label, don't print anything. */
 			if (count != 1)
 				appendStringInfo(buf, " DEFAULT LABEL");
 		}
 		else
-			appendStringInfo(buf, " LABEL %s",
-							 quote_identifier(NameStr(pglform->pgllabel)));
+			appendStringInfo(buf, " LABEL %s", quote_identifier(labelname));
 
-		make_propgraphdef_properties(buf, pglform->oid, elrelid);
+		ReleaseSysCache(tup2);
+		make_propgraphdef_properties(buf, pgelform->oid, elrelid);
 	}
 
 	systable_endscan(scan);
@@ -1817,7 +1825,7 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
  * to buf.
  */
 static void
-make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid)
+make_propgraphdef_properties(StringInfo buf, Oid ellabelid, Oid elrelid)
 {
 	List	   *context;
 	Relation	pgprel;
@@ -1831,9 +1839,9 @@ make_propgraphdef_properties(StringInfo buf, Oid labelid, Oid elrelid)
 	pgprel = table_open(PropgraphPropertyRelationId, AccessShareLock);
 
 	ScanKeyInit(&scankey[0],
-				Anum_pg_propgraph_property_pgplabelid,
+				Anum_pg_propgraph_property_pgpellabelid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(labelid));
+				ObjectIdGetDatum(ellabelid));
 
 	/*
 	 * Note: Use of index on property name also ensures that properties are
@@ -7589,8 +7597,13 @@ get_graph_label_expr(Node *label_expr, deparse_context *context)
 		case T_GraphLabelRef:
 			{
 				GraphLabelRef *lref = (GraphLabelRef *) label_expr;
+				HeapTuple	tup;
 
-				appendStringInfoString(buf, quote_identifier(lref->labelname));
+				tup = SearchSysCache1(PROPGRAPHLABELOID, ObjectIdGetDatum(lref->labelid));
+				if (!tup)
+					elog(ERROR, "cache lookup failed for label %u", lref->labelid);
+				appendStringInfoString(buf, quote_identifier(DatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHLABELOID, tup, Anum_pg_propgraph_label_pgllabel))));
+				ReleaseSysCache(tup);
 				break;
 			}
 

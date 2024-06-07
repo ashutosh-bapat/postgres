@@ -83,6 +83,7 @@ CATALOG_HEADERS := \
 	pg_subscription.h \
 	pg_subscription_rel.h \
 	pg_propgraph_element.h \
+	pg_propgraph_element_label.h \
 	pg_propgraph_label.h \
 	pg_propgraph_property.h
 

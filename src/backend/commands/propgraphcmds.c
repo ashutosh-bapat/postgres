@@ -21,6 +21,7 @@
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "commands/propgraphcmds.h"
@@ -71,17 +72,18 @@ static ArrayType *array_from_column_list(ParseState *pstate, const List *colname
 static ArrayType *array_from_attnums(int numattrs, const AttrNumber *attnums);
 static Oid	insert_element_record(ObjectAddress pgaddress, struct element_info *einfo);
 static Oid	insert_label_record(Oid graphid, Oid peoid, const char *label);
-static void insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties);
-static void insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr);
+static void insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, const PropGraphProperties *properties);
+static void insert_property_record(Oid graphid, Oid ellabeloid, Oid pgerelid, const char *propname, const Expr *expr);
 static void check_element_properties(Oid peoid);
-static void check_label_properties(Oid labeloid);
+static void check_element_label_properties(Oid ellabeloid);
 static void check_all_labels_properties(Oid pgrelid);
 static void check_propgraph_properties(Oid pgrelid);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
 static List *get_graph_label_ids(Oid graphid);
-static List *get_label_property_names(Oid labeloid);
+static List *get_label_element_label_ids(Oid labelid);
+static List *get_element_label_property_names(Oid ellabeloid);
 
 
 /*
@@ -578,75 +580,118 @@ insert_element_record(ObjectAddress pgaddress, struct element_info *einfo)
 		foreach(lc, einfo->labels)
 		{
 			PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
-			Oid			labeloid;
+			Oid			ellabeloid;
 
 			if (lp->label)
-				labeloid = insert_label_record(graphid, peoid, lp->label);
+				ellabeloid = insert_label_record(graphid, peoid, lp->label);
 			else
-				labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
-			insert_property_records(graphid, labeloid, einfo->relid, lp->properties);
+				ellabeloid = insert_label_record(graphid, peoid, einfo->aliasname);
+			insert_property_records(graphid, ellabeloid, einfo->relid, lp->properties);
+
+			CommandCounterIncrement();
 		}
 	}
 	else
 	{
-		Oid			labeloid;
+		Oid			ellabeloid;
 		PropGraphProperties *pr = makeNode(PropGraphProperties);
 
 		pr->all = true;
 		pr->location = -1;
 
-		labeloid = insert_label_record(graphid, peoid, einfo->aliasname);
-		insert_property_records(graphid, labeloid, einfo->relid, pr);
+		ellabeloid = insert_label_record(graphid, peoid, einfo->aliasname);
+		insert_property_records(graphid, ellabeloid, einfo->relid, pr);
 	}
 
 	return peoid;
 }
 
 /*
- * Insert a record for a label into the pg_propgraph_label catalog.
+ * Insert records for a label into the pg_propgraph_label and
+ * pg_propgraph_element_label catalogs, and register dependencies.
+ *
+ * Returns the OID of the new pg_propgraph_element_label record.
  */
 static Oid
 insert_label_record(Oid graphid, Oid peoid, const char *label)
 {
-	Relation	rel;
-	NameData	labelname;
 	Oid			labeloid;
-	Datum		values[Natts_pg_propgraph_label] = {0};
-	bool		nulls[Natts_pg_propgraph_label] = {0};
-	HeapTuple	tup;
-	ObjectAddress myself;
-	ObjectAddress referenced;
+	Oid			ellabeloid;
 
-	rel = table_open(PropgraphLabelRelationId, RowExclusiveLock);
+	/*
+	 * Insert into pg_propgraph_label if not already existing.
+	 */
+	labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME, Anum_pg_propgraph_label_oid, ObjectIdGetDatum(graphid), CStringGetDatum(label));
+	if (!labeloid)
+	{
+		Relation	rel;
+		Datum		values[Natts_pg_propgraph_label] = {0};
+		bool		nulls[Natts_pg_propgraph_label] = {0};
+		NameData	labelname;
+		HeapTuple	tup;
+		ObjectAddress myself;
+		ObjectAddress referenced;
 
-	labeloid = GetNewOidWithIndex(rel, PropgraphLabelObjectIndexId, Anum_pg_propgraph_label_oid);
-	values[Anum_pg_propgraph_label_oid - 1] = ObjectIdGetDatum(labeloid);
-	values[Anum_pg_propgraph_label_pglpgid - 1] = ObjectIdGetDatum(graphid);
-	namestrcpy(&labelname, label);
-	values[Anum_pg_propgraph_label_pgllabel - 1] = NameGetDatum(&labelname);
-	values[Anum_pg_propgraph_label_pglelid - 1] = ObjectIdGetDatum(peoid);
+		rel = table_open(PropgraphLabelRelationId, RowExclusiveLock);
 
-	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
-	CatalogTupleInsert(rel, tup);
-	heap_freetuple(tup);
+		labeloid = GetNewOidWithIndex(rel, PropgraphLabelObjectIndexId, Anum_pg_propgraph_label_oid);
+		values[Anum_pg_propgraph_label_oid - 1] = ObjectIdGetDatum(labeloid);
+		values[Anum_pg_propgraph_label_pglpgid - 1] = ObjectIdGetDatum(graphid);
+		namestrcpy(&labelname, label);
+		values[Anum_pg_propgraph_label_pgllabel - 1] = NameGetDatum(&labelname);
 
-	ObjectAddressSet(myself, PropgraphLabelRelationId, labeloid);
+		tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+		CatalogTupleInsert(rel, tup);
+		heap_freetuple(tup);
 
-	ObjectAddressSet(referenced, RelationRelationId, graphid);
-	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
-	ObjectAddressSet(referenced, PropgraphElementRelationId, peoid);
-	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+		ObjectAddressSet(myself, PropgraphLabelRelationId, labeloid);
 
-	table_close(rel, NoLock);
+		ObjectAddressSet(referenced, RelationRelationId, graphid);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 
-	return labeloid;
+		table_close(rel, NoLock);
+	}
+
+	/*
+	 * Insert into pg_propgraph_element_label
+	 */
+	{
+		Relation	rel;
+		Datum		values[Natts_pg_propgraph_element_label] = {0};
+		bool		nulls[Natts_pg_propgraph_element_label] = {0};
+		HeapTuple	tup;
+		ObjectAddress myself;
+		ObjectAddress referenced;
+
+		rel = table_open(PropgraphElementLabelRelationId, RowExclusiveLock);
+
+		ellabeloid = GetNewOidWithIndex(rel, PropgraphElementLabelObjectIndexId, Anum_pg_propgraph_element_label_oid);
+		values[Anum_pg_propgraph_element_label_oid - 1] = ObjectIdGetDatum(ellabeloid);
+		values[Anum_pg_propgraph_element_label_pgellabelid - 1] = ObjectIdGetDatum(labeloid);
+		values[Anum_pg_propgraph_element_label_pgelelid - 1] = ObjectIdGetDatum(peoid);
+
+		tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+		CatalogTupleInsert(rel, tup);
+		heap_freetuple(tup);
+
+		ObjectAddressSet(myself, PropgraphElementLabelRelationId, ellabeloid);
+
+		ObjectAddressSet(referenced, PropgraphLabelRelationId, labeloid);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+		ObjectAddressSet(referenced, PropgraphElementRelationId, peoid);
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
+
+		table_close(rel, NoLock);
+	}
+
+	return ellabeloid;
 }
 
 /*
  * Insert records for properties into the pg_propgraph_property catalog.
  */
 static void
-insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraphProperties *properties)
+insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, const PropGraphProperties *properties)
 {
 	List	   *proplist = NIL;
 	ParseState *pstate;
@@ -728,7 +773,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
 	{
 		TargetEntry *te = lfirst_node(TargetEntry, lc);
 
-		insert_property_record(graphid, labeloid, pgerelid, te->resname, te->expr);
+		insert_property_record(graphid, ellabeloid, pgerelid, te->resname, te->expr);
 	}
 }
 
@@ -736,7 +781,7 @@ insert_property_records(Oid graphid, Oid labeloid, Oid pgerelid, const PropGraph
  * Insert one record for a property into the pg_propgraph_property catalog.
  */
 static void
-insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *propname, const Expr *expr)
+insert_property_record(Oid graphid, Oid ellabeloid, Oid pgerelid, const char *propname, const Expr *expr)
 {
 	Relation	rel;
 	NameData	propnamedata;
@@ -755,7 +800,7 @@ insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *prop
 	namestrcpy(&propnamedata, propname);
 	values[Anum_pg_propgraph_property_pgpname - 1] = NameGetDatum(&propnamedata);
 	values[Anum_pg_propgraph_property_pgptypid - 1] = ObjectIdGetDatum(exprType((const Node *) expr));
-	values[Anum_pg_propgraph_property_pgplabelid - 1] = ObjectIdGetDatum(labeloid);
+	values[Anum_pg_propgraph_property_pgpellabelid - 1] = ObjectIdGetDatum(ellabeloid);
 	values[Anum_pg_propgraph_property_pgpexpr - 1] = CStringGetTextDatum(nodeToString(expr));
 
 	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
@@ -766,7 +811,7 @@ insert_property_record(Oid graphid, Oid labeloid, Oid pgerelid, const char *prop
 
 	ObjectAddressSet(referenced, RelationRelationId, graphid);
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
-	ObjectAddressSet(referenced, PropgraphLabelRelationId, labeloid);
+	ObjectAddressSet(referenced, PropgraphElementLabelRelationId, ellabeloid);
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_AUTO);
 	recordDependencyOnSingleRelExpr(&myself, (Node *) copyObject(expr), pgerelid, DEPENDENCY_NORMAL, DEPENDENCY_NORMAL, false);
 
@@ -794,16 +839,16 @@ check_element_properties(Oid peoid)
 	List	   *propnames = NIL;
 	List	   *propexprs = NIL;
 
-	rel1 = table_open(PropgraphLabelRelationId, AccessShareLock);
+	rel1 = table_open(PropgraphElementLabelRelationId, AccessShareLock);
 	ScanKeyInit(&key1[0],
-				Anum_pg_propgraph_label_pglelid,
+				Anum_pg_propgraph_element_label_pgelelid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(peoid));
 
-	scan1 = systable_beginscan(rel1, PropgraphLabelLabelIndexId, true, NULL, 1, key1);
+	scan1 = systable_beginscan(rel1, PropgraphElementLabelElementLabelIndexId, true, NULL, 1, key1);
 	while (HeapTupleIsValid(tuple1 = systable_getnext(scan1)))
 	{
-		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tuple1);
+		Form_pg_propgraph_element_label ellabel = (Form_pg_propgraph_element_label) GETSTRUCT(tuple1);
 		Relation	rel2;
 		ScanKeyData key2[1];
 		SysScanDesc scan2;
@@ -811,9 +856,9 @@ check_element_properties(Oid peoid)
 
 		rel2 = table_open(PropgraphPropertyRelationId, AccessShareLock);
 		ScanKeyInit(&key2[0],
-					Anum_pg_propgraph_property_pgplabelid,
+					Anum_pg_propgraph_property_pgpellabelid,
 					BTEqualStrategyNumber, F_OIDEQ,
-					ObjectIdGetDatum(label->oid));
+					ObjectIdGetDatum(ellabel->oid));
 
 		scan2 = systable_beginscan(rel2, PropgraphPropertyNameIndexId, true, NULL, 1, key2);
 		while (HeapTupleIsValid(tuple2 = systable_getnext(scan2)))
@@ -850,6 +895,8 @@ check_element_properties(Oid peoid)
 						HeapTuple	tuple3;
 						Form_pg_propgraph_element elform;
 						List	   *dpcontext;
+						char	   *dpa,
+								   *dpb;
 
 						tuple3 = SearchSysCache1(PROPGRAPHELOID, ObjectIdGetDatum(peoid));
 						if (!tuple3)
@@ -857,12 +904,26 @@ check_element_properties(Oid peoid)
 						elform = (Form_pg_propgraph_element) GETSTRUCT(tuple3);
 						dpcontext = deparse_context_for(get_rel_name(elform->pgerelid), elform->pgerelid);
 
+						dpa = deparse_expression(na, dpcontext, false, false);
+						dpb = deparse_expression(nb, dpcontext, false, false);
+
+						/*
+						 * show in sorted order to keep output independent of
+						 * index order
+						 */
+						if (strcmp(dpa, dpb) > 0)
+						{
+							char	   *tmp;
+
+							tmp = dpa;
+							dpa = dpb;
+							dpb = tmp;
+						}
+
 						ereport(ERROR,
 								errcode(ERRCODE_SYNTAX_ERROR),
 								errmsg("element \"%s\" property \"%s\" expression mismatch: %s vs. %s",
-									   NameStr(elform->pgealias), propname,
-									   deparse_expression(nb, dpcontext, false, false),
-									   deparse_expression(na, dpcontext, false, false)),
+									   NameStr(elform->pgealias), propname, dpa, dpb),
 								errdetail("In a property graph element, a property of the same name has to have the same expression in each label."));
 
 						ReleaseSysCache(tuple3);
@@ -886,75 +947,85 @@ check_element_properties(Oid peoid)
 	table_close(rel1, AccessShareLock);
 }
 
+static char *
+get_label_name(Oid labeloid)
+{
+	HeapTuple	tuple;
+	char	   *labelname;
+
+	tuple = SearchSysCache1(PROPGRAPHLABELOID, labeloid);
+	if (!tuple)
+		return NULL;
+	labelname = pstrdup(DatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHLABELOID, tuple, Anum_pg_propgraph_label_pgllabel)));
+	ReleaseSysCache(tuple);
+
+	return labelname;
+}
+
 /*
- * Check that for the given label, all labels of the same name in the graph
- * have the same number and names of properties (independent of which element
- * they are on).  (See SQL/PGQ subclause "Consistency check of a tabular
- * property graph descriptor".)
+ * Check that for the given element label, all labels of the same name in the
+ * graph have the same number and names of properties (independent of which
+ * element they are on).  (See SQL/PGQ subclause "Consistency check of a
+ * tabular property graph descriptor".)
  *
  * We check this after all the catalog records are already inserted.  This
  * makes it easier to share this code between CREATE PROPERTY GRAPH and ALTER
- * PROPERTY GRAPH.  We pass in the label OID so that some variants of ALTER
- * PROPERTY GRAPH only have to check the label it has just operated on.
- * CREATE PROPERTY GROUP and other ALTER PROPERTY GRAPH VARIANTS checks all
- * labels.
+ * PROPERTY GRAPH.  We pass in the element label OID so that some variants of
+ * ALTER PROPERTY GRAPH only have to check the element label it has just
+ * operated on.  CREATE PROPERTY GROUP and other ALTER PROPERTY GRAPH variants
+ * check all labels.
  */
 static void
-check_label_properties(Oid labeloid)
+check_element_label_properties(Oid ellabeloid)
 {
 	Relation	rel;
 	SysScanDesc scan;
-	ScanKeyData key[2];
+	ScanKeyData key[1];
 	HeapTuple	tuple;
-	char	   *labelname;
-	Oid			graphid = InvalidOid;
-	Oid			ref_labeloid = InvalidOid;
+	Oid			labelid = InvalidOid;
+	Oid			ref_ellabeloid = InvalidOid;
 	List	   *myprops,
 			   *refprops;
 	List	   *diff1,
 			   *diff2;
 
-	rel = table_open(PropgraphLabelRelationId, AccessShareLock);
+	rel = table_open(PropgraphElementLabelRelationId, AccessShareLock);
 
 	/*
-	 * Get label name and graph
+	 * Get element label info
 	 */
 	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_label_oid,
+				Anum_pg_propgraph_element_label_oid,
 				BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(labeloid));
-	scan = systable_beginscan(rel, PropgraphLabelObjectIndexId, true, NULL, 1, key);
+				F_OIDEQ, ObjectIdGetDatum(ellabeloid));
+	scan = systable_beginscan(rel, PropgraphElementLabelObjectIndexId, true, NULL, 1, key);
 	if (HeapTupleIsValid(tuple = systable_getnext(scan)))
 	{
-		Form_pg_propgraph_label label = (Form_pg_propgraph_label) GETSTRUCT(tuple);
+		Form_pg_propgraph_element_label ellabel = (Form_pg_propgraph_element_label) GETSTRUCT(tuple);
 
-		graphid = label->pglpgid;
-		labelname = pstrdup(NameStr(label->pgllabel));
+		labelid = ellabel->pgellabelid;
 	}
 	systable_endscan(scan);
-	if (!graphid || !labelname)
-		elog(ERROR, "label %u not found", labeloid);
+	if (!labelid)
+		elog(ERROR, "element label %u not found", ellabeloid);
 
 	/*
-	 * Find a reference label to fetch label properties.  The reference label
-	 * should be some label other than the one being checked.
+	 * Find a reference element label to fetch label properties.  The
+	 * reference element label has to have the label OID as the one being
+	 * checked but be distinct from the one being checked.
 	 */
 	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_label_pglpgid,
+				Anum_pg_propgraph_element_label_pgellabelid,
 				BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(graphid));
-	ScanKeyInit(&key[1],
-				Anum_pg_propgraph_label_pgllabel,
-				BTEqualStrategyNumber,
-				F_NAMEEQ, CStringGetDatum(labelname));
-	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId, true, NULL, 2, key);
+				F_OIDEQ, ObjectIdGetDatum(labelid));
+	scan = systable_beginscan(rel, PropgraphElementLabelLabelIndexId, true, NULL, 1, key);
 	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
 	{
-		Form_pg_propgraph_label otherlabel = (Form_pg_propgraph_label) GETSTRUCT(tuple);
+		Form_pg_propgraph_element_label otherellabel = (Form_pg_propgraph_element_label) GETSTRUCT(tuple);
 
-		if (otherlabel->oid != labeloid)
+		if (otherellabel->oid != ellabeloid)
 		{
-			ref_labeloid = otherlabel->oid;
+			ref_ellabeloid = otherellabel->oid;
 			break;
 		}
 	}
@@ -965,7 +1036,7 @@ check_label_properties(Oid labeloid)
 	/*
 	 * If there is not previous definition of this label, then we are done.
 	 */
-	if (!ref_labeloid)
+	if (!ref_ellabeloid)
 		return;
 
 	/*
@@ -978,13 +1049,13 @@ check_label_properties(Oid labeloid)
 	 * it simple for now.
 	 */
 
-	myprops = get_label_property_names(labeloid);
-	refprops = get_label_property_names(ref_labeloid);
+	myprops = get_element_label_property_names(ellabeloid);
+	refprops = get_element_label_property_names(ref_ellabeloid);
 
 	if (list_length(refprops) != list_length(myprops))
 		ereport(ERROR,
 				errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				errmsg("mismatching number of properties in definition of label \"%s\"", labelname));
+				errmsg("mismatching number of properties in definition of label \"%s\"", get_label_name(labelid)));
 
 	diff1 = list_difference(myprops, refprops);
 	diff2 = list_difference(refprops, myprops);
@@ -992,7 +1063,7 @@ check_label_properties(Oid labeloid)
 	if (diff1 || diff2)
 		ereport(ERROR,
 				errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				errmsg("mismatching properties names in definition of label \"%s\"", labelname));
+				errmsg("mismatching properties names in definition of label \"%s\"", get_label_name(labelid)));
 }
 
 /*
@@ -1002,7 +1073,12 @@ static void
 check_all_labels_properties(Oid pgrelid)
 {
 	foreach_oid(labeloid, get_graph_label_ids(pgrelid))
-		check_label_properties(labeloid);
+	{
+		foreach_oid(ellabeloid, get_label_element_label_ids(labeloid))
+		{
+			check_element_label_properties(ellabeloid);
+		}
+	}
 }
 
 /*
@@ -1220,12 +1296,27 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
+	/* Remove any orphaned pg_propgraph_label entries */
+	if (stmt->drop_vertex_tables || stmt->drop_edge_tables)
+	{
+		foreach_oid(labeloid, get_graph_label_ids(pgrelid))
+		{
+			if (!get_label_element_label_ids(labeloid))
+			{
+				ObjectAddress obj;
+
+				ObjectAddressSet(obj, PropgraphLabelRelationId, labeloid);
+				performDeletion(&obj, stmt->drop_behavior, 0);
+			}
+		}
+	}
+
 	foreach(lc, stmt->add_labels)
 	{
 		PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
 		Oid			peoid;
 		Oid			pgerelid;
-		Oid			labeloid;
+		Oid			ellabeloid;
 
 		Assert(lp->label);
 
@@ -1236,12 +1327,12 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		pgerelid = get_element_relid(peoid);
 
-		labeloid = insert_label_record(pgrelid, peoid, lp->label);
-		insert_property_records(pgrelid, labeloid, pgerelid, lp->properties);
+		ellabeloid = insert_label_record(pgrelid, peoid, lp->label);
+		insert_property_records(pgrelid, ellabeloid, pgerelid, lp->properties);
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
-		check_label_properties(labeloid);
+		check_element_label_properties(ellabeloid);
 		check_propgraph_properties(pgrelid);
 	}
 
@@ -1249,6 +1340,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 	{
 		Oid			peoid;
 		Oid			labeloid;
+		Oid			ellabeloid;
 		ObjectAddress obj;
 
 		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
@@ -1258,7 +1350,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME,
 								   Anum_pg_propgraph_label_oid,
-								   ObjectIdGetDatum(peoid),
+								   ObjectIdGetDatum(pgrelid),
 								   CStringGetDatum(stmt->drop_label));
 		if (!labeloid)
 			ereport(ERROR,
@@ -1267,8 +1359,27 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 						   get_rel_name(pgrelid), stmt->element_alias, stmt->drop_label),
 					parser_errposition(pstate, -1));
 
-		ObjectAddressSet(obj, PropgraphLabelRelationId, labeloid);
+		ellabeloid = GetSysCacheOid2(PROPGRAPHELEMENTLABELELEMENTLABEL,
+									 Anum_pg_propgraph_element_label_oid,
+									 ObjectIdGetDatum(peoid),
+									 ObjectIdGetDatum(labeloid));
+
+		if (!ellabeloid)
+			ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->drop_label),
+					parser_errposition(pstate, -1));
+
+		ObjectAddressSet(obj, PropgraphElementLabelRelationId, ellabeloid);
 		performDeletion(&obj, stmt->drop_behavior, 0);
+
+		/* Remove any orphaned pg_propgraph_label entries */
+		if (!get_label_element_label_ids(labeloid))
+		{
+			ObjectAddressSet(obj, PropgraphLabelRelationId, labeloid);
+			performDeletion(&obj, stmt->drop_behavior, 0);
+		}
 	}
 
 	if (stmt->add_properties)
@@ -1276,17 +1387,16 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		Oid			peoid;
 		Oid			pgerelid;
 		Oid			labeloid;
+		Oid			ellabeloid;
 
 		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
 			peoid = get_vertex_oid(pstate, pgrelid, stmt->element_alias, -1);
 		else
 			peoid = get_edge_oid(pstate, pgrelid, stmt->element_alias, -1);
 
-		pgerelid = get_element_relid(peoid);
-
 		labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME,
 								   Anum_pg_propgraph_label_oid,
-								   ObjectIdGetDatum(peoid),
+								   ObjectIdGetDatum(pgrelid),
 								   CStringGetDatum(stmt->alter_label));
 		if (!labeloid)
 			ereport(ERROR,
@@ -1295,11 +1405,24 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
 					parser_errposition(pstate, -1));
 
-		insert_property_records(pgrelid, labeloid, pgerelid, stmt->add_properties);
+		ellabeloid = GetSysCacheOid2(PROPGRAPHELEMENTLABELELEMENTLABEL,
+									 Anum_pg_propgraph_element_label_oid,
+									 ObjectIdGetDatum(peoid),
+									 ObjectIdGetDatum(labeloid));
+		if (!ellabeloid)
+			ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
+					parser_errposition(pstate, -1));
+
+		pgerelid = get_element_relid(peoid);
+
+		insert_property_records(pgrelid, ellabeloid, pgerelid, stmt->add_properties);
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
-		check_label_properties(labeloid);
+		check_element_label_properties(ellabeloid);
 		check_propgraph_properties(pgrelid);
 	}
 
@@ -1307,6 +1430,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 	{
 		Oid			peoid;
 		Oid			labeloid;
+		Oid			ellabeloid;
 		ObjectAddress obj;
 
 		if (stmt->element_kind == PROPGRAPH_ELEMENT_KIND_VERTEX)
@@ -1316,13 +1440,25 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		labeloid = GetSysCacheOid2(PROPGRAPHLABELNAME,
 								   Anum_pg_propgraph_label_oid,
-								   ObjectIdGetDatum(peoid),
+								   ObjectIdGetDatum(pgrelid),
 								   CStringGetDatum(stmt->alter_label));
 		if (!labeloid)
 			ereport(ERROR,
 					errcode(ERRCODE_UNDEFINED_OBJECT),
 					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
-						   get_rel_name(pgrelid), stmt->element_alias, stmt->drop_label),
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
+					parser_errposition(pstate, -1));
+
+		ellabeloid = GetSysCacheOid2(PROPGRAPHELEMENTLABELELEMENTLABEL,
+									 Anum_pg_propgraph_element_label_oid,
+									 ObjectIdGetDatum(peoid),
+									 ObjectIdGetDatum(labeloid));
+
+		if (!ellabeloid)
+			ereport(ERROR,
+					errcode(ERRCODE_UNDEFINED_OBJECT),
+					errmsg("property graph \"%s\" element \"%s\" has no label \"%s\"",
+						   get_rel_name(pgrelid), stmt->element_alias, stmt->alter_label),
 					parser_errposition(pstate, -1));
 
 		foreach(lc, stmt->drop_properties)
@@ -1332,7 +1468,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 			propoid = GetSysCacheOid2(PROPGRAPHPROPNAME,
 									  Anum_pg_propgraph_property_oid,
-									  ObjectIdGetDatum(labeloid),
+									  ObjectIdGetDatum(ellabeloid),
 									  CStringGetDatum(propname));
 			if (!propoid)
 				ereport(ERROR,
@@ -1345,7 +1481,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 			performDeletion(&obj, stmt->drop_behavior, 0);
 		}
 
-		check_label_properties(labeloid);
+		check_element_label_properties(ellabeloid);
 	}
 
 	return pgaddress;
@@ -1464,13 +1600,41 @@ get_graph_label_ids(Oid graphid)
 }
 
 /*
- * Get the names of properties associated with the given label OID.
+ * Get a list of all element label OIDs for a label.
+ */
+static List *
+get_label_element_label_ids(Oid labelid)
+{
+	Relation	rel;
+	SysScanDesc scan;
+	ScanKeyData key[1];
+	HeapTuple	tuple;
+	List	   *result = NIL;
+
+	rel = table_open(PropgraphElementLabelRelationId, AccessShareLock);
+	ScanKeyInit(&key[0],
+				Anum_pg_propgraph_element_label_pgellabelid,
+				BTEqualStrategyNumber,
+				F_OIDEQ, ObjectIdGetDatum(labelid));
+	scan = systable_beginscan(rel, PropgraphElementLabelLabelIndexId, true, NULL, 1, key);
+	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
+	{
+		result = lappend_oid(result, ((Form_pg_propgraph_element_label) GETSTRUCT(tuple))->oid);
+	}
+	systable_endscan(scan);
+	table_close(rel, AccessShareLock);
+
+	return result;
+}
+
+/*
+ * Get the names of properties associated with the given element label OID.
  *
  * The result is a list of String nodes (so we can use list functions to
  * detect differences).
  */
 static List *
-get_label_property_names(Oid labeloid)
+get_element_label_property_names(Oid ellabeloid)
 {
 	Relation	rel;
 	SysScanDesc scan;
@@ -1481,9 +1645,9 @@ get_label_property_names(Oid labeloid)
 	rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_property_pgplabelid,
+				Anum_pg_propgraph_property_pgpellabelid,
 				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(labeloid));
+				ObjectIdGetDatum(ellabeloid));
 
 	scan = systable_beginscan(rel, PropgraphPropertyNameIndexId, true, NULL, 1, key);
 

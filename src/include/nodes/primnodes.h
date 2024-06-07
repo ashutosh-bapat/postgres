@@ -2136,7 +2136,7 @@ typedef struct InferenceElem
 typedef struct GraphLabelRef
 {
 	NodeTag		type;
-	const char *labelname;
+	Oid			labelid;
 	ParseLoc	location;
 } GraphLabelRef;
 

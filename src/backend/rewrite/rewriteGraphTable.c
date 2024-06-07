@@ -15,7 +15,7 @@
 
 #include "access/table.h"
 #include "catalog/pg_propgraph_element.h"
-#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_property.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -33,8 +33,7 @@
 #include "utils/syscache.h"
 
 
-static Oid	get_labelid(Oid graphid, const char *labelname);
-static List *get_elements_for_label(Oid graphid, const char *labelname);
+static List *get_elements_for_label(Oid labelid);
 static Oid	get_table_for_element(Oid elid);
 static Node *replace_property_refs(Node *node, const List *mappings);
 static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, AttrNumber catalog_key_attnum, AttrNumber catalog_ref_attnum);
@@ -42,7 +41,7 @@ static List *build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int re
 struct elvar_rt_mapping
 {
 	const char *elvarname;
-	Oid			labelid;
+	Oid			ellabelid;
 	int			rt_index;
 };
 
@@ -76,7 +75,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 	foreach(lc, element_patterns)
 	{
 		GraphElementPattern *gep = lfirst_node(GraphElementPattern, lc);
-		Oid			labelid = InvalidOid;
+		Oid			ellabelid = InvalidOid;
 		struct elvar_rt_mapping *erm;
 
 		if (!(gep->kind == VERTEX_PATTERN || gep->kind == EDGE_PATTERN_LEFT || gep->kind == EDGE_PATTERN_RIGHT))
@@ -94,7 +93,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			ParseNamespaceItem *pni;
 			RangeTblRef *rtr;
 
-			elid = linitial_oid(get_elements_for_label(rte->relid, glr->labelname));
+			elid = linitial_oid(get_elements_for_label(glr->labelid));
 			element_ids = lappend_oid(element_ids, elid);
 			relid = get_table_for_element(elid);
 
@@ -110,7 +109,9 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 			rtr->rtindex = list_length(newsubquery->rtable);
 			fromlist = lappend(fromlist, rtr);
 
-			labelid = get_labelid(rte->relid, glr->labelname);
+			ellabelid = GetSysCacheOid2(PROPGRAPHELEMENTLABELELEMENTLABEL, Anum_pg_propgraph_element_label_oid, ObjectIdGetDatum(elid), ObjectIdGetDatum(glr->labelid));
+			if (!ellabelid)
+				elog(ERROR, "cache lookup failed for element label for element %u label %u", elid, glr->labelid);
 		}
 		else
 			elog(ERROR, "unsupported label expression type: %d", (int) nodeTag(gep->labelexpr));
@@ -118,7 +119,7 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 		erm = palloc0_object(struct elvar_rt_mapping);
 
 		erm->elvarname = gep->variable;
-		erm->labelid = labelid;
+		erm->ellabelid = ellabelid;
 		erm->rt_index = list_length(newsubquery->rtable);
 
 		elvar_rt_mappings = lappend(elvar_rt_mappings, erm);
@@ -228,73 +229,29 @@ rewriteGraphTable(Query *parsetree, int rt_index)
 }
 
 /*
- * Get label OID from graph OID and label name.
- *
- * TODO: This could match more than one entry.  Right now it only returns the
- * first one.
- */
-static Oid
-get_labelid(Oid graphid, const char *labelname)
-{
-	Relation	rel;
-	SysScanDesc scan;
-	ScanKeyData key[2];
-	HeapTuple	tup;
-	Oid			result = InvalidOid;
-
-	rel = table_open(PropgraphLabelRelationId, RowShareLock);
-	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_label_pglpgid,
-				BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(graphid));
-	ScanKeyInit(&key[1],
-				Anum_pg_propgraph_label_pgllabel,
-				BTEqualStrategyNumber,
-				F_NAMEEQ, CStringGetDatum(labelname));
-
-	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId,
-							  true, NULL, 2, key);
-
-	while (HeapTupleIsValid(tup = systable_getnext(scan)))
-	{
-		result = ((Form_pg_propgraph_label) GETSTRUCT(tup))->oid;
-		break;
-	}
-
-	systable_endscan(scan);
-	table_close(rel, RowShareLock);
-
-	return result;
-}
-
-/*
  * Get list of element OIDs that have a given label.
  */
 static List *
-get_elements_for_label(Oid graphid, const char *labelname)
+get_elements_for_label(Oid labelid)
 {
 	Relation	rel;
 	SysScanDesc scan;
-	ScanKeyData key[2];
+	ScanKeyData key[1];
 	HeapTuple	tup;
 	List	   *result = NIL;
 
-	rel = table_open(PropgraphLabelRelationId, RowShareLock);
+	rel = table_open(PropgraphElementLabelRelationId, RowShareLock);
 	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_label_pglpgid,
+				Anum_pg_propgraph_element_label_pgellabelid,
 				BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(graphid));
-	ScanKeyInit(&key[1],
-				Anum_pg_propgraph_label_pgllabel,
-				BTEqualStrategyNumber,
-				F_NAMEEQ, CStringGetDatum(labelname));
+				F_OIDEQ, ObjectIdGetDatum(labelid));
 
-	scan = systable_beginscan(rel, PropgraphLabelGraphNameIndexId,
-							  true, NULL, 2, key);
+	scan = systable_beginscan(rel, PropgraphElementLabelLabelIndexId,
+							  true, NULL, 1, key);
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-		result = lappend_oid(result, ((Form_pg_propgraph_label) GETSTRUCT(tup))->pglelid);
+		result = lappend_oid(result, ((Form_pg_propgraph_element_label) GETSTRUCT(tup))->pgelelid);
 	}
 
 	systable_endscan(scan);
@@ -361,9 +318,9 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 		if (!found_mapping)
 			elog(ERROR, "undefined element variable \"%s\"", gpr->elvarname);
 
-		tup = SearchSysCache2(PROPGRAPHPROPNAME, ObjectIdGetDatum(found_mapping->labelid), CStringGetDatum(gpr->propname));
+		tup = SearchSysCache2(PROPGRAPHPROPNAME, ObjectIdGetDatum(found_mapping->ellabelid), CStringGetDatum(gpr->propname));
 		if (!tup)
-			elog(ERROR, "property \"%s\" of label %u not found", gpr->propname, found_mapping->labelid);
+			elog(ERROR, "property \"%s\" of element label %u not found", gpr->propname, found_mapping->ellabelid);
 
 		n = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHPROPNAME, tup, Anum_pg_propgraph_property_pgpexpr)));
 		ChangeVarNodes(n, 1, found_mapping->rt_index, 0);
