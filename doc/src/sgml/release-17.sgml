@@ -6,7 +6,7 @@
 
   <formalpara>
    <title>Release date:</title>
-   <para>2024-??-??, AS OF 2024-05-07</para>
+   <para>2024-??-??, AS OF 2024-05-18</para>
   </formalpara>
 
   <sect2 id="release-17-highlights">
@@ -73,7 +73,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Restrict "ago" to only appear at the end of in interval values (Joseph Koshakow)
+Restrict "ago" to only appear at the end in interval values (Joseph Koshakow)
 </para>
 
 <para>
@@ -208,7 +208,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Rename I/O block read/write timing statistics columns of pg_stat_statement (Nazir Bilal Yavuz)
+Rename I/O block read/write timing statistics columns of pg_stat_statements (Nazir Bilal Yavuz)
 </para>
 
 <para>
@@ -270,7 +270,7 @@ Rename SLRU columns in system view pg_stat_slru (Alvaro Herrera)
 </para>
 
 <para>
-The column names accepted by pg_stat_slru_rest() are also changed.
+The column names accepted by pg_stat_slru_reset() are also changed.
 </para>
 </listitem>
 
@@ -357,13 +357,35 @@ Improve optimization of range values when using containment operators &lt;@ and 
 </listitem>
 
 <!--
+Author: Alexander Korotkov <akorotkov@postgresql.org>
+2024-02-15 [9f1337639] Pull up ANY-SUBLINK with the necessary lateral support.
+-->
+
+<listitem>
+<para>
+Allow correlated IN subqueries to be transformed into joins (Andy Fan, Tom Lane)
+</para>
+</listitem>
+
+<!--
+Author: David Rowley <drowley@postgresql.org>
+2023-10-05 [a8a968a82] Consider cheap startup paths in add_paths_to_append_rel
+-->
+
+<listitem>
+<para>
+Improve optimization of the LIMIT clause on partitioned tables, inheritance parents, and UNION ALL queries (Andy Fan, David Rowley)
+</para>
+</listitem>
+
+<!--
 Author: Tom Lane <tgl@sss.pgh.pa.us>
 2023-07-14 [e08d74ca1] Allow plan nodes with initPlans to be considered paralle
 -->
 
 <listitem>
 <para>
-Allow query nodes to be run in parallel in more case (Tom Lane)
+Allow query nodes to be run in parallel in more cases (Tom Lane)
 </para>
 </listitem>
 
@@ -445,7 +467,7 @@ Author: Peter Geoghegan <pg@bowt.ie>
 
 <listitem>
 <para>
-Allow btree indexes to more efficiently find array matches (Peter Geoghegan, Matthias van de Meent)
+Allow btree indexes to more efficiently find a set of values, such as those supplied by IN clauses using constants (Peter Geoghegan, Matthias van de Meent)
 </para>
 </listitem>
 
@@ -456,18 +478,7 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
 
 <listitem>
 <para>
-Allow a BRIN indexes to be created using parallel workers (Tomas Vondra, Matthias van de Meent)
-</para>
-</listitem>
-
-<!--
-Author: Peter Eisentraut <peter@eisentraut.org>
-2024-01-19 [6db4598fc] Add stratnum GiST support function
--->
-
-<listitem>
-<para>
-Add stratnum GiST support function (Paul A. Jungwirth)
+Allow BRIN indexes to be created using parallel workers (Tomas Vondra, Matthias van de Meent)
 </para>
 </listitem>
 
@@ -479,6 +490,21 @@ Add stratnum GiST support function (Paul A. Jungwirth)
      <title>General Performance</title>
 
      <itemizedlist>
+
+<!--
+Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
+2024-04-03 [6dbb49026] Combine freezing and pruning steps in VACUUM
+-->
+
+<listitem>
+<para>
+Allow vacuum to more efficiently remove and freeze tuples (Melanie Plageman, Heikki Linnakangas)
+</para>
+
+<para>
+WAL traffic caused by vacuum is also more compact.
+</para>
+</listitem>
 
 <!--
 Author: John Naylor <john.naylor@postgresql.org>
@@ -493,7 +519,11 @@ Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
 
 <listitem>
 <para>
-Allow vacuum to more efficiently remove and freeze tuples (Masahiko Sawada, John Naylor, Melanie Plageman)
+Allow vacuum to more efficiently store tuple references (Masahiko Sawada, John Naylor)
+</para>
+
+<para>
+Additionally, vacuum is no longer silently limited to one gigabyte of memory when maintenance_work_mem or autovacuum_work_mem are higher.
 </para>
 </listitem>
 
@@ -538,6 +568,17 @@ Author: Michael Paquier <michael@paquier.xyz>
 <listitem>
 <para>
 Improve performance of heavily-contended WAL writes (Bharath Rupireddy)
+</para>
+</listitem>
+
+<!--
+Author: David Rowley <drowley@postgresql.org>
+2024-04-07 [c4ab7da60] Avoid needless large memcpys in libpq socket writing
+-->
+
+<listitem>
+<para>
+Improve performance when transferring large blocks of data to a client (Melih Mutlu)
 </para>
 </listitem>
 
@@ -587,45 +628,20 @@ Relevant columns have been removed from pg_stat_bgwriter and added to this new s
 <!--
 Author: Michael Paquier <michael@paquier.xyz>
 2023-11-12 [23c8c0c8f] Add ability to reset all shared stats types in pg_stat_r
--->
-
-<listitem>
-<para>
-Allow pg_stat_reset_shared() to reset all shared statistics (Atsushi Torikoshi)
-</para>
-
-<para>
-This is done by passing NULL.
-</para>
-</listitem>
-
-<!--
 Author: Michael Paquier <michael@paquier.xyz>
 2023-11-16 [2e8a0edc2] Add target "slru" to pg_stat_reset_shared()
--->
-
-<listitem>
-<para>
-Allow pg_stat_reset_shared("slru") to clear SLRU statistics (Atsushi Torikoshi)
-</para>
-
-<para>
-Now pg_stat_reset_shared(NULL) also resets SLRU statistics.
-</para>
-</listitem>
-
-<!--
 Author: Michael Paquier <michael@paquier.xyz>
 2023-11-14 [e5cca6288] Add support for pg_stat_reset_slru without argument
 -->
 
 <listitem>
 <para>
-Allow pg_stat_reset_slru() to reset all SLRU statistics (Bharath Rupireddy)
+Improve control over resetting statistics (Atsushi Torikoshi, Bharath Rupireddy)
 </para>
 
 <para>
-The command pg_stat_reset_slru(NULL) already did this.
+Allow pg_stat_reset_shared() (with no arguments) and pg_stat_reset_shared(NULL) to reset all shared statistics.
+Allow pg_stat_reset_shared('slru') and pg_stat_reset_slru() (with no arguments) to reset SLRU statistics, which was already possible with pg_stat_reset_slru(NULL).
 </para>
 </listitem>
 
@@ -743,21 +759,22 @@ Add server variable trace_connection_negotiation to allow debugging of connectio
 <!--
 Author: Nathan Bossart <nathan@postgresql.org>
 2024-03-13 [ecb0fd337] Reintroduce MAINTAIN privilege and pg_maintain predefine
+Author: Nathan Bossart <nathan@postgresql.org>
+2024-03-13 [ecb0fd337] Reintroduce MAINTAIN privilege and pg_maintain predefine
 -->
 
 <listitem>
 <para>
-Add per-table GRANT permission MAINTAIN to control maintenance operations (Nathan Bossart)
+Allow granting the right to perform maintenance operations (Nathan Bossart)
 </para>
 
 <para>
-The operations are VACUUM, ANALYZE, REINDEX, REFRESH MATERIALIZED VIEW, CLUSTER, and LOCK TABLE.
+The permission can be granted on a per-table basis using the MAINTAIN privilege and on a per-role basis via the pg_maintain predefined role.  Permitted operations are VACUUM, ANALYZE,
+REINDEX, REFRESH MATERIALIZED VIEW, CLUSTER, and LOCK TABLE.
 </para>
 </listitem>
 
 <!--
-Author: Nathan Bossart <nathan@postgresql.org>
-2024-03-13 [ecb0fd337] Reintroduce MAINTAIN privilege and pg_maintain predefine
 -->
 
 <listitem>
@@ -844,11 +861,11 @@ Author: Jeff Davis <jdavis@postgresql.org>
 
 <listitem>
 <para>
-Create a "builtin" collation provider similar to libc's C locale (Jeff Davis)
+Add a builtin platform-independent collation provider (Jeff Davis)
 </para>
 
 <para>
-It uses a "C" locale which is identical but independent of libc, but it allows the use of non-"C" collations like "en_US" and "C.UTF-8" with the "C" locale, which libc does not.  MORE?
+This supports "C" and "C.UTF-8" collations.
 </para>
 </listitem>
 
@@ -889,12 +906,12 @@ Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
 
 <listitem>
 <para>
-Allow the SLRU cache sizes to be configured (Andrey Borodin, Dilip Kumar)
+Allow the SLRU cache sizes to be configured (Andrey Borodin, Dilip Kumar, Alvaro Herrera)
 </para>
 
 <para>
 The new server variables are commit_timestamp_buffers, multixact_member_buffers, multixact_offset_buffers, notify_buffers, serializable_buffers, subtransaction_buffers, and
-transaction_buffers.
+transaction_buffers. commit_timestamp_buffers, transaction_buffers and subtransaction_buffers scale up automatically with shared_buffers.
 </para>
 </listitem>
 
@@ -941,7 +958,7 @@ Allow the creation of WAL summarization files (Robert Haas, Nathan Bossart, Hube
 </para>
 
 <para>
-These files record the block numbers that have changed within an LSN range, and is useful for incremental file system backups.  This is controlled by the server variables
+These files record the block numbers that have changed within an LSN range and are useful for incremental file system backups.  This is controlled by the server variables
 summarize_wal and wal_summarize_keep_time, and introspected with pg_available_wal_summaries(), pg_wal_summary_contents(), and pg_get_wal_summarizer_state().
 </para>
 </listitem>
@@ -1113,7 +1130,18 @@ Allow the application of logical replication changes to use hash indexes on the 
 </para>
 
 <para>
-Previously only btree indexes could be use for this purpose.
+Previously only btree indexes could be used for this purpose.
+</para>
+</listitem>
+
+<!--
+Author: Masahiko Sawada <msawada@postgresql.org>
+2024-04-03 [5bec1d6bc] Improve eviction algorithm in ReorderBuffer using max-he
+-->
+
+<listitem>
+<para>
+Improve logical decoding performance in cases where there are many subtransactions (Masahiko Sawada)
 </para>
 </listitem>
 
@@ -1404,34 +1432,6 @@ Add DEFAULT setting for ALTER TABLE .. SET ACCESS METHOD (Michael Paquier)
 </listitem>
 
 <!--
-Author: Peter Eisentraut <peter@eisentraut.org>
-2024-03-24 [34768ee36] Add temporal FOREIGN KEY contraints
--->
-
-<listitem>
-<para>
-Allow foreign keys to reference WITHOUT OVERLAPS primary keys (Paul A. Jungwirth)
-</para>
-
-<para>
-The keyword PERIOD is used for this purpose.
-</para>
-</listitem>
-
-<!--
-Author: Peter Eisentraut <peter@eisentraut.org>
-2024-01-24 [46a0cd4ce] Add temporal PRIMARY KEY and UNIQUE constraints
-Author: Peter Eisentraut <peter@eisentraut.org>
-2024-03-05 [030e10ff1] Rename pg_constraint.conwithoutoverlaps to conperiod
--->
-
-<listitem>
-<para>
-Allow PRIMARY KEY and UNIQUE constraints to use WITHOUT OVERLAPS for non-overlapping exclusion constraints (Paul A. Jungwirth)
-</para>
-</listitem>
-
-<!--
 Author: Alexander Korotkov <akorotkov@postgresql.org>
 2023-10-16 [e83d1b0c4] Add support event triggers on authenticated login
 -->
@@ -1450,29 +1450,6 @@ Author: Michael Paquier <michael@paquier.xyz>
 <listitem>
 <para>
 Add event trigger support for REINDEX (Garrett Thornburg, Jian He)
-</para>
-</listitem>
-
-<!--
-Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
-2023-08-25 [b0e96f311] Catalog not-null constraints
-Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
-2023-08-29 [9b581c534] Disallow changing NO INHERIT status of a not-null constr
-Author: Alvaro Herrera <alvherre@alvh.no-ip.org>
-2023-09-07 [3af721794] Update information_schema definition for not-null constr
-Author: Peter Eisentraut <peter@eisentraut.org>
-2024-03-20 [e5da0fe3c] Catalog domain not-null constraints
-Author: Peter Eisentraut <peter@eisentraut.org>
-2024-04-15 [9895b35cb] Fix ALTER DOMAIN NOT NULL syntax
--->
-
-<listitem>
-<para>
-Allow NOT NULL columns to be specified as column constraints and domains (Alvaro Herrera, Bernd Helmle, Kyotaro Horiguchi, Peter Eisentraut)
-</para>
-
-<para>
-Previously NOT NULL could only be specified as a column attribute.
 </para>
 </listitem>
 
@@ -1606,7 +1583,7 @@ Author: Amit Langote <amitlan@postgresql.org>
 
 <listitem>
 <para>
-Add SQL/JSON constructor functions JSON(), JSON_SCALAR(), and JSON_SERIALIZE() (Amit Langote)
+Add SQL/JSON constructor functions JSON(), JSON_SCALAR(), and JSON_SERIALIZE() (Nikita Glukhov, Teodor Sigaev, Oleg Bartunov, Alexander Korotkov, Andrew Dunstan, Amit Langote)
 </para>
 </listitem>
 
@@ -1637,7 +1614,7 @@ Author: Andrew Dunstan <andrew@dunslane.net>
 
 <listitem>
 <para>
-Add jsonpath methods to convert JSON values to different data types (Jeevan Chalke)
+Add jsonpath methods to convert JSON values to other JSON data types (Jeevan Chalke)
 </para>
 
 <para>
@@ -1708,7 +1685,7 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add functions to convert integers to hex and binary strings (Eric Radman, Nathan Bossart)
+Add functions to convert integers to binary and octal strings (Eric Radman, Nathan Bossart)
 </para>
 
 <para>
@@ -1902,17 +1879,6 @@ Add libpq function PQsetChunkedRowsMode to allow retrieval of results in chunks 
 </listitem>
 
 <!--
-Author: David Rowley <drowley@postgresql.org>
-2024-04-07 [c4ab7da60] Avoid needless large memcpys in libpq socket writing
--->
-
-<listitem>
-<para>
-Allow libpq to more efficiently transfer large blocks of data (Melih Mutlu)
-</para>
-</listitem>
-
-<!--
 Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
 2024-04-08 [d39a49c1e] Support TLS handshake directly without SSLRequest negoti
 Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
@@ -1925,6 +1891,10 @@ Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
 2024-04-29 [03a0e0d4b] libpq: Enforce ALPN in direct SSL connections
 Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
 2024-04-29 [17a834a04] Reject SSL connection if ALPN is used but there's no com
+Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
+2024-05-11 [407e0b023] Change ALPN protocol ID to IANA-approved "postgresql"
+Author: Heikki Linnakangas <heikki.linnakangas@iki.fi>
+2024-05-16 [fb5718f35] Remove option to fall back from direct to postgres SSL n
 -->
 
 <listitem>
@@ -2030,11 +2000,13 @@ Author: Masahiko Sawada <msawada@postgresql.org>
 2024-04-08 [304b6b1a6] Add more tab completion support for ALTER DEFAULT PRIVIL
 Author: Alexander Korotkov <akorotkov@postgresql.org>
 2024-04-30 [60ae37a8b] Add tab completion for partition MERGE/SPLIT operations
+Author: Michael Paquier <michael@paquier.xyz>
+2024-05-01 [2800fbb2b] Add tab completion for EXPLAIN (MEMORY|SERIALIZE)
 -->
 
 <listitem>
 <para>
-Improve psql tab completion (Dagfinn Ilmari Mannsåker, Gilles Darold, Christoph Heiss, Steve Chavez, Vignesh C, Pavel Borisov)
+Improve psql tab completion (Dagfinn Ilmari Mannsåker, Gilles Darold, Christoph Heiss, Steve Chavez, Vignesh C, Pavel Borisov, Jian He)
 </para>
 </listitem>
 
@@ -2207,7 +2179,7 @@ Allow pg_basebackup and pg_receivewal to use dbname in their connection specific
 </para>
 
 <para>
-This is useful for connection poolers who are sensitive to the database name.
+This is useful for connection poolers that are sensitive to the database name.
 </para>
 </listitem>
 
@@ -2240,45 +2212,19 @@ Allow reindexdb --index to process indexes from different tables in parallel (Ma
 <!--
 Author: Nathan Bossart <nathan@postgresql.org>
 2024-03-11 [24c928ad9] reindexdb: Allow specifying objects to process in all da
--->
-
-<listitem>
-<para>
-Allow reindexdb to process objects in all databases matching a pattern (Nathan Bossart)
-</para>
-
-<para>
-Specifically, --all can now be used with --table, --schema, --index, and --system.
-</para>
-</listitem>
-
-<!--
 Author: Nathan Bossart <nathan@postgresql.org>
 2024-03-11 [648928c79] vacuumdb: Allow specifying objects to process in all dat
--->
-
-<listitem>
-<para>
-Allow vacuumdb to process objects in all databases matching a pattern (Nathan Bossart)
-</para>
-
-<para>
-Specifically, --all can now be used with --table, --schema, and --exclude-schema.
-</para>
-</listitem>
-
-<!--
 Author: Nathan Bossart <nathan@postgresql.org>
 2024-03-11 [1b49d56d3] clusterdb: Allow specifying tables to process in all dat
 -->
 
 <listitem>
 <para>
-Allow clusterdb to process objects in all databases matching a pattern (Nathan Bossart)
+Allow reindexdb, vacuumdb, and clusterdb to process objects in all databases matching a pattern (Nathan Bossart)
 </para>
 
 <para>
-Specifically, --all can now be used with --table.
+The new option --all controls this behavior.
 </para>
 </listitem>
 
@@ -2368,7 +2314,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Remove the Microsoft Visual Studio Studio-specific Postgres build option (Michael Paquier)
+Remove the Microsoft Visual Studio-specific Postgres build option (Michael Paquier)
 </para>
 
 <para>
@@ -2416,6 +2362,17 @@ Author: David Rowley <drowley@postgresql.org>
 <listitem>
 <para>
 User-defined data type receive functions will no longer receive their data null-terminated (David Rowley)
+</para>
+</listitem>
+
+<!--
+Author: Andrew Dunstan <andrew@dunslane.net>
+2024-04-04 [3311ea86e] Introduce a non-recursive JSON parser
+-->
+
+<listitem>
+<para>
+Add incremental JSON parser for use with huge JSON documents (Andrew Dunstan)
 </para>
 </listitem>
 
@@ -2546,28 +2503,6 @@ This value is used by the optimizer.
 </listitem>
 
 <!--
-Author: Michael Paquier <michael@paquier.xyz>
-2023-10-05 [d61f2538a] postgres_fdw: Replace WAIT_EVENT_EXTENSION with custom w
--->
-
-<listitem>
-<para>
-Create custom wait events for postgres_fdw (Masahiro Ikeda)
-</para>
-</listitem>
-
-<!--
-Author: Michael Paquier <michael@paquier.xyz>
-2023-10-05 [c789f0f6c] dblink: Replace WAIT_EVENT_EXTENSION with custom wait ev
--->
-
-<listitem>
-<para>
-Create custom wait events for dblink (Masahiro Ikeda)
-</para>
-</listitem>
-
-<!--
 Author: Noah Misch <noah@leadboat.com>
 2024-01-08 [d3c5f37dd] Make dblink interruptible, via new libpqsrv APIs.
 -->
@@ -2691,11 +2626,19 @@ Author: Michael Paquier <michael@paquier.xyz>
 2023-07-31 [c9af05465] Support custom wait events for wait event type "Extensio
 Author: Michael Paquier <michael@paquier.xyz>
 2023-10-04 [c8e318b1b] worker_spi: Rename custom wait event to "WorkerSpiMain"
+Author: Michael Paquier <michael@paquier.xyz>
+2023-10-05 [d61f2538a] postgres_fdw: Replace WAIT_EVENT_EXTENSION with custom w
+Author: Michael Paquier <michael@paquier.xyz>
+2023-10-05 [c789f0f6c] dblink: Replace WAIT_EVENT_EXTENSION with custom wait ev
 -->
 
 <listitem>
 <para>
 Allow extensions to define custom wait events (Masahiro Ikeda)
+</para>
+
+<para>
+Custom wait events have been added to postgres_fdw and dblink.
 </para>
 </listitem>
 
@@ -2717,7 +2660,7 @@ This is useful for testing.
      </itemizedlist>
 
     <sect4 id="release-17-pgstatstatements">
-     <title><link linkend="pgstatstatements"><application>pg_statstatements</application></link></title>
+     <title><link linkend="pgstatstatements"><application>pg_stat_statements</application></link></title>
 
      <itemizedlist>
 
@@ -2786,7 +2729,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Add local I/O block read/write timing statistics columns of pg_stat_statement (Nazir Bilal Yavuz)
+Add local I/O block read/write timing statistics columns of pg_stat_statements (Nazir Bilal Yavuz)
 </para>
 
 <para>
@@ -2812,11 +2755,11 @@ Author: Alexander Korotkov <akorotkov@postgresql.org>
 
 <listitem>
 <para>
-Add optional fourth parameter to pg_stat_statements_reset() to allow for the resetting of only min/max statistics (Andrei Zubkov)
+Add optional fourth argument (minmax_only) to pg_stat_statements_reset() to allow for the resetting of only min/max statistics (Andrei Zubkov)
 </para>
 
 <para>
-This parameter defaults to "false".
+This argument defaults to "false".
 </para>
 </listitem>
 

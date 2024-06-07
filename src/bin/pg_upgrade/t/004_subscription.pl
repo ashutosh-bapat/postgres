@@ -66,7 +66,7 @@ command_checks_all(
 	],
 	1,
 	[
-		qr/max_replication_slots \(0\) must be greater than or equal to the number of subscriptions \(1\) on the old cluster/
+		qr/"max_replication_slots" \(0\) must be greater than or equal to the number of subscriptions \(1\) on the old cluster/
 	],
 	[qr//],
 	'run of pg_upgrade where the new cluster has insufficient max_replication_slots'
@@ -291,8 +291,7 @@ regress_sub5|f|f),
 
 # Subscription relations should be preserved
 $result = $new_sub->safe_psql('postgres',
-	"SELECT srrelid, srsubstate FROM pg_subscription_rel ORDER BY srrelid"
-);
+	"SELECT srrelid, srsubstate FROM pg_subscription_rel ORDER BY srrelid");
 is( $result, qq($tab_upgraded1_oid|r
 $tab_upgraded2_oid|i),
 	"there should be 2 rows in pg_subscription_rel(representing tab_upgraded1 and tab_upgraded2)"

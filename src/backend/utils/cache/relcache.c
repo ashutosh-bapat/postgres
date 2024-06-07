@@ -275,6 +275,7 @@ static HTAB *OpClassCache = NULL;
 
 static void RelationCloseCleanup(Relation relation);
 static void RelationDestroyRelation(Relation relation, bool remember_tupdesc);
+static void RelationInvalidateRelation(Relation relation);
 static void RelationClearRelation(Relation relation, bool rebuild);
 
 static void RelationReloadIndexInfo(Relation relation);
@@ -2513,6 +2514,31 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 }
 
 /*
+ * RelationInvalidateRelation - mark a relation cache entry as invalid
+ *
+ * An entry that's marked as invalid will be reloaded on next access.
+ */
+static void
+RelationInvalidateRelation(Relation relation)
+{
+	/*
+	 * Make sure smgr and lower levels close the relation's files, if they
+	 * weren't closed already.  If the relation is not getting deleted, the
+	 * next smgr access should reopen the files automatically.  This ensures
+	 * that the low-level file access state is updated after, say, a vacuum
+	 * truncation.
+	 */
+	RelationCloseSmgr(relation);
+
+	/* Free AM cached data, if any */
+	if (relation->rd_amcache)
+		pfree(relation->rd_amcache);
+	relation->rd_amcache = NULL;
+
+	relation->rd_isvalid = false;
+}
+
+/*
  * RelationClearRelation
  *
  *	 Physically blow away a relation cache entry, or reset it and rebuild
@@ -2846,14 +2872,28 @@ RelationFlushRelation(Relation relation)
 		 * New relcache entries are always rebuilt, not flushed; else we'd
 		 * forget the "new" status of the relation.  Ditto for the
 		 * new-relfilenumber status.
-		 *
-		 * The rel could have zero refcnt here, so temporarily increment the
-		 * refcnt to ensure it's safe to rebuild it.  We can assume that the
-		 * current transaction has some lock on the rel already.
 		 */
-		RelationIncrementReferenceCount(relation);
-		RelationClearRelation(relation, true);
-		RelationDecrementReferenceCount(relation);
+		if (IsTransactionState() && relation->rd_droppedSubid == InvalidSubTransactionId)
+		{
+			/*
+			 * The rel could have zero refcnt here, so temporarily increment
+			 * the refcnt to ensure it's safe to rebuild it.  We can assume
+			 * that the current transaction has some lock on the rel already.
+			 */
+			RelationIncrementReferenceCount(relation);
+			RelationClearRelation(relation, true);
+			RelationDecrementReferenceCount(relation);
+		}
+		else
+		{
+			/*
+			 * During abort processing, the current resource owner is not
+			 * valid and we cannot hold a refcnt.  Without a valid
+			 * transaction, RelationClearRelation() would just mark the rel as
+			 * invalid anyway, so we can do the same directly.
+			 */
+			RelationInvalidateRelation(relation);
+		}
 	}
 	else
 	{
@@ -5540,14 +5580,11 @@ RelationGetIdentityKeyBitmap(Relation relation)
 /*
  * RelationGetExclusionInfo -- get info about index's exclusion constraint
  *
- * This should be called only for an index that is known to have an associated
- * exclusion constraint or primary key/unique constraint using WITHOUT
- * OVERLAPS.
-
- * It returns arrays (palloc'd in caller's context) of the exclusion operator
- * OIDs, their underlying functions' OIDs, and their strategy numbers in the
- * index's opclasses.  We cache all this information since it requires a fair
- * amount of work to get.
+ * This should be called only for an index that is known to have an
+ * associated exclusion constraint.  It returns arrays (palloc'd in caller's
+ * context) of the exclusion operator OIDs, their underlying functions'
+ * OIDs, and their strategy numbers in the index's opclasses.  We cache
+ * all this information since it requires a fair amount of work to get.
  */
 void
 RelationGetExclusionInfo(Relation indexRelation,
@@ -5611,10 +5648,7 @@ RelationGetExclusionInfo(Relation indexRelation,
 		int			nelem;
 
 		/* We want the exclusion constraint owning the index */
-		if ((conform->contype != CONSTRAINT_EXCLUSION &&
-			 !(conform->conperiod && (
-									  conform->contype == CONSTRAINT_PRIMARY
-									  || conform->contype == CONSTRAINT_UNIQUE))) ||
+		if (conform->contype != CONSTRAINT_EXCLUSION ||
 			conform->conindid != RelationGetRelid(indexRelation))
 			continue;
 

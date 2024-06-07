@@ -640,7 +640,7 @@
       </para>
       <para>
        An identifier of the data type descriptor of the attribute, unique
-       among the data type descriptors pertaining to the type.  This
+       among the data type descriptors pertaining to the composite type.  This
        is mainly useful for joining with other instances of such
        identifiers.  (The specific format of the identifier is not
        defined and not guaranteed to remain the same in future

@@ -345,7 +345,7 @@ InitProcess(void)
 		if (AmWalSenderProcess())
 			ereport(FATAL,
 					(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
-					 errmsg("number of requested standby connections exceeds max_wal_senders (currently %d)",
+					 errmsg("number of requested standby connections exceeds \"max_wal_senders\" (currently %d)",
 							max_wal_senders)));
 		ereport(FATAL,
 				(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
@@ -1054,8 +1054,8 @@ AuxiliaryPidGetProc(int pid)
  * at exit.
  *
  * Result: PROC_WAIT_STATUS_OK if we acquired the lock, PROC_WAIT_STATUS_ERROR
- * if not (if dontWait = true, this is a deadlock; if dontWait = false, we
- * would have had to wait).
+ * if not (if dontWait = true, we would have had to wait; if dontWait = false,
+ * this is a deadlock).
  *
  * ASSUME: that no one will fiddle with the queue until after
  *		we release the partition lock.
