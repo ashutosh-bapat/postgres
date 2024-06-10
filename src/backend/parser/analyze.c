@@ -1923,6 +1923,13 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 	qry->limitOption = stmt->limitOption;
 
 	qry->rtable = pstate->p_rtable;
+
+	/*
+	 * A set operation statement does not have a FROM clause and hence no
+	 * joinlist. It consists of only subqueries which have permission infos of
+	 * their own. So no permision info for itself as well.
+	 */
+	Assert(!pstate->p_rteperminfos && !pstate->p_joinlist);
 	qry->rteperminfos = pstate->p_rteperminfos;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
