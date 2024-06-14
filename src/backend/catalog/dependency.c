@@ -53,6 +53,7 @@
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_label_property.h"
 #include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
@@ -1458,6 +1459,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case PropgraphElementRelationId:
 		case PropgraphElementLabelRelationId:
 		case PropgraphLabelRelationId:
+		case PropgraphLabelPropertyRelationId:
 		case PropgraphPropertyRelationId:
 		case NamespaceRelationId:
 		case TSParserRelationId:

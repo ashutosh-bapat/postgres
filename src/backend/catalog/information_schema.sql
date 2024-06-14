@@ -3186,12 +3186,13 @@ CREATE VIEW pg_element_table_properties AS
            CAST(pg.relname AS sql_identifier) AS property_graph_name,
            CAST(e.pgealias AS sql_identifier) AS element_table_alias,
            CAST(pr.pgpname AS sql_identifier) AS property_name,
-           CAST(pg_get_expr(pr.pgpexpr, e.pgerelid) AS character_data) AS property_expression
-    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_element_label el, pg_propgraph_property pr
+           CAST(pg_get_expr(plp.plpexpr, e.pgerelid) AS character_data) AS property_expression
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_element_label el, pg_propgraph_label_property plp, pg_propgraph_property pr
     WHERE pg.relnamespace = npg.oid
           AND e.pgepgid = pg.oid
           AND el.pgelelid = e.oid
-          AND pr.pgpellabelid = el.oid
+          AND plp.plpellabelid = el.oid
+          AND pr.oid = plp.plppropid
           AND pg.relkind = 'g'
           AND (NOT pg_is_other_temp_schema(npg.oid))
           AND (pg_has_role(pg.relowner, 'USAGE')
@@ -3240,11 +3241,12 @@ CREATE VIEW pg_label_properties AS
            CAST(pg.relname AS sql_identifier) AS property_graph_name,
            CAST(l.pgllabel AS sql_identifier) AS label_name,
            CAST(pr.pgpname AS sql_identifier) AS property_name
-    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_label l, pg_propgraph_element_label el, pg_propgraph_property pr
+    FROM pg_namespace npg, pg_class pg, pg_propgraph_element e, pg_propgraph_label l, pg_propgraph_element_label el, pg_propgraph_label_property plp, pg_propgraph_property pr
     WHERE pg.relnamespace = npg.oid
           AND e.pgepgid = pg.oid
           AND el.pgelelid = e.oid
-          AND pr.pgpellabelid = el.oid
+          AND plp.plpellabelid = el.oid
+          AND pr.oid = plp.plppropid
           AND el.pgellabelid = l.oid
           AND pg.relkind = 'g'
           AND (NOT pg_is_other_temp_schema(npg.oid))
@@ -3281,8 +3283,7 @@ GRANT SELECT ON pg_labels TO PUBLIC;
  */
 
 CREATE VIEW pg_property_data_types AS
-    SELECT DISTINCT
-           CAST(current_database() AS sql_identifier) AS property_graph_catalog,
+    SELECT CAST(current_database() AS sql_identifier) AS property_graph_catalog,
            CAST(npg.nspname AS sql_identifier) AS property_graph_schema,
            CAST(pg.relname AS sql_identifier) AS property_graph_name,
            CAST(pgp.pgpname AS sql_identifier) AS property_name,

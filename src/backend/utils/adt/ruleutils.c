@@ -37,6 +37,7 @@
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_label_property.h"
 #include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_trigger.h"
@@ -1793,13 +1794,9 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 	while ((tup = systable_getnext(scan)))
 	{
 		Form_pg_propgraph_element_label pgelform = (Form_pg_propgraph_element_label) GETSTRUCT(tup);
-		HeapTuple	tup2;
 		const char *labelname;
 
-		tup2 = SearchSysCache1(PROPGRAPHLABELOID, ObjectIdGetDatum(pgelform->pgellabelid));
-		if (!tup2)
-			elog(ERROR, "cache lookup failed for label %u", pgelform->pgellabelid);
-		labelname = DatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHLABELOID, tup2, Anum_pg_propgraph_label_pgllabel));
+		labelname = get_propgraph_label_name(pgelform->pgellabelid);
 
 		if (strcmp(labelname, elalias) == 0)
 		{
@@ -1810,13 +1807,27 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 		else
 			appendStringInfo(buf, " LABEL %s", quote_identifier(labelname));
 
-		ReleaseSysCache(tup2);
 		make_propgraphdef_properties(buf, pgelform->oid, elrelid);
 	}
 
 	systable_endscan(scan);
 
 	table_close(pglrel, AccessShareLock);
+}
+
+/*
+ * Helper function for make_propgraphdef_properties(): Sort (propname, expr)
+ * pairs by name.
+ */
+static int
+propdata_by_name_cmp(const ListCell *a, const ListCell *b)
+{
+	List	   *la = lfirst_node(List, a);
+	List	   *lb = lfirst_node(List, b);
+	char	   *pna = strVal(linitial(la));
+	char	   *pnb = strVal(linitial(lb));
+
+	return strcmp(pna, pnb);
 }
 
 /*
@@ -1827,67 +1838,83 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 static void
 make_propgraphdef_properties(StringInfo buf, Oid ellabelid, Oid elrelid)
 {
-	List	   *context;
-	Relation	pgprel;
+	Relation	plprel;
 	ScanKeyData scankey[1];
 	SysScanDesc scan;
 	HeapTuple	tup;
-	bool		first;
+	List	   *outlist = NIL;
 
-	context = deparse_context_for(get_relation_name(elrelid), elrelid);
-
-	pgprel = table_open(PropgraphPropertyRelationId, AccessShareLock);
+	plprel = table_open(PropgraphLabelPropertyRelationId, AccessShareLock);
 
 	ScanKeyInit(&scankey[0],
-				Anum_pg_propgraph_property_pgpellabelid,
+				Anum_pg_propgraph_label_property_plpellabelid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(ellabelid));
 
 	/*
-	 * Note: Use of index on property name also ensures that properties are
-	 * put out in a deterministic order.
+	 * We want to output the properties in a deterministic order.  So we first
+	 * read all the data, then sort, then print it.
 	 */
-	scan = systable_beginscan(pgprel, PropgraphPropertyNameIndexId, true, NULL, 1, scankey);
+	scan = systable_beginscan(plprel, PropgraphLabelPropertyLabelPropIndexId, true, NULL, 1, scankey);
 
-	first = true;
 	while ((tup = systable_getnext(scan)))
 	{
-		Form_pg_propgraph_property pgpform = (Form_pg_propgraph_property) GETSTRUCT(tup);
+		Form_pg_propgraph_label_property plpform = (Form_pg_propgraph_label_property) GETSTRUCT(tup);
 		Datum		exprDatum;
 		bool		isnull;
 		char	   *tmp;
 		Node	   *expr;
+		char	   *propname;
 
-		if (first)
-		{
-			appendStringInfo(buf, " PROPERTIES (");
-			first = false;
-		}
-		else
-			appendStringInfo(buf, ", ");
-
-		exprDatum = heap_getattr(tup, Anum_pg_propgraph_property_pgpexpr, RelationGetDescr(pgprel), &isnull);
+		exprDatum = heap_getattr(tup, Anum_pg_propgraph_label_property_plpexpr, RelationGetDescr(plprel), &isnull);
 		Assert(!isnull);
 		tmp = TextDatumGetCString(exprDatum);
 		expr = stringToNode(tmp);
 		pfree(tmp);
 
-		if (IsA(expr, Var) && strcmp(NameStr(pgpform->pgpname), get_attname(elrelid, castNode(Var, expr)->varattno, false)) == 0)
-			appendStringInfo(buf, "%s",
-							 NameStr(pgpform->pgpname));
-		else
-			appendStringInfo(buf, "%s AS %s",
-							 deparse_expression_pretty(expr, context, false, false, 0, 0),
-							 NameStr(pgpform->pgpname));
+		propname = get_propgraph_property_name(plpform->plppropid);
+
+		outlist = lappend(outlist, list_make2(makeString(propname), expr));
 	}
 
-	if (first)
-		appendStringInfo(buf, " NO PROPERTIES");
-	else
-		appendStringInfo(buf, ")");
-
 	systable_endscan(scan);
-	table_close(pgprel, AccessShareLock);
+	table_close(plprel, AccessShareLock);
+
+	list_sort(outlist, propdata_by_name_cmp);
+
+	if (outlist)
+	{
+		List	   *context;
+		ListCell   *lc;
+		bool		first = true;
+
+		context = deparse_context_for(get_relation_name(elrelid), elrelid);
+
+		appendStringInfo(buf, " PROPERTIES (");
+
+		foreach(lc, outlist)
+		{
+			List	   *data = lfirst_node(List, lc);
+			char	   *propname = strVal(linitial(data));
+			Node	   *expr = lsecond(data);
+
+			if (first)
+				first = false;
+			else
+				appendStringInfo(buf, ", ");
+
+			if (IsA(expr, Var) && strcmp(propname, get_attname(elrelid, castNode(Var, expr)->varattno, false)) == 0)
+				appendStringInfo(buf, "%s", propname);
+			else
+				appendStringInfo(buf, "%s AS %s",
+								 deparse_expression_pretty(expr, context, false, false, 0, 0),
+								 propname);
+		}
+
+		appendStringInfo(buf, ")");
+	}
+	else
+		appendStringInfo(buf, " NO PROPERTIES");
 }
 
 /*
@@ -7597,13 +7624,8 @@ get_graph_label_expr(Node *label_expr, deparse_context *context)
 		case T_GraphLabelRef:
 			{
 				GraphLabelRef *lref = (GraphLabelRef *) label_expr;
-				HeapTuple	tup;
 
-				tup = SearchSysCache1(PROPGRAPHLABELOID, ObjectIdGetDatum(lref->labelid));
-				if (!tup)
-					elog(ERROR, "cache lookup failed for label %u", lref->labelid);
-				appendStringInfoString(buf, quote_identifier(DatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHLABELOID, tup, Anum_pg_propgraph_label_pgllabel))));
-				ReleaseSysCache(tup);
+				appendStringInfoString(buf, quote_identifier(get_propgraph_label_name(lref->labelid)));
 				break;
 			}
 
@@ -10683,7 +10705,7 @@ get_rule_expr(Node *node, deparse_context *context,
 			{
 				GraphPropertyRef *gpr = (GraphPropertyRef *) node;
 
-				appendStringInfo(buf, "%s.%s", quote_identifier(gpr->elvarname), quote_identifier(gpr->propname));
+				appendStringInfo(buf, "%s.%s", quote_identifier(gpr->elvarname), quote_identifier(get_propgraph_property_name(gpr->propid)));
 				break;
 			}
 

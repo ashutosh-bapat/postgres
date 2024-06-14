@@ -33,48 +33,6 @@
 
 
 /*
- * Get the type of a property.
- */
-static Oid
-get_property_type(Oid graphid, const char *propname)
-{
-	Relation	rel;
-	SysScanDesc scan;
-	ScanKeyData key[2];
-	HeapTuple	tuple;
-	Oid			result = InvalidOid;
-
-	rel = table_open(PropgraphPropertyRelationId, RowShareLock);
-	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_property_pgppgid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(graphid));
-	ScanKeyInit(&key[1],
-				Anum_pg_propgraph_property_pgpname,
-				BTEqualStrategyNumber, F_NAMEEQ,
-				CStringGetDatum(propname));
-
-	scan = systable_beginscan(rel, PropgraphPropertyGraphNameIndexId, true, NULL, 2, key);
-	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-	{
-		Form_pg_propgraph_property prop = (Form_pg_propgraph_property) GETSTRUCT(tuple);
-
-		result = prop->pgptypid;
-		break;
-	}
-
-	systable_endscan(scan);
-	table_close(rel, RowShareLock);
-
-	if (!result)
-		ereport(ERROR,
-				errcode(ERRCODE_SYNTAX_ERROR),
-				errmsg("property \"%s\" does not exist", propname));
-
-	return result;
-}
-
-/*
  * Resolve a property reference.
  */
 Node *
@@ -95,11 +53,18 @@ graph_table_property_reference(ParseState *pstate, ColumnRef *cref, Node *var)
 		if (list_member(gpstate->variables, field1))
 		{
 			GraphPropertyRef *gpr = makeNode(GraphPropertyRef);
+			Oid			propid;
+
+			propid = GetSysCacheOid2(PROPGRAPHPROPNAME, Anum_pg_propgraph_property_oid, ObjectIdGetDatum(gpstate->graphid), CStringGetDatum(propname));
+			if (!propid)
+				ereport(ERROR,
+						errcode(ERRCODE_SYNTAX_ERROR),
+						errmsg("property \"%s\" does not exist", propname));
 
 			gpr->location = cref->location;
 			gpr->elvarname = elvarname;
-			gpr->propname = propname;
-			gpr->typeId = get_property_type(gpstate->graphid, gpr->propname);
+			gpr->propid = propid;
+			gpr->typeId = GetSysCacheOid1(PROPGRAPHPROPOID, Anum_pg_propgraph_property_pgptypid, ObjectIdGetDatum(propid));
 
 			return (Node *) gpr;
 		}

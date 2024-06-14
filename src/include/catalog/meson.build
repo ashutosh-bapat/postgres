@@ -72,6 +72,7 @@ catalog_headers = [
   'pg_propgraph_element.h',
   'pg_propgraph_element_label.h',
   'pg_propgraph_label.h',
+  'pg_propgraph_label_property.h',
   'pg_propgraph_property.h',
 ]
 

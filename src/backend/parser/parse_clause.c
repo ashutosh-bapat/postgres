@@ -951,7 +951,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 		else
 		{
 			if (IsA(colexpr, GraphPropertyRef))
-				colname = pstrdup(castNode(GraphPropertyRef, colexpr)->propname);
+				colname = get_propgraph_property_name(castNode(GraphPropertyRef, colexpr)->propid);
 			else
 			{
 				ereport(ERROR,

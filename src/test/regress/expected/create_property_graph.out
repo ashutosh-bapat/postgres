@@ -31,7 +31,7 @@ edge e2 of property graph g2 depends on table t1
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ALTER TABLE t1 DROP COLUMN b;  -- non-key column; fail
 ERROR:  cannot drop column b of table t1 because other objects depend on it
-DETAIL:  property b of property graph g2 depends on column b of table t1
+DETAIL:  property b of label t1 of vertex t1 of property graph g2 depends on column b of table t1
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ALTER TABLE t1 DROP COLUMN a;  -- key column; fail
 ERROR:  cannot drop column a of table t1 because other objects depend on it
@@ -159,7 +159,7 @@ ERROR:  property "k" data type mismatch: integer vs. text
 DETAIL:  In a property graph, a property of the same name has to have the same data type in each label.
 CREATE PROPERTY GRAPH gx
     VERTEX TABLES (
-        t1 KEY (a) LABEL l1 PROPERTIES (a, b),
+        t1 KEY (a) LABEL l1 PROPERTIES (a, a AS aa),
         t2 KEY (i) LABEL l1 PROPERTIES (i AS a, j AS b, k)  -- mismatching number of properties on label
     );
 ERROR:  mismatching number of properties in definition of label "l1"

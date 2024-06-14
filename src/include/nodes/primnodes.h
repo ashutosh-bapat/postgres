@@ -2147,7 +2147,7 @@ typedef struct GraphPropertyRef
 {
 	Expr		xpr;
 	const char *elvarname;
-	const char *propname;
+	Oid			propid;
 	Oid			typeId;
 	ParseLoc	location;
 } GraphPropertyRef;

@@ -50,6 +50,7 @@
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_element_label.h"
 #include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_label_property.h"
 #include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication.h"
 #include "catalog/pg_publication_namespace.h"
@@ -410,6 +411,20 @@ static const ObjectPropertyType ObjectProperty[] =
 		PROPGRAPHLABELNAME,
 		Anum_pg_propgraph_label_oid,
 		Anum_pg_propgraph_label_pgllabel,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		false
+	},
+	{
+		"property graph label property",
+		PropgraphLabelPropertyRelationId,
+		PropgraphLabelPropertyObjectIndexId,
+		-1,
+		-1,
+		Anum_pg_propgraph_label_property_oid,
+		InvalidAttrNumber,
 		InvalidAttrNumber,
 		InvalidAttrNumber,
 		InvalidAttrNumber,
@@ -4030,7 +4045,39 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 
 		case PropgraphElementLabelRelationId:
 			{
-				appendStringInfo(&buffer, "TODO");
+				Relation	rel;
+				SysScanDesc scan;
+				ScanKeyData key[1];
+				HeapTuple	tuple;
+				Form_pg_propgraph_element_label pgelform;
+				ObjectAddress oa;
+
+				rel = table_open(PropgraphElementLabelRelationId, AccessShareLock);
+				ScanKeyInit(&key[0],
+							Anum_pg_propgraph_element_label_oid,
+							BTEqualStrategyNumber, F_OIDEQ,
+							ObjectIdGetDatum(object->objectId));
+
+				scan = systable_beginscan(rel, PropgraphElementLabelObjectIndexId, true, NULL, 1, key);
+				tuple = systable_getnext(scan);
+				if (!HeapTupleIsValid(tuple))
+				{
+					if (!missing_ok)
+						elog(ERROR, "could not find tuple for element label %u", object->objectId);
+
+					systable_endscan(scan);
+					table_close(rel, AccessShareLock);
+					break;
+				}
+
+				pgelform = (Form_pg_propgraph_element_label) GETSTRUCT(tuple);
+
+				appendStringInfo(&buffer, _("label %s of "), get_propgraph_label_name(pgelform->pgellabelid));
+				ObjectAddressSet(oa, PropgraphElementRelationId, pgelform->pgelelid);
+				appendStringInfoString(&buffer, getObjectDescription(&oa, false));
+
+				systable_endscan(scan);
+				table_close(rel, AccessShareLock);
 				break;
 			}
 
@@ -4065,6 +4112,44 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 				/* translator: followed by, e.g., "property graph %s" */
 				appendStringInfo(&buffer, _("label %s of "), NameStr(pglform->pgllabel));
 				getRelationDescription(&buffer, pglform->pglpgid, false);
+
+				systable_endscan(scan);
+				table_close(rel, AccessShareLock);
+				break;
+			}
+
+		case PropgraphLabelPropertyRelationId:
+			{
+				Relation	rel;
+				SysScanDesc scan;
+				ScanKeyData key[1];
+				HeapTuple	tuple;
+				Form_pg_propgraph_label_property plpform;
+				ObjectAddress oa;
+
+				rel = table_open(PropgraphLabelPropertyRelationId, AccessShareLock);
+				ScanKeyInit(&key[0],
+							Anum_pg_propgraph_label_property_oid,
+							BTEqualStrategyNumber, F_OIDEQ,
+							ObjectIdGetDatum(object->objectId));
+
+				scan = systable_beginscan(rel, PropgraphLabelPropertyObjectIndexId, true, NULL, 1, key);
+				tuple = systable_getnext(scan);
+				if (!HeapTupleIsValid(tuple))
+				{
+					if (!missing_ok)
+						elog(ERROR, "could not find tuple for label property %u", object->objectId);
+
+					systable_endscan(scan);
+					table_close(rel, AccessShareLock);
+					break;
+				}
+
+				plpform = (Form_pg_propgraph_label_property) GETSTRUCT(tuple);
+
+				appendStringInfo(&buffer, _("property %s of "), get_propgraph_property_name(plpform->plppropid));
+				ObjectAddressSet(oa, PropgraphElementLabelRelationId, plpform->plpellabelid);
+				appendStringInfoString(&buffer, getObjectDescription(&oa, false));
 
 				systable_endscan(scan);
 				table_close(rel, AccessShareLock);

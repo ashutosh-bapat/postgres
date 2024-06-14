@@ -16,6 +16,7 @@
 #include "access/table.h"
 #include "catalog/pg_propgraph_element.h"
 #include "catalog/pg_propgraph_element_label.h"
+#include "catalog/pg_propgraph_label_property.h"
 #include "catalog/pg_propgraph_property.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -318,11 +319,11 @@ replace_property_refs_mutator(Node *node, struct replace_property_refs_context *
 		if (!found_mapping)
 			elog(ERROR, "undefined element variable \"%s\"", gpr->elvarname);
 
-		tup = SearchSysCache2(PROPGRAPHPROPNAME, ObjectIdGetDatum(found_mapping->ellabelid), CStringGetDatum(gpr->propname));
+		tup = SearchSysCache2(PROPGRAPHLABELPROP, ObjectIdGetDatum(found_mapping->ellabelid), ObjectIdGetDatum(gpr->propid));
 		if (!tup)
-			elog(ERROR, "property \"%s\" of element label %u not found", gpr->propname, found_mapping->ellabelid);
+			elog(ERROR, "cache lookup failed for property %u of element label %u", gpr->propid, found_mapping->ellabelid);
 
-		n = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHPROPNAME, tup, Anum_pg_propgraph_property_pgpexpr)));
+		n = stringToNode(TextDatumGetCString(SysCacheGetAttrNotNull(PROPGRAPHLABELPROP, tup, Anum_pg_propgraph_label_property_plpexpr)));
 		ChangeVarNodes(n, 1, found_mapping->rt_index, 0);
 
 		ReleaseSysCache(tup);
