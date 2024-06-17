@@ -13987,6 +13987,18 @@ table_ref:	relation_expr opt_alias_clause
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+			| LATERAL_P GRAPH_TABLE '(' qualified_name MATCH graph_pattern COLUMNS '(' xml_attribute_list ')' ')' opt_alias_clause
+				{
+					RangeGraphTable *n = makeNode(RangeGraphTable);
+
+					n->lateral = true;
+					n->graph_name = $4;
+					n->graph_pattern = castNode(GraphPattern, $6);
+					n->columns = $9;
+					n->alias = $12;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
 			| select_with_parens opt_alias_clause
 				{
 					RangeSubselect *n = makeNode(RangeSubselect);

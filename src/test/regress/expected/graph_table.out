@@ -217,6 +217,12 @@ SELECT * FROM x1, GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'U
  1 | one | customer1     |   1
 (1 row)
 
+SELECT * FROM x1, LATERAL GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US' AND c.customer_id = x1.a)-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name, c.customer_id AS cid));
+ a |  b  | customer_name | cid 
+---+-----+---------------+-----
+ 1 | one | customer1     |   1
+(1 row)
+
 DROP TABLE x1;
 create table v1 (id int primary key,
 					vname varchar(10),

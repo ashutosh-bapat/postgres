@@ -917,6 +917,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	List	   *colnames = NIL;
 	ListCell   *lc;
 	int			resno = 0;
+	bool		is_lateral;
 
 	rel = parserOpenTable(pstate, rgt->graph_name, AccessShareLock);
 	if (rel->rd_rel->relkind != RELKIND_PROPGRAPH)
@@ -932,6 +933,15 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 
 	pstate->p_post_columnref_hook = graph_table_property_reference;
 	pstate->p_ref_hook_state = gpstate;
+
+	/*
+	 * We make lateral_only names of this level visible, whether or not the
+	 * RangeGraphTable is explicitly marked LATERAL. This seems useful on
+	 * convenience grounds for all GRAH_TABLEs in FROM.
+	 *
+	 * (LATERAL can't nest within a single pstate level, so we don't need
+	 * save/restore logic here.)
+	 */
 	Assert(!pstate->p_lateral_active);
 	pstate->p_lateral_active = true;
 
@@ -974,7 +984,14 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	pstate->p_ref_hook_state = NULL;
 	pstate->p_lateral_active = false;
 
-	return addRangeTableEntryForGraphTable(pstate, graphid, castNode(GraphPattern, gp), columns, colnames, rgt->alias, false, true);
+	/*
+	 * Mark the RTE as LATERAL if the user said LATERAL explicitly, or if
+	 * there are any lateral cross-references in it.
+	 */
+	is_lateral = rgt->lateral ? rgt->lateral :
+		contain_vars_of_level((Node *) gp, 0) || contain_vars_of_level((Node *) columns, 0);
+
+	return addRangeTableEntryForGraphTable(pstate, graphid, castNode(GraphPattern, gp), columns, colnames, rgt->alias, is_lateral, true);
 }
 
 /*

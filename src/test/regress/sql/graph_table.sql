@@ -144,6 +144,7 @@ SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers)->(o IS orders) COLUMNS 
 CREATE TABLE x1 (a int, b text);
 INSERT INTO x1 VALUES (1, 'one'), (2, 'two');
 SELECT * FROM x1, GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US' AND c.customer_id = x1.a)-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name, c.customer_id AS cid));
+SELECT * FROM x1, LATERAL GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US' AND c.customer_id = x1.a)-[IS customer_orders]->(o IS orders) COLUMNS (c.name AS customer_name, c.customer_id AS cid));
 DROP TABLE x1;
 
 

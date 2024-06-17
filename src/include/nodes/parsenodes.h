@@ -688,6 +688,7 @@ typedef struct RangeTableFuncCol
 typedef struct RangeGraphTable
 {
 	NodeTag		type;
+	bool		lateral;		/* does it have LATERAL prefix? */
 	RangeVar   *graph_name;
 	struct GraphPattern *graph_pattern;
 	List	   *columns;
