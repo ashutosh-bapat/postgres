@@ -40,6 +40,7 @@
 #include "optimizer/paths.h"
 #include "optimizer/plancat.h"
 #include "optimizer/planner.h"
+#include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
 #include "parser/parse_clause.h"
 #include "parser/parsetree.h"
@@ -1006,7 +1007,7 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		int			childRTindex;
 		RangeTblEntry *childRTE;
 		RelOptInfo *childrel;
-		List	   *childrinfos;
+		List	   *rinfos;
 		ListCell   *parentvars;
 		ListCell   *childvars;
 		ListCell   *lc;
@@ -1056,18 +1057,15 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		 * rel, and it also avoids an implementation restriction in
 		 * adjust_appendrel_attrs (it can't apply nullingrels to a non-Var).
 		 */
-		childrinfos = NIL;
+		rinfos = NIL;
 		foreach(lc, rel->joininfo)
 		{
 			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
 
 			if (!bms_overlap(rinfo->clause_relids, rel->nulling_relids))
-				childrinfos = lappend(childrinfos,
-									  adjust_appendrel_attrs(root,
-															 (Node *) rinfo,
-															 1, &appinfo));
+				rinfos = lappend(rinfos, rinfo);
 		}
-		childrel->joininfo = childrinfos;
+		childrel->joininfo = get_child_restrictinfos(root, rinfos, 1, &appinfo);
 
 		/*
 		 * Now for the child's targetlist.
