@@ -5378,6 +5378,8 @@ create_ordered_paths(PlannerInfo *root,
 			sorted_path = apply_projection_to_path(root, ordered_rel,
 												   sorted_path, target);
 
+
+		/* TODO: if the sorted_path is same as the input_path, we will see a warning from free_path() about */
 		add_path(ordered_rel, sorted_path);
 	}
 
