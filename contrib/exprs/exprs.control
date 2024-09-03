@@ -1,0 +1,4 @@
+# exprs extension
+comment = 'Contrib module for running various experiments'
+default_version = '1.1'
+module_pathname = '$libdir/exprs'
