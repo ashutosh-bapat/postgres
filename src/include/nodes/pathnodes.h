@@ -21,13 +21,8 @@
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "storage/block.h"
+#include "nodes/relids.h"
 
-
-/*
- * Relids
- *		Set of relation identifiers (indexes into the rangetable).
- */
-typedef Bitmapset *Relids;
 
 /*
  * When looking for a "cheapest path", this enum specifies whether we want

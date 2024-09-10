@@ -66,6 +66,7 @@ my @all_input_files = qw(
   executor/tuptable.h
   foreign/fdwapi.h
   nodes/bitmapset.h
+  nodes/relids.h
   nodes/extensible.h
   nodes/lockoptions.h
   nodes/miscnodes.h
@@ -771,10 +772,16 @@ _equal${n}(const $n *a, const $n *b)
 			print $cff "\tCOPY_STRING_FIELD($f);\n" unless $copy_ignore;
 			print $eff "\tCOMPARE_STRING_FIELD($f);\n" unless $equal_ignore;
 		}
-		elsif ($t eq 'Bitmapset*' || $t eq 'Relids')
+		elsif ($t eq 'Bitmapset*')
 		{
 			print $cff "\tCOPY_BITMAPSET_FIELD($f);\n" unless $copy_ignore;
 			print $eff "\tCOMPARE_BITMAPSET_FIELD($f);\n"
+			  unless $equal_ignore;
+		}
+		elsif ($t eq 'Relids')
+		{
+			print $cff "\tCOPY_RELIDS_FIELD($f);\n" unless $copy_ignore;
+			print $eff "\tCOMPARE_RELIDS_FIELD($f);\n"
 			  unless $equal_ignore;
 		}
 		elsif ($t eq 'ParseLoc')
@@ -1086,10 +1093,16 @@ _read${n}(void)
 			print $off "\tWRITE_STRING_FIELD($f);\n";
 			print $rff "\tREAD_STRING_FIELD($f);\n" unless $no_read;
 		}
-		elsif ($t eq 'Bitmapset*' || $t eq 'Relids')
+		elsif ($t eq 'Bitmapset*')
 		{
 			print $off "\tWRITE_BITMAPSET_FIELD($f);\n";
 			print $rff "\tREAD_BITMAPSET_FIELD($f);\n" unless $no_read;
+		}
+		elsif ($t eq 'Relids')
+		{
+			print $off "\tWRITE_RELIDS_FIELD($f);\n";
+			print $rff "\tREAD_RELIDS_FIELD($f);\n" unless $no_read;
+
 		}
 		elsif (elem $t, @enum_types)
 		{

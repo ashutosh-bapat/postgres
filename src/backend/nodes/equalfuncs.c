@@ -51,6 +51,13 @@
 			return false; \
 	} while (0)
 
+/* Compare a Relids field */
+#define COMPARE_RELIDS_FIELD(fldname) \
+	do { \
+		if (!relids_equal(a->fldname, b->fldname)) \
+			return false; \
+	} while (0)
+
 /* Compare a field that is a pointer to a C string, or perhaps NULL */
 #define COMPARE_STRING_FIELD(fldname) \
 	do { \

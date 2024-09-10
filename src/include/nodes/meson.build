@@ -16,6 +16,7 @@ node_support_input_i = [
   'executor/tuptable.h',
   'foreign/fdwapi.h',
   'nodes/bitmapset.h',
+  'nodes/relids.h',
   'nodes/extensible.h',
   'nodes/lockoptions.h',
   'nodes/miscnodes.h',

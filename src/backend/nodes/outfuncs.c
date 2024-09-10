@@ -103,6 +103,11 @@ static void outDouble(StringInfo str, double d);
 	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
 	 outBitmapset(str, node->fldname))
 
+/* Write a Relids field */
+#define WRITE_RELIDS_FIELD(fldname) \
+	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \
+	 outRelids(str, node->fldname))
+
 /* Write a variable-length array (not a List) of Node pointers */
 #define WRITE_NODE_ARRAY(fldname, len) \
 	(appendStringInfoString(str, " :" CppAsString(fldname) " "), \

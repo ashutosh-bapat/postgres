@@ -38,6 +38,10 @@
 #define COPY_BITMAPSET_FIELD(fldname) \
 	(newnode->fldname = bms_copy(from->fldname))
 
+/* Copy a Relids field */
+#define COPY_RELIDS_FIELD(fldname) \
+	(newnode->fldname = relids_copy(from->fldname))
+
 /* Copy a field that is a pointer to a C string, or perhaps NULL */
 #define COPY_STRING_FIELD(fldname) \
 	(newnode->fldname = from->fldname ? pstrdup(from->fldname) : (char *) NULL)
@@ -164,6 +168,12 @@ static Bitmapset *
 _copyBitmapset(const Bitmapset *from)
 {
 	return bms_copy(from);
+}
+
+static Relids 
+_copyRelids(const Relids from)
+{
+	return relids_copy(from);
 }
 
 

@@ -30,6 +30,7 @@
 
 #include "miscadmin.h"
 #include "nodes/bitmapset.h"
+#include "nodes/relids.h"
 #include "nodes/readfuncs.h"
 
 
@@ -143,6 +144,12 @@
 	(void) token;				/* in case not used elsewhere */ \
 	local_node->fldname = _readBitmapset()
 
+/* Read a Relids field */
+#define READ_RELIDS_FIELD(fldname) \
+	token = pg_strtok(&length);		/* skip :fldname */ \
+	(void) token;				/* in case not used elsewhere */ \
+	local_node->fldname = _readRelids()
+
 /* Read an attribute number array */
 #define READ_ATTRNUMBER_ARRAY(fldname, len) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
@@ -245,6 +252,29 @@ Bitmapset *
 readBitmapset(void)
 {
 	return _readBitmapset();
+}
+
+/*
+ * _readRelids
+ *
+ * Note: this code is used in contexts where we know that a Relids 
+ * is expected.  There is equivalent code in nodeRead() that can read a
+ * Relids when we come across one in other contexts.
+ */
+static Relids
+_readRelids(void)
+{
+	return (Relids) _readBitmapset();
+}
+
+/*
+ * We export this function for use by extensions that define extensible nodes.
+ * That's somewhat historical, though, because calling nodeRead() will work.
+ */
+Relids
+readRelids(void)
+{
+	return _readRelids();
 }
 
 #include "readfuncs.funcs.c"
