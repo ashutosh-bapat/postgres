@@ -2716,7 +2716,7 @@ typedef struct RestrictInfo
  */
 #define RINFO_IS_PUSHED_DOWN(rinfo, joinrelids) \
 	((rinfo)->is_pushed_down || \
-	 !bms_is_subset((rinfo)->required_relids, joinrelids))
+	 !relids_is_subset((rinfo)->required_relids, joinrelids))
 
 /*
  * Since mergejoinscansel() is a relatively expensive function, and would

@@ -3000,7 +3000,7 @@ generate_implied_equalities_for_column(PlannerInfo *root,
 		ListCell   *lc2;
 
 		/* Sanity check eclass_indexes only contain ECs for rel */
-		Assert(is_child_rel || bms_is_subset(rel->relids, cur_ec->ec_relids));
+		Assert(is_child_rel || relids_is_subset(rel->relids, cur_ec->ec_relids));
 
 		/*
 		 * Won't generate joinclauses if const or single-member (the latter
@@ -3023,7 +3023,7 @@ generate_implied_equalities_for_column(PlannerInfo *root,
 		foreach(lc2, cur_ec->ec_members)
 		{
 			cur_em = (EquivalenceMember *) lfirst(lc2);
-			if (bms_equal(cur_em->em_relids, rel->relids) &&
+			if (relids_equal(cur_em->em_relids, rel->relids) &&
 				callback(root, rel, cur_ec, cur_em, callback_arg))
 				break;
 			cur_em = NULL;
@@ -3130,8 +3130,8 @@ have_relevant_eclass_joinclause(PlannerInfo *root,
 		 * Sanity check that get_common_eclass_indexes gave only ECs
 		 * containing both rels.
 		 */
-		Assert(bms_overlap(rel1->relids, ec->ec_relids));
-		Assert(bms_overlap(rel2->relids, ec->ec_relids));
+		Assert(relids_overlap(rel1->relids, ec->ec_relids));
+		Assert(relids_overlap(rel2->relids, ec->ec_relids));
 
 		/*
 		 * Won't generate joinclauses if single-member (this test covers the

@@ -5771,8 +5771,8 @@ semijoin_target_ok(PlannerInfo *root, RelOptInfo *joinrel, RelOptInfo *outerrel,
 		if (!IsA(var, Var))
 			continue;
 
-		if (bms_is_member(var->varno, innerrel->relids) &&
-			!bms_is_member(var->varno, outerrel->relids))
+		if (relids_is_member(var->varno, innerrel->relids) &&
+			!relids_is_member(var->varno, outerrel->relids))
 		{
 			/*
 			 * The planner can create semi-join, which refers to inner rel
@@ -5904,8 +5904,8 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 		relids = IS_OTHER_REL(joinrel) ?
 			joinrel->top_parent_relids : joinrel->relids;
 
-		if (bms_is_subset(phinfo->ph_eval_at, relids) &&
-			bms_nonempty_difference(relids, phinfo->ph_eval_at))
+		if (relids_is_subset(phinfo->ph_eval_at, relids) &&
+			relids_nonempty_difference(relids, phinfo->ph_eval_at))
 			return false;
 	}
 
@@ -5924,11 +5924,11 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 	 */
 	fpinfo->make_outerrel_subquery = false;
 	fpinfo->make_innerrel_subquery = false;
-	Assert(bms_is_subset(fpinfo_o->lower_subquery_rels, outerrel->relids));
-	Assert(bms_is_subset(fpinfo_i->lower_subquery_rels, innerrel->relids));
-	fpinfo->lower_subquery_rels = bms_union(fpinfo_o->lower_subquery_rels,
+	Assert(relids_is_subset(fpinfo_o->lower_subquery_rels, outerrel->relids));
+	Assert(relids_is_subset(fpinfo_i->lower_subquery_rels, innerrel->relids));
+	fpinfo->lower_subquery_rels = relids_union(fpinfo_o->lower_subquery_rels,
 											fpinfo_i->lower_subquery_rels);
-	fpinfo->hidden_subquery_rels = bms_union(fpinfo_o->hidden_subquery_rels,
+	fpinfo->hidden_subquery_rels = relids_union(fpinfo_o->hidden_subquery_rels,
 											 fpinfo_i->hidden_subquery_rels);
 
 	/*
@@ -5985,7 +5985,7 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 			fpinfo->joinclauses = list_concat(fpinfo->joinclauses,
 											  fpinfo->remote_conds);
 			fpinfo->remote_conds = list_copy(fpinfo_o->remote_conds);
-			fpinfo->hidden_subquery_rels = bms_union(fpinfo->hidden_subquery_rels,
+			fpinfo->hidden_subquery_rels = relids_union(fpinfo->hidden_subquery_rels,
 													 innerrel->relids);
 			break;
 
@@ -6003,14 +6003,14 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 			{
 				fpinfo->make_outerrel_subquery = true;
 				fpinfo->lower_subquery_rels =
-					bms_add_members(fpinfo->lower_subquery_rels,
+					relids_add_members(fpinfo->lower_subquery_rels,
 									outerrel->relids);
 			}
 			if (fpinfo_i->remote_conds)
 			{
 				fpinfo->make_innerrel_subquery = true;
 				fpinfo->lower_subquery_rels =
-					bms_add_members(fpinfo->lower_subquery_rels,
+					relids_add_members(fpinfo->lower_subquery_rels,
 									innerrel->relids);
 			}
 			break;
@@ -6040,13 +6040,13 @@ foreign_join_ok(PlannerInfo *root, RelOptInfo *joinrel, JoinType jointype,
 		if (!bms_is_empty(fpinfo_o->hidden_subquery_rels))
 		{
 			fpinfo->make_outerrel_subquery = true;
-			fpinfo->lower_subquery_rels = bms_add_members(fpinfo->lower_subquery_rels, outerrel->relids);
+			fpinfo->lower_subquery_rels = relids_add_members(fpinfo->lower_subquery_rels, outerrel->relids);
 		}
 
 		if (!bms_is_empty(fpinfo_i->hidden_subquery_rels))
 		{
 			fpinfo->make_innerrel_subquery = true;
-			fpinfo->lower_subquery_rels = bms_add_members(fpinfo->lower_subquery_rels, innerrel->relids);
+			fpinfo->lower_subquery_rels = relids_add_members(fpinfo->lower_subquery_rels, innerrel->relids);
 		}
 	}
 
@@ -7843,9 +7843,9 @@ find_em_for_rel(PlannerInfo *root, EquivalenceClass *ec, RelOptInfo *rel)
 		 * Note we require !bms_is_empty, else we'd accept constant
 		 * expressions which are not suitable for the purpose.
 		 */
-		if (bms_is_subset(em->em_relids, rel->relids) &&
-			!bms_is_empty(em->em_relids) &&
-			bms_is_empty(bms_intersect(em->em_relids, fpinfo->hidden_subquery_rels)) &&
+		if (relids_is_subset(em->em_relids, rel->relids) &&
+			!relids_is_empty(em->em_relids) &&
+			relids_is_empty(relids_intersect(em->em_relids, fpinfo->hidden_subquery_rels)) &&
 			is_foreign_expr(root, rel, em->em_expr))
 			return em;
 	}

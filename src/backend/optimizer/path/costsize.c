@@ -3614,7 +3614,7 @@ initial_cost_mergejoin(PlannerInfo *root, JoinCostWorkspace *workspace,
 		/* Get the selectivity with caching */
 		cache = cached_scansel(root, firstclause, opathkey);
 
-		if (bms_is_subset(firstclause->left_relids,
+		if (relids_is_subset(firstclause->left_relids,
 						  outer_path->parent->relids))
 		{
 			/* left side of clause is outer */
@@ -4310,7 +4310,7 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 			 * planning a large query, we cache the bucket stats estimates in
 			 * the RestrictInfo node to avoid repeated lookups of statistics.
 			 */
-			if (bms_is_subset(restrictinfo->right_relids,
+			if (relids_is_subset(restrictinfo->right_relids,
 							  inner_path->parent->relids))
 			{
 				/* righthand side is inner */
@@ -4329,7 +4329,7 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 			}
 			else
 			{
-				Assert(bms_is_subset(restrictinfo->left_relids,
+				Assert(relids_is_subset(restrictinfo->left_relids,
 									 inner_path->parent->relids));
 				/* lefthand side is inner */
 				thisbucketsize = restrictinfo->left_bucketsize;

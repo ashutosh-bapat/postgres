@@ -1383,7 +1383,7 @@ deparseFromExpr(List *quals, deparse_expr_cxt *context)
 	/* Construct FROM clause */
 	appendStringInfoString(buf, " FROM ");
 	deparseFromExprForRel(buf, context->root, scanrel,
-						  (bms_membership(scanrel->relids) == BMS_MULTIPLE),
+						  (relids_membership(scanrel->relids) == RELIDS_MULTIPLE),
 						  (Index) 0, NULL, &additional_conds,
 						  context->params_list);
 	appendWhereClause(quals, additional_conds, context);
@@ -1486,7 +1486,7 @@ deparseLockingClause(deparse_expr_cxt *context)
 	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
 	int			relid = -1;
 
-	while ((relid = bms_next_member(rel->relids, relid)) >= 0)
+	while ((relid = relids_next_member(rel->relids, relid)) >= 0)
 	{
 		/*
 		 * Ignore relation if it appears in a lower subquery.  Locking clause
@@ -1550,7 +1550,7 @@ deparseLockingClause(deparse_expr_cxt *context)
 				}
 
 				/* Add the relation alias if we are here for a join relation */
-				if (bms_membership(rel->relids) == BMS_MULTIPLE &&
+				if (relids_membership(rel->relids) == RELIDS_MULTIPLE &&
 					rc->strength != LCS_NONE)
 					appendStringInfo(buf, " OF %s%d", REL_ALIAS_PREFIX, relid);
 			}
@@ -1775,7 +1775,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 		List	   *additional_conds_i = NIL;
 		List	   *additional_conds_o = NIL;
 
-		if (ignore_rel > 0 && bms_is_member(ignore_rel, foreignrel->relids))
+		if (ignore_rel > 0 && relids_is_member(ignore_rel, foreignrel->relids))
 		{
 			/*
 			 * If this is an inner join, add joinclauses to *ignore_conds and
@@ -2028,7 +2028,7 @@ deparseRangeTblRef(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 		 * such relations can never contain an UPDATE/DELETE target.
 		 */
 		Assert(ignore_rel == 0 ||
-			   !bms_is_member(ignore_rel, foreignrel->relids));
+			   !relids_is_member(ignore_rel, foreignrel->relids));
 
 		/* Deparse the subquery representing the relation. */
 		appendStringInfoChar(buf, '(');
@@ -2953,7 +2953,7 @@ deparseVar(Var *node, deparse_expr_cxt *context)
 	int			colno;
 
 	/* Qualify columns when multiple relations are involved. */
-	bool		qualify_col = (bms_membership(relids) == BMS_MULTIPLE);
+	bool		qualify_col = (relids_membership(relids) == RELIDS_MULTIPLE);
 
 	/*
 	 * If the Var belongs to the foreign relation that is deparsed as a
@@ -3392,7 +3392,7 @@ isPlainForeignVar(Expr *node, deparse_expr_cxt *context)
 		Var		   *var = (Var *) node;
 		Relids		relids = context->scanrel->relids;
 
-		if (bms_is_member(var->varno, relids) && var->varlevelsup == 0)
+		if (relids_is_member(var->varno, relids) && var->varlevelsup == 0)
 			return true;
 	}
 
@@ -4132,7 +4132,7 @@ is_subquery_var(Var *node, RelOptInfo *foreignrel, int *relno, int *colno)
 	if (!bms_is_member(node->varno, fpinfo->lower_subquery_rels))
 		return false;
 
-	if (bms_is_member(node->varno, outerrel->relids))
+	if (relids_is_member(node->varno, outerrel->relids))
 	{
 		/*
 		 * If outer relation is deparsed as a subquery, the Var is an output
@@ -4149,7 +4149,7 @@ is_subquery_var(Var *node, RelOptInfo *foreignrel, int *relno, int *colno)
 	}
 	else
 	{
-		Assert(bms_is_member(node->varno, innerrel->relids));
+		Assert(relids_is_member(node->varno, innerrel->relids));
 
 		/*
 		 * If inner relation is deparsed as a subquery, the Var is an output

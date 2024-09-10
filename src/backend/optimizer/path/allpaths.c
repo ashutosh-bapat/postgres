@@ -228,7 +228,7 @@ make_one_rel(PlannerInfo *root, List *joinlist)
 	/*
 	 * The result should join all and only the query's base + outer-join rels.
 	 */
-	Assert(bms_equal(rel->relids, root->all_query_rels));
+	Assert(relids_equal(rel->relids, root->all_query_rels));
 
 	return rel;
 }
@@ -553,7 +553,7 @@ set_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * the final scan/join targetlist is available (see grouping_planner).
 	 */
 	if (rel->reloptkind == RELOPT_BASEREL &&
-		!bms_equal(rel->relids, root->all_query_rels))
+		!relids_equal(rel->relids, root->all_query_rels))
 		generate_useful_gather_paths(root, rel, false);
 
 	/* Now find the cheapest of the paths for this rel */
@@ -3475,7 +3475,7 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 			 * once we know the final targetlist (see grouping_planner's and
 			 * its call to apply_scanjoin_target_to_paths).
 			 */
-			if (!bms_equal(rel->relids, root->all_query_rels))
+			if (!relids_equal(rel->relids, root->all_query_rels))
 				generate_useful_gather_paths(root, rel, false);
 
 			/* Find and save the cheapest paths for this rel */
