@@ -344,9 +344,10 @@ struct PlannerInfo
 
 	/*
 	 * Hash table to save translated RestrictInfos while planning
-	 * partitionwise join.
+	 * partitionwise join. Opaque rinfohash_hash is declared here to avoid
+	 * including simplehash.h and simple hash parameters.
 	 */
-	struct HTAB *rinfo_hash pg_node_attr(read_write_ignore);
+	struct rinfohash_hash *rinfo_hash pg_node_attr(read_write_ignore);
 
 	/*
 	 * all_result_relids is empty for SELECT, otherwise it contains at least
