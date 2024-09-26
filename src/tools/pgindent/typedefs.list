@@ -396,6 +396,7 @@ CheckPointStmt
 CheckpointStatsData
 CheckpointerRequest
 CheckpointerShmemStruct
+ChildRinfoTabEntry
 Chromosome
 CkptSortItem
 CkptTsStatus

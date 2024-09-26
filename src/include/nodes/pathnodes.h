@@ -343,6 +343,12 @@ struct PlannerInfo
 	int			last_rinfo_serial;
 
 	/*
+	 * Hash table to save translated RestrictInfos while planning
+	 * partitionwise join.
+	 */
+	struct HTAB *rinfo_hash pg_node_attr(read_write_ignore);
+
+	/*
 	 * all_result_relids is empty for SELECT, otherwise it contains at least
 	 * parse->resultRelation.  For UPDATE/DELETE/MERGE across an inheritance
 	 * or partitioning tree, the result rel's child relids are added.  When
@@ -559,12 +565,6 @@ struct PlannerInfo
 
 	/* Does this query modify any partition key columns? */
 	bool		partColsUpdated;
-
-	/*
-	 * Hash table to save translated RestrictInfos while planning
-	 * partitionwise join.
-	 */
-	struct HTAB *rinfo_hash pg_node_attr(read_write_ignore);
 };
 
 
