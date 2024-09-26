@@ -559,6 +559,12 @@ struct PlannerInfo
 
 	/* Does this query modify any partition key columns? */
 	bool		partColsUpdated;
+
+	/*
+	 * Hash table to save translated RestrictInfos while planning
+	 * partitionwise join.
+	 */
+	struct HTAB *rinfo_hash pg_node_attr(read_write_ignore);
 };
 
 
