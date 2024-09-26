@@ -1380,6 +1380,16 @@ typedef struct JoinDomain
  * NB: if ec_merged isn't NULL, this class has been merged into another, and
  * should be ignored in favor of using the pointed-to class.
  *
+ * ec_derives contains the parent RestrictInfos representing conditions not
+ * specified in the query but derived from the EquivalenceClass. The child
+ * RestrictInfos can never be specified in the query and hence are always
+ * derived from EquivalenceClass. When there are hundreds of partitions
+ * involved, there can be thousands of derived child clauses. Simple linked list
+ * proves inefficient for retrieving an existing clause. Hence they are stored
+ * in a hash table located outside the equivalence class in PlannerInfo. Unlike
+ * a linked list, a hash tables can efficiently handle thousands of entries.
+ * Hence we do not need one hash table per EquivalenceClass.
+ *
  * NB: EquivalenceClasses are never copied after creation.  Therefore,
  * copyObject() copies pointers to them as pointers, and equal() compares
  * pointers to EquivalenceClasses via pointer equality.  This is implemented
@@ -1396,7 +1406,7 @@ typedef struct EquivalenceClass
 	Oid			ec_collation;	/* collation, if datatypes are collatable */
 	List	   *ec_members;		/* list of EquivalenceMembers */
 	List	   *ec_sources;		/* list of generating RestrictInfos */
-	List	   *ec_derives;		/* list of derived RestrictInfos */
+	List	   *ec_derives;		/* list of derived parent RestrictInfos */
 	Relids		ec_relids;		/* all relids appearing in ec_members, except
 								 * for child members (see below) */
 	bool		ec_has_const;	/* any pseudoconstants in ec_members? */
