@@ -203,8 +203,11 @@ CreateSharedMemoryAndSemaphores(void)
 	PGShmemHeader *seghdr;
 	Size		size;
 	int			numSemas;
+	void 		*base;
 
 	Assert(!IsUnderPostmaster);
+
+	base = ReserveAnonymousMemory((Size) MaxAvailableMemory * BLCKSZ);
 
 	for(int segment = 0; segment < ANON_MAPPINGS; segment++)
 	{
@@ -217,7 +220,7 @@ CreateSharedMemoryAndSemaphores(void)
 		 *
 		 * XXX: Do multiple shims are needed, one per segment?
 		 */
-		seghdr = PGSharedMemoryCreate(size, &shim);
+		seghdr = PGSharedMemoryCreate(size, &shim, base);
 
 		/*
 		 * Make sure that huge pages are never reported as "unknown" while the

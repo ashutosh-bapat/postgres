@@ -2365,6 +2365,20 @@ struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"max_available_memory", PGC_SIGHUP, RESOURCES_MEM,
+			gettext_noop("Sets the upper limit for the shared_buffers value."),
+			gettext_noop("Shared memory could be resized at runtime, this "
+						 "parameters sets the upper limit for it, beyond which "
+						 "resizing would not be supported. Normally this value "
+						 "would be the same as the total available memory."),
+			GUC_UNIT_BLOCKS
+		},
+		&MaxAvailableMemory,
+		131072, 16, INT_MAX / 2,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"vacuum_buffer_usage_limit", PGC_USERSET, RESOURCES_MEM,
 			gettext_noop("Sets the buffer pool size for VACUUM, ANALYZE, and autovacuum."),
 			NULL,
