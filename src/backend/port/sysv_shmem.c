@@ -108,6 +108,63 @@ static AnonymousMapping Mappings[ANON_MAPPINGS];
 /* Keeps track of used mapping segments */
 static int next_free_segment = 0;
 
+/*
+ * Anonymous mapping placing (/dev/zero (deleted) below) looks like this:
+ *
+ * 00400000-00490000         /path/bin/postgres
+ * ...
+ * 012d9000-0133e000         [heap]
+ * 7f443a800000-7f470a800000 /dev/zero (deleted)
+ * 7f470a800000-7f471831d000 /usr/lib/locale/locale-archive
+ * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
+ * ...
+ * 7f471aef2000-7f471aef9000 /dev/shm/PostgreSQL.3859891842
+ * 7f471aef9000-7f471aefa000 /SYSV007dbf7d (deleted)
+ * ...
+ *
+ * We would like to place multiple mappings in such a way, that there will be
+ * enough space between them in the address space to be able to resize up to
+ * certain size, but without counting towards the total memory consumption.
+ *
+ * By letting Linux to chose a mapping address, it will pick up the lowest
+ * possible address that do not clash with any other mappings, which will be
+ * right before locales in the example above. This information (maximum allowed
+ * size of mappings and the lowest mapping address) is enough to place every
+ * mapping as follow:
+ *
+ * - Take the lowest mapping address, which we call later the probe address.
+ * - Substract the offset of the previous mapping.
+ * - Substract the maximum allowed size for the current mapping from the
+ *   address.
+ * - Place the mapping by the resulting address.
+ *
+ * The result would look like this:
+ *
+ * 012d9000-0133e000         [heap]
+ * 7f4426f54000-7f442e010000 /dev/zero (deleted)
+ * [...free space...]
+ * 7f443a800000-7f444196c000 /dev/zero (deleted)
+ * [...free space...]
+ * 7f470a800000-7f471831d000 /usr/lib/locale/locale-archive
+ * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
+ * ...
+ */
+Size SHMEM_EXTRA_SIZE_LIMIT[1] = {
+	0, 									/* MAIN_SHMEM_SLOT */
+};
+
+/* Remembers offset of the last mapping from the probe address */
+static Size last_offset = 0;
+
+/*
+ * Size of the mapping, which will be used to calculate anonymous mapping
+ * address. It should not be too small, otherwise there is a chance the probe
+ * mapping will be created between other mappings, leaving no room extending
+ * it. But it should not be too large either, in case if there are limitations
+ * on the mapping size. Current value is the default shared_buffers.
+ */
+#define PROBE_MAPPING_SIZE (Size) 128 * 1024 * 1024
+
 static void *InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size);
 static void IpcMemoryDetach(int status, Datum shmaddr);
 static void IpcMemoryDelete(int status, Datum shmId);
@@ -673,13 +730,74 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 
 	if (ptr == MAP_FAILED && huge_pages != HUGE_PAGES_ON)
 	{
+		void *probe = NULL;
+
 		/*
 		 * Use the original size, not the rounded-up value, when falling back
 		 * to non-huge pages.
 		 */
 		allocsize = mapping->shmem_size;
-		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
+
+		/*
+		 * Try to create mapping at an address, which will allow to extend it
+		 * later:
+		 *
+		 * - First create the temporary probe mapping of a fixed size and let
+		 *   kernel to place it at address of its choice. By the virtue of the
+		 *   probe mapping size we expect it to be located at the lowest
+		 *   possible address, expecting some non mapped space above.
+		 *
+		 * - Unmap the probe mapping, remember the address.
+		 *
+		 * - Create an actual anonymous mapping at that address with the
+		 *   offset. The offset is calculated in such a way to allow growing
+		 *   the mapping withing certain boundaries. For this mapping we use
+		 *   MAP_FIXED_NOREPLACE, which will error out with EEXIST if there is
+		 *   any mapping clash.
+		 *
+		 * - If the last step has failed, fallback to the regular mapping
+		 *   creation and signal that shared buffers could not be resized
+		 *   without a restart.
+		 */
+		probe = mmap(NULL, PROBE_MAPPING_SIZE, PROT_READ | PROT_WRITE,
 				   PG_MMAP_FLAGS, -1, 0);
+
+		if (probe == MAP_FAILED)
+		{
+			mmap_errno = errno;
+			DebugMappings();
+			elog(DEBUG1, "segment[%s]: probe mmap(%zu) failed: %m",
+					MappingName(mapping->shmem_segment), allocsize);
+		}
+		else
+		{
+			Size offset = last_offset + SHMEM_EXTRA_SIZE_LIMIT[next_free_segment] + allocsize;
+			last_offset = offset;
+
+			munmap(probe, PROBE_MAPPING_SIZE);
+
+			ptr = mmap(probe - offset, allocsize, PROT_READ | PROT_WRITE,
+					   PG_MMAP_FLAGS | MAP_FIXED_NOREPLACE, -1, 0);
+			mmap_errno = errno;
+			if (ptr == MAP_FAILED)
+			{
+				DebugMappings();
+				elog(DEBUG1, "segment[%s]: mmap(%zu) at address %p failed: %m",
+					 MappingName(mapping->shmem_segment), allocsize, probe - offset);
+			}
+
+		}
+	}
+
+	if (ptr == MAP_FAILED)
+	{
+		/*
+		 * Fallback to the portable way of creating a mapping.
+		 */
+		allocsize = mapping->shmem_size;
+
+		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
+						   PG_MMAP_FLAGS, -1, 0);
 		mmap_errno = errno;
 	}
 
