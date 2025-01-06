@@ -4743,6 +4743,12 @@ PostgresMain(const char *dbname, const char *username)
 		/*
 		 * (6) check for any other interesting events that happened while we
 		 * slept.
+		 * TODO: When a backend is waiting for a command, it won't reload
+		 * configuration and hence wouldn't notice change in shared_buffers. The
+		 * change is only noticed after the command is received and the control
+		 * comes here. We may need to improve this in case we want to resize
+		 * shared buffers or perform of part of that operation in assign_hook
+		 * implementation (e.g. AnonymousShmemResize()).
 		 */
 		if (ConfigReloadPending)
 		{

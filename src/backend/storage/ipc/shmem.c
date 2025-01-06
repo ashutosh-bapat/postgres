@@ -86,6 +86,11 @@ ShmemSegment Segments[ANON_MAPPINGS];
  * Primary index hashtable for shmem, for simplicity we use a single for all
  * shared memory segments. There can be performance consequences of that, and
  * an alternative option would be to have one index per shared memory segments.
+ *
+ * TODO: shouldn't this be part of the ShmemSegment structure? Some shared
+ * memory segments that hold only one structure do not need their pointers to be
+ * stored in the shared hash table, instead they could be part of the segments
+ * itself.
  */
 static HTAB *ShmemIndex = NULL;
 
@@ -600,6 +605,12 @@ pg_get_shmem_allocations(PG_FUNCTION_ARGS)
 
 	hash_seq_init(&hstat, ShmemIndex);
 
+	/*
+	 * TODO: For the sake of completeness we should rotate through all the slots
+	 * (after saving slotwise ShmemIndex, if any). Do we want to also output
+	 * shmem slot name, but that would expose the slotified structure of shared
+	 * memory.
+	 */
 	/* output all allocated entries */
 	memset(nulls, 0, sizeof(nulls));
 	/* XXX: take all shared memory segments into account. */

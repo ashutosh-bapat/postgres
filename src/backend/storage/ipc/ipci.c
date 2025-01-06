@@ -206,6 +206,12 @@ AttachSharedMemoryStructs(void)
 /*
  * CreateSharedMemoryAndSemaphores
  *		Creates and initializes shared memory and semaphores.
+ *
+ * TODO: IMO this function should be rewritten to calculate the size of each
+ * shared memory slot or mapping. Instead of passing slot number to
+ * CalculateShmemSize, we should instead let each shared memory module use their
+ * own slot number and update the required sizes in the corresponding mapping.
+ * Then allocate shared memory in each of the mappings.
  */
 void
 CreateSharedMemoryAndSemaphores(void)
@@ -230,6 +236,10 @@ CreateSharedMemoryAndSemaphores(void)
 		 * Create the shmem segment.
 		 *
 		 * XXX: Do multiple shims are needed, one per segment?
+		 *
+		 * TODO: while each slot will return a different shim, only the last one
+		 * is passed to dsm_postmaster_startup(). Is that right? Shouldn't we
+		 * pass all of them or none.
 		 */
 		seghdr = PGSharedMemoryCreate(size, &shim, base);
 

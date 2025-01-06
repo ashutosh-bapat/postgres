@@ -626,6 +626,11 @@ LWLockNewTrancheId(void)
 	 * XXX: Looks like this is the only use of Segments outside of shmem.c,
 	 * it's maybe worth it to reshape this part to hide Segments structure.
 	 */
+	/*
+	 * TODO: Elaborating more on XXX above, We have retained ShmemLock global
+	 * variable, should we use it here instead of main segment lock? We will need
+	 * spinlock init on the global one, if yes.
+	 */
 	SpinLockAcquire(Segments[MAIN_SHMEM_SEGMENT].ShmemLock);
 	result = (*LWLockCounter)++;
 	SpinLockRelease(Segments[MAIN_SHMEM_SEGMENT].ShmemLock);

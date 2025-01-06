@@ -485,6 +485,9 @@ StrategyInitialize(bool init)
 	 * a new entry before deleting the old.  In principle this could be
 	 * happening in each partition concurrently, so we could need as many as
 	 * NBuffers + NUM_BUFFER_PARTITIONS entries.
+	 * 
+	 * TODO: If we are resizing, we need to preserve the earlier entries, don't
+	 * we?
 	 */
 	InitBufTable(NBuffers + NUM_BUFFER_PARTITIONS);
 
