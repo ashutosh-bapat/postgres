@@ -619,6 +619,11 @@ LWLockNewTrancheId(void)
 
 	LWLockCounter = (int *) ((char *) MainLWLockArray - sizeof(int));
 	/* We use the ShmemLock spinlock to protect LWLockCounter */
+	/*
+	 * TODO: We have retained ShmemLock global variable, should we use it here
+	 * instead of main segment lock? We will need spinlock init on the global
+	 * one if yes.
+	 */
 	SpinLockAcquire(Segments[MAIN_SHMEM_SEGMENT].ShmemLock);
 	result = (*LWLockCounter)++;
 	SpinLockRelease(Segments[MAIN_SHMEM_SEGMENT].ShmemLock);

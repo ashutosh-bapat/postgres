@@ -86,6 +86,11 @@ ShmemSegment Segments[ANON_MAPPINGS];
  * Primary index hashtable for shmem, for simplicity we use a single for all
  * shared memory segments. There can be performance consequences of that, and
  * an alternative option would be to have one index per shared memory segments.
+ *
+ * TODO: shouldn't this be part of the ShmemSegment structure? Some shared
+ * memory segments that hold only one structure do not need their pointers to be
+ * stored in the shared hash table, instead they could be part of the segments
+ * itself.
  */
 static HTAB *ShmemIndex = NULL;
 
@@ -493,9 +498,18 @@ ShmemInitStructInSegment(const char *name, Size size, bool *foundPtr,
 	{
 		/*
 		 * Structure is in the shmem index so someone else has allocated it
-		 * already. Verify the structure's size:
-		 * - If it's the same, we've found the expected structure.
-		 * - If it's different, we're resizing the expected structure.
+		 * already. Verify the structure's size: - If it's the same, we've found
+		 * the expected structure.  - If it's different, we're resizing the
+		 * expected structure.
+		 *
+		 * TODO: This works because every structure that needs to be resized
+		 * resides in a shmem slot by itself. But it won't work if a slot
+		 * contains more structures, that need to be resized, placed in adjacent
+		 * memory. Also we are not updating the Shmem stats like freeoffset. I
+		 * think we will keep all resizable structures in a slot for themselves,
+		 * and not have a hash table in such slots since resizing the hash table
+		 * itself might cause memory to be allocated next to the resizable
+		 * structure making it difficult to resize it.
 		 */
 		if (result->size != size)
 			result->size = size;
@@ -587,6 +601,12 @@ pg_get_shmem_allocations(PG_FUNCTION_ARGS)
 
 	hash_seq_init(&hstat, ShmemIndex);
 
+	/*
+	 * TODO: For the sake of completeness we should rotate through all the slots
+	 * (after saving slotwise ShmemIndex, if any). Do we want to also output
+	 * shmem slot name, but that would expose the slotified structure of shared
+	 * memory.
+	 */
 	/* output all allocated entries */
 	memset(nulls, 0, sizeof(nulls));
 	/* XXX: take all shared memory segments into account. */

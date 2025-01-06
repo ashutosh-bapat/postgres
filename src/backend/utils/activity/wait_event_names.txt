@@ -348,6 +348,7 @@ WALSummarizer	"Waiting to read or update WAL summarization state."
 DSMRegistry	"Waiting to read or update the dynamic shared memory registry."
 InjectionPoint	"Waiting to read or update information related to injection points."
 SerialControl	"Waiting to read or update shared <filename>pg_serial</filename> state."
+# TODO, not used anywhere, do we need it?
 ShmemResize	"Waiting to resize shared memory."
 
 #

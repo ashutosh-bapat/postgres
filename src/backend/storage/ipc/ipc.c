@@ -70,6 +70,10 @@ static void proc_exit_prepare(int code);
  * ----------------------------------------------------------------
  */
 
+/*
+ * TODO: Why do we need to increase this by 20? I didn't notice any new calls to
+ * on_shmem_exit or on_proc_exit or before_shmem_exit.
+ */
 #define MAX_ON_EXITS 40
 
 struct ONEXIT

@@ -2975,6 +2975,11 @@ BufferSync(int flags)
 		UnlockBufHdr(bufHdr, buf_state);
 
 		/* Check for barrier events in case NBuffers is large. */
+		/*
+		 * TODO: If we allow buffer resizing while this loop is being executed,
+		 * the loop will need to consider the new value of NBuffers. Hence avoid
+		 * resizing if this loop is being executed.
+		 */
 		if (ProcSignalBarrierPending)
 			ProcessProcSignalBarrier();
 	}

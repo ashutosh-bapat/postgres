@@ -1011,7 +1011,13 @@ AnonymousShmemResize(void)
 
 			LWLockRelease(ShmemResizeLock);
 		}
-	}
+
+		/*
+		 * TODO: Shouldn't we call ResizeBufferPool() here as well? Or those
+		 * backend who can not lock the LWLock conditionally won't resize the
+		 * buffers.
+		 */
+		}
 
 	return true;
 }

@@ -43,6 +43,10 @@ typedef struct PGShmemHeader	/* standard header for all Postgres shmem */
 #endif
 } PGShmemHeader;
 
+/*
+ * TODO: should we define it in shmem.c where the previous global variables were
+ * declared? Do we need this structure outside shmem.c?
+ */
 typedef struct ShmemSegment
 {
 	PGShmemHeader *ShmemSegHdr; 	/* shared mem segment header */

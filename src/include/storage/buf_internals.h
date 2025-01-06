@@ -23,6 +23,11 @@
 #include "storage/lwlock.h"
 #include "storage/procnumber.h"
 #include "storage/shmem.h"
+/*
+ * TODO: this header files doesn't use anything in pg_shmem.h but the files which
+ * include this file may. We should include pg_shmem.h in those files rather than
+ * here.
+ */
 #include "storage/pg_shmem.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"

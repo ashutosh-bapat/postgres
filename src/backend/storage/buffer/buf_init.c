@@ -211,6 +211,12 @@ BufferManagerShmemInit(void)
  * initNew flag indicates that the caller wants new buffers to be initialized.
  * No locks are taking in this function, it is the caller responsibility to
  * make sure only one backend can work with new buffers.
+ *
+ * TODO: Avoid code duplication with BufferManagerShmemInit() and also assess
+ * which functionality in the latter is required in this function.
+ * similar to BufferManagerShmemInit, but applied only to the buffers in the
+ * range between NBuffersOld and NBuffers.
+ *
  */
 void
 ResizeBufferPool(int NBuffersOld, bool initNew)
@@ -293,6 +299,12 @@ ResizeBufferPool(int NBuffersOld, bool initNew)
 	}
 
 	/* Correct last entry of linked list */
+	/*
+	 * TODO: I think this needs to be done only when expanding the buffers.
+	 * 
+	 * TODO: We should also fix the freelist to not point to a shrunk
+	 * buffer and to append the new buffers to the existing free list.
+	 */
 	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
 	/* Init other shared buffer-management stuff */
