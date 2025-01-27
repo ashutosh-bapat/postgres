@@ -231,7 +231,7 @@ BackgroundWriterMain(const void *startup_data, size_t startup_data_len)
 		/*
 		 * Do one cycle of dirty-buffer writing.
 		 */
-		can_hibernate = BgBufferSync(&wb_context);
+		can_hibernate = BgBufferSync(&wb_context, false);
 
 		/* Report pending statistics to the cumulative stats system */
 		pgstat_report_bgwriter();

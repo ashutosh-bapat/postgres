@@ -305,7 +305,7 @@ ResizeBufferPool(int NBuffersOld, bool initNew)
 	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
 	/* Init other shared buffer-management stuff */
-	StrategyInitialize(!foundDescs);
+	StrategyReInitialize();
 
 	/* Initialize per-backend file flush context */
 	WritebackContextInit(&BackendWritebackContext,

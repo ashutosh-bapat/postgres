@@ -528,6 +528,38 @@ StrategyInitialize(bool init)
 		Assert(!init);
 }
 
+/*
+ * StrategyReInitialize -- re-initialize the buffer cache replacement
+ *		strategy.
+ *
+ * To be called when resizing buffer manager and only from the coordinator.
+ */
+void
+StrategyReInitialize(void)
+{
+	bool		found;
+
+	/*
+	 * Get or create the shared strategy control block. This is mostly not
+	 * required since we are not moving the starting pointer anyway.
+	 */
+	StrategyControl = (BufferStrategyControl *)
+		ShmemInitStructInSegment("Buffer Strategy Status",
+						sizeof(BufferStrategyControl),
+						&found, STRATEGY_SHMEM_SEGMENT);
+
+	SpinLockInit(&StrategyControl->buffer_strategy_lock);
+
+	/* Initialize the clock sweep pointer */
+	pg_atomic_init_u32(&StrategyControl->nextVictimBuffer, 0);
+
+	/* Clear statistics */
+	StrategyControl->completePasses = 0;
+	pg_atomic_init_u32(&StrategyControl->numBufferAllocs, 0);
+
+	/* No pending notification */
+	StrategyControl->bgwprocno = -1;
+}
 
 /* ----------------------------------------------------------------
  *				Backend-private buffer ring management

@@ -3180,7 +3180,10 @@ BufferSync(int flags)
  * BgBufferSync -- Write out some dirty buffers in the pool.
  *
  * This is called periodically by the background writer process.
- *
+ * 
+ * If `reset` = true, the function discards any saved information and starts
+ * anew.
+ * 
  * Returns true if it's appropriate for the bgwriter process to go into
  * low-power hibernation mode.  (This happens if the strategy clock sweep
  * has been "lapped" and no buffer allocations have occurred recently,
@@ -3188,7 +3191,7 @@ BufferSync(int flags)
  * bgwriter_lru_maxpages to 0.)
  */
 bool
-BgBufferSync(WritebackContext *wb_context)
+BgBufferSync(WritebackContext *wb_context, bool reset)
 {
 	/* info obtained from freelist.c */
 	int			strategy_buf_id;
@@ -3230,6 +3233,28 @@ BgBufferSync(WritebackContext *wb_context)
 	/* Variables for final smoothed_density update */
 	long		new_strategy_delta;
 	uint32		new_recent_alloc;
+
+	/*
+	 * TODO: A call to CHECK_FOR_INTERRUPTS() while this function is being
+	 * executed, may land up here through
+	 * ProcessInterrupts()->ProcessProcSignalBarrier()->ProcessBarrierShmemResize()->AnonymousShmemResize()->BgBufferSync(reset
+	 * = true). When that happens saved_info_valid, which is reset in the inner
+	 * call may get set once the ProcessInterrupts() finishes and outer
+	 * BgBufferSync() continues its execution. It's not safe to resize shared
+	 * buffers when this function is being executed.
+	 */
+	if (reset)
+	{
+		saved_info_valid = false;
+
+		/*
+		 * Return from here, if we don't have a valid WritebackContext. Next time
+		 * this function will be executed with a valid WritebackContext, it will
+		 * start over again.
+		 */
+		if (!wb_context)
+			return false;
+	}
 
 	/*
 	 * Find out where the freelist clock sweep currently is, and how many
