@@ -166,8 +166,15 @@ BufferManagerShmemInit(int FirstBufferToInit)
 	 */
 	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
-	/* Init other shared buffer-management stuff */
-	StrategyInitialize(!foundDescs);
+	/*
+	 * Init other shared buffer-management stuff from scratch when rebuilding
+	 * shared memory from scratch. If we are just resizing memory adjust the
+	 * required structures only.
+	 */
+	if (FirstBufferToInit == 0)
+		StrategyInitialize(!foundDescs);
+	else
+		StrategyReInitialize();
 
 	/* Initialize per-backend file flush context */
 	WritebackContextInit(&BackendWritebackContext,

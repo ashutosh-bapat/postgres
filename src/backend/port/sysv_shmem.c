@@ -1208,7 +1208,13 @@ AnonymousShmemResize(void)
 		 * backend who can not lock the LWLock conditionally won't resize the
 		 * buffers.
 		 */
+
+		if (MyBackendType == B_BG_WRITER)
+		{
+			/* If we are bgwriter wipe out the previous state and start anew. */
+			BgBufferSync(NULL, true);
 		}
+	}
 
 	return true;
 }
