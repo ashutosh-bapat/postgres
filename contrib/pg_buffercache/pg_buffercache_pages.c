@@ -16,7 +16,7 @@
 
 
 #define NUM_BUFFERCACHE_PAGES_MIN_ELEM	8
-#define NUM_BUFFERCACHE_PAGES_ELEM	9
+#define NUM_BUFFERCACHE_PAGES_ELEM 10	
 #define NUM_BUFFERCACHE_SUMMARY_ELEM 5
 #define NUM_BUFFERCACHE_USAGE_COUNTS_ELEM 4
 
@@ -46,6 +46,7 @@ typedef struct
 	 * because of bufmgr.c's PrivateRefCount infrastructure.
 	 */
 	int32		pinning_backends;
+	uint32	next_free_link;
 } BufferCachePagesRec;
 
 
@@ -126,8 +127,12 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 						   INT2OID, -1, 0);
 
 		if (expected_tupledesc->natts == NUM_BUFFERCACHE_PAGES_ELEM)
+		{
 			TupleDescInitEntry(tupledesc, (AttrNumber) 9, "pinning_backends",
 							   INT4OID, -1, 0);
+			TupleDescInitEntry(tupledesc, (AttrNumber) 10, "next_in_freelist",
+							   INT4OID, -1, 0);
+		}
 
 		fctx->tupdesc = BlessTupleDesc(tupledesc);
 
@@ -168,6 +173,7 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 			fctx->record[i].blocknum = bufHdr->tag.blockNum;
 			fctx->record[i].usagecount = BUF_STATE_GET_USAGECOUNT(buf_state);
 			fctx->record[i].pinning_backends = BUF_STATE_GET_REFCOUNT(buf_state);
+			fctx->record[i].next_free_link = bufHdr->freeNext > 0 ? bufHdr->freeNext + 1 : bufHdr->freeNext;
 
 			if (buf_state & BM_DIRTY)
 				fctx->record[i].isdirty = true;
@@ -197,6 +203,8 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 
 		values[0] = Int32GetDatum(fctx->record[i].bufferid);
 		nulls[0] = false;
+		values[9] = UInt32GetDatum(fctx->record[i].next_free_link);
+		nulls[9] = false;
 
 		/*
 		 * Set all fields except the bufferid to null if the buffer is unused
