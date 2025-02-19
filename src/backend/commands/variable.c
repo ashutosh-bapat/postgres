@@ -1143,7 +1143,7 @@ check_cluster_name(char **newval, void **extra, GucSource source)
  * GUC assign_hook for maintenance_io_concurrency
  */
 void
-assign_maintenance_io_concurrency(int newval, void *extra)
+assign_maintenance_io_concurrency(int newval, void *extra, bool *pending)
 {
 #ifdef USE_PREFETCH
 	/*

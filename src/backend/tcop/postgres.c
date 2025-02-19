@@ -3557,7 +3557,7 @@ check_log_stats(bool *newval, void **extra, GucSource source)
 
 /* GUC assign hook for transaction_timeout */
 void
-assign_transaction_timeout(int newval, void *extra)
+assign_transaction_timeout(int newval, void *extra, bool *pending)
 {
 	if (IsTransactionState())
 	{

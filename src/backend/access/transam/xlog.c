@@ -2188,7 +2188,7 @@ CalculateCheckpointSegments(void)
 }
 
 void
-assign_max_wal_size(int newval, void *extra)
+assign_max_wal_size(int newval, void *extra, bool *pending)
 {
 	max_wal_size_mb = newval;
 	CalculateCheckpointSegments();

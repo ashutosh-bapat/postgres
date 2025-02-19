@@ -81,12 +81,12 @@ extern void assign_log_timezone(const char *newval, void *extra);
 extern const char *show_log_timezone(void);
 extern bool check_maintenance_io_concurrency(int *newval, void **extra,
 											 GucSource source);
-extern void assign_maintenance_io_concurrency(int newval, void *extra);
+extern void assign_maintenance_io_concurrency(int newval, void *extra, bool *pending);
 extern bool check_max_slot_wal_keep_size(int *newval, void **extra,
 										 GucSource source);
-extern void assign_max_wal_size(int newval, void *extra);
+extern void assign_max_wal_size(int newval, void *extra, bool *pending);
 extern bool check_max_stack_depth(int *newval, void **extra, GucSource source);
-extern void assign_max_stack_depth(int newval, void *extra);
+extern void assign_max_stack_depth(int newval, void *extra, bool *pending);
 extern bool check_multixact_member_buffers(int *newval, void **extra,
 										   GucSource source);
 extern bool check_multixact_offset_buffers(int *newval, void **extra,
@@ -141,13 +141,13 @@ extern void assign_synchronous_standby_names(const char *newval, void *extra);
 extern void assign_synchronous_commit(int newval, void *extra);
 extern void assign_syslog_facility(int newval, void *extra);
 extern void assign_syslog_ident(const char *newval, void *extra);
-extern void assign_tcp_keepalives_count(int newval, void *extra);
+extern void assign_tcp_keepalives_count(int newval, void *extra, bool *pending);
 extern const char *show_tcp_keepalives_count(void);
-extern void assign_tcp_keepalives_idle(int newval, void *extra);
+extern void assign_tcp_keepalives_idle(int newval, void *extra, bool *pending);
 extern const char *show_tcp_keepalives_idle(void);
-extern void assign_tcp_keepalives_interval(int newval, void *extra);
+extern void assign_tcp_keepalives_interval(int newval, void *extra, bool *pending);
 extern const char *show_tcp_keepalives_interval(void);
-extern void assign_tcp_user_timeout(int newval, void *extra);
+extern void assign_tcp_user_timeout(int newval, void *extra, bool *pending);
 extern const char *show_tcp_user_timeout(void);
 extern bool check_temp_buffers(int *newval, void **extra, GucSource source);
 extern bool check_temp_tablespaces(char **newval, void **extra,
@@ -163,7 +163,7 @@ extern bool check_transaction_buffers(int *newval, void **extra, GucSource sourc
 extern bool check_transaction_deferrable(bool *newval, void **extra, GucSource source);
 extern bool check_transaction_isolation(int *newval, void **extra, GucSource source);
 extern bool check_transaction_read_only(bool *newval, void **extra, GucSource source);
-extern void assign_transaction_timeout(int newval, void *extra);
+extern void assign_transaction_timeout(int newval, void *extra, bool *pending);
 extern const char *show_unix_socket_permissions(void);
 extern bool check_wal_buffers(int *newval, void **extra, GucSource source);
 extern bool check_wal_consistency_checking(char **newval, void **extra,

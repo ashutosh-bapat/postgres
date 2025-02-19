@@ -156,7 +156,7 @@ check_max_stack_depth(int *newval, void **extra, GucSource source)
 
 /* GUC assign hook for max_stack_depth */
 void
-assign_max_stack_depth(int newval, void *extra)
+assign_max_stack_depth(int newval, void *extra, bool *pending)
 {
 	ssize_t		newval_bytes = newval * (ssize_t) 1024;
 
