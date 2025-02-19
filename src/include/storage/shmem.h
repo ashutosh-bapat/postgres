@@ -29,15 +29,27 @@
 extern PGDLLIMPORT slock_t *ShmemLock;
 struct PGShmemHeader;			/* avoid including storage/pg_shmem.h here */
 extern void InitShmemAccess(struct PGShmemHeader *seghdr);
+extern void InitShmemAccessInSegment(struct PGShmemHeader *seghdr,
+									 int shmem_segment);
 extern void InitShmemAllocation(void);
+extern void InitShmemAllocationInSegment(int shmem_segment);
 extern void *ShmemAlloc(Size size);
+extern void *ShmemAllocInSegment(Size size, int shmem_segment);
 extern void *ShmemAllocNoError(Size size);
 extern void *ShmemAllocUnlocked(Size size);
+extern void *ShmemAllocUnlockedInSegment(Size size, int shmem_segment);
 extern bool ShmemAddrIsValid(const void *addr);
+extern bool ShmemAddrIsValidInSegment(const void *addr, int shmem_segment);
 extern void InitShmemIndex(void);
+extern void InitVariableShmemIndex(void);
 extern HTAB *ShmemInitHash(const char *name, long init_size, long max_size,
 						   HASHCTL *infoP, int hash_flags);
+extern HTAB *ShmemInitHashInSegment(const char *name, long init_size,
+									long max_size, HASHCTL *infoP,
+									int hash_flags, int shmem_segment);
 extern void *ShmemInitStruct(const char *name, Size size, bool *foundPtr);
+extern void *ShmemInitStructInSegment(const char *name, Size size,
+									  bool *foundPtr, int shmem_segment);
 extern Size add_size(Size s1, Size s2);
 extern Size mul_size(Size s1, Size s2);
 

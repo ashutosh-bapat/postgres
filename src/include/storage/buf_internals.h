@@ -23,6 +23,7 @@
 #include "storage/lwlock.h"
 #include "storage/procnumber.h"
 #include "storage/shmem.h"
+#include "storage/pg_shmem.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "utils/relcache.h"

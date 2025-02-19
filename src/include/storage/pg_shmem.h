@@ -25,6 +25,7 @@
 #define PG_SHMEM_H
 
 #include "storage/dsm_impl.h"
+#include "storage/spin.h"
 
 typedef struct PGShmemHeader	/* standard header for all Postgres shmem */
 {
@@ -40,6 +41,20 @@ typedef struct PGShmemHeader	/* standard header for all Postgres shmem */
 	ino_t		inode;			/* inode number of data directory */
 #endif
 } PGShmemHeader;
+
+typedef struct ShmemSegment
+{
+	PGShmemHeader *ShmemSegHdr; 	/* shared mem segment header */
+	void *ShmemBase; 				/* start address of shared memory */
+	void *ShmemEnd; 				/* end+1 address of shared memory */
+	slock_t    *ShmemLock; 			/* spinlock for shared memory and LWLock
+									 * allocation */
+} ShmemSegment;
+
+/* Number of available segments for anonymous memory mappings */
+#define ANON_MAPPINGS 1
+
+extern PGDLLIMPORT ShmemSegment Segments[ANON_MAPPINGS];
 
 /* GUC variables */
 extern PGDLLIMPORT int shared_memory_type;
@@ -89,5 +104,8 @@ extern PGShmemHeader *PGSharedMemoryCreate(Size size,
 extern bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2);
 extern void PGSharedMemoryDetach(void);
 extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags);
+
+/* The main segment, contains everything except buffer blocks and related data. */
+#define MAIN_SHMEM_SEGMENT 0
 
 #endif							/* PG_SHMEM_H */

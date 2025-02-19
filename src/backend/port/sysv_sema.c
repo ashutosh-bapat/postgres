@@ -313,7 +313,7 @@ PGSemaphoreShmemSize(int maxSemas)
  * have clobbered.)
  */
 void
-PGReserveSemaphores(int maxSemas)
+PGReserveSemaphores(int maxSemas, int shmem_segment)
 {
 	struct stat statbuf;
 
@@ -334,7 +334,7 @@ PGReserveSemaphores(int maxSemas)
 	 * ShmemAlloc() won't be ready yet.
 	 */
 	sharedSemas = (PGSemaphore)
-		ShmemAllocUnlocked(PGSemaphoreShmemSize(maxSemas));
+		ShmemAllocUnlockedInSegment(PGSemaphoreShmemSize(maxSemas), shmem_segment);
 	numSharedSemas = 0;
 	maxSharedSemas = maxSemas;
 

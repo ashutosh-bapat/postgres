@@ -75,19 +75,19 @@
 #include "utils/builtins.h"
 
 static void *ShmemAllocRaw(Size size, Size *allocated_size);
+static void *ShmemAllocRawInSegment(Size size, Size *allocated_size,
+								 int shmem_segment);
 
 /* shared memory global variables */
 
-static PGShmemHeader *ShmemSegHdr;	/* shared mem segment header */
+ShmemSegment Segments[ANON_MAPPINGS];
 
-static void *ShmemBase;			/* start address of shared memory */
-
-static void *ShmemEnd;			/* end+1 address of shared memory */
-
-slock_t    *ShmemLock;			/* spinlock for shared memory and LWLock
-								 * allocation */
-
-static HTAB *ShmemIndex = NULL; /* primary index hashtable for shmem */
+/*
+ * Primary index hashtable for shmem, for simplicity we use a single for all
+ * shared memory segments. There can be performance consequences of that, and
+ * an alternative option would be to have one index per shared memory segments.
+ */
+static HTAB *ShmemIndex = NULL;
 
 
 /*
@@ -96,9 +96,17 @@ static HTAB *ShmemIndex = NULL; /* primary index hashtable for shmem */
 void
 InitShmemAccess(PGShmemHeader *seghdr)
 {
-	ShmemSegHdr = seghdr;
-	ShmemBase = seghdr;
-	ShmemEnd = (char *) ShmemBase + seghdr->totalsize;
+	InitShmemAccessInSegment(seghdr, MAIN_SHMEM_SEGMENT);
+}
+
+void
+InitShmemAccessInSegment(PGShmemHeader *seghdr, int shmem_segment)
+{
+	PGShmemHeader *shmhdr = (PGShmemHeader *) seghdr;
+	ShmemSegment *seg = &Segments[shmem_segment];
+	seg->ShmemSegHdr = shmhdr;
+	seg->ShmemBase = (void *) shmhdr;
+	seg->ShmemEnd = (char *) seg->ShmemBase + shmhdr->totalsize;
 }
 
 /*
@@ -109,7 +117,13 @@ InitShmemAccess(PGShmemHeader *seghdr)
 void
 InitShmemAllocation(void)
 {
-	PGShmemHeader *shmhdr = ShmemSegHdr;
+	InitShmemAllocationInSegment(MAIN_SHMEM_SEGMENT);
+}
+
+void
+InitShmemAllocationInSegment(int shmem_segment)
+{
+	PGShmemHeader *shmhdr = Segments[shmem_segment].ShmemSegHdr;
 	char	   *aligned;
 
 	Assert(shmhdr != NULL);
@@ -118,9 +132,9 @@ InitShmemAllocation(void)
 	 * Initialize the spinlock used by ShmemAlloc.  We must use
 	 * ShmemAllocUnlocked, since obviously ShmemAlloc can't be called yet.
 	 */
-	ShmemLock = (slock_t *) ShmemAllocUnlocked(sizeof(slock_t));
+	Segments[shmem_segment].ShmemLock = (slock_t *) ShmemAllocUnlockedInSegment(sizeof(slock_t), shmem_segment);
 
-	SpinLockInit(ShmemLock);
+	SpinLockInit(Segments[shmem_segment].ShmemLock);
 
 	/*
 	 * Allocations after this point should go through ShmemAlloc, which
@@ -146,10 +160,16 @@ InitShmemAllocation(void)
 void *
 ShmemAlloc(Size size)
 {
+	return ShmemAllocInSegment(size, MAIN_SHMEM_SEGMENT);
+}
+
+void *
+ShmemAllocInSegment(Size size, int shmem_segment)
+{
 	void	   *newSpace;
 	Size		allocated_size;
 
-	newSpace = ShmemAllocRaw(size, &allocated_size);
+	newSpace = ShmemAllocRawInSegment(size, &allocated_size, shmem_segment);
 	if (!newSpace)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
@@ -180,6 +200,12 @@ ShmemAllocNoError(Size size)
 static void *
 ShmemAllocRaw(Size size, Size *allocated_size)
 {
+	return ShmemAllocRawInSegment(size, allocated_size, MAIN_SHMEM_SEGMENT);
+}
+
+static void *
+ShmemAllocRawInSegment(Size size, Size *allocated_size, int shmem_segment)
+{
 	Size		newStart;
 	Size		newFree;
 	void	   *newSpace;
@@ -198,22 +224,22 @@ ShmemAllocRaw(Size size, Size *allocated_size)
 	size = CACHELINEALIGN(size);
 	*allocated_size = size;
 
-	Assert(ShmemSegHdr != NULL);
+	Assert(Segments[shmem_segment].ShmemSegHdr != NULL);
 
-	SpinLockAcquire(ShmemLock);
+	SpinLockAcquire(Segments[shmem_segment].ShmemLock);
 
-	newStart = ShmemSegHdr->freeoffset;
+	newStart = Segments[shmem_segment].ShmemSegHdr->freeoffset;
 
 	newFree = newStart + size;
-	if (newFree <= ShmemSegHdr->totalsize)
+	if (newFree <= Segments[shmem_segment].ShmemSegHdr->totalsize)
 	{
-		newSpace = (char *) ShmemBase + newStart;
-		ShmemSegHdr->freeoffset = newFree;
+		newSpace = (char *) Segments[shmem_segment].ShmemBase + newStart;
+		Segments[shmem_segment].ShmemSegHdr->freeoffset = newFree;
 	}
 	else
 		newSpace = NULL;
 
-	SpinLockRelease(ShmemLock);
+	SpinLockRelease(Segments[shmem_segment].ShmemLock);
 
 	/* note this assert is okay with newSpace == NULL */
 	Assert(newSpace == (void *) CACHELINEALIGN(newSpace));
@@ -232,6 +258,12 @@ ShmemAllocRaw(Size size, Size *allocated_size)
 void *
 ShmemAllocUnlocked(Size size)
 {
+	return ShmemAllocUnlockedInSegment(size, MAIN_SHMEM_SEGMENT);
+}
+
+void *
+ShmemAllocUnlockedInSegment(Size size, int shmem_segment)
+{
 	Size		newStart;
 	Size		newFree;
 	void	   *newSpace;
@@ -241,19 +273,19 @@ ShmemAllocUnlocked(Size size)
 	 */
 	size = MAXALIGN(size);
 
-	Assert(ShmemSegHdr != NULL);
+	Assert(Segments[shmem_segment].ShmemSegHdr != NULL);
 
-	newStart = ShmemSegHdr->freeoffset;
+	newStart = Segments[shmem_segment].ShmemSegHdr->freeoffset;
 
 	newFree = newStart + size;
-	if (newFree > ShmemSegHdr->totalsize)
+	if (newFree > Segments[shmem_segment].ShmemSegHdr->totalsize)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of shared memory (%zu bytes requested)",
 						size)));
-	ShmemSegHdr->freeoffset = newFree;
+	Segments[shmem_segment].ShmemSegHdr->freeoffset = newFree;
 
-	newSpace = (char *) ShmemBase + newStart;
+	newSpace = (char *) Segments[shmem_segment].ShmemBase + newStart;
 
 	Assert(newSpace == (void *) MAXALIGN(newSpace));
 
@@ -268,7 +300,13 @@ ShmemAllocUnlocked(Size size)
 bool
 ShmemAddrIsValid(const void *addr)
 {
-	return (addr >= ShmemBase) && (addr < ShmemEnd);
+	return ShmemAddrIsValidInSegment(addr, MAIN_SHMEM_SEGMENT);
+}
+
+bool
+ShmemAddrIsValidInSegment(const void *addr, int shmem_segment)
+{
+	return (addr >= Segments[shmem_segment].ShmemBase) && (addr < Segments[shmem_segment].ShmemEnd);
 }
 
 /*
@@ -330,6 +368,18 @@ ShmemInitHash(const char *name,		/* table string name for shmem index */
 			  HASHCTL *infoP,	/* info about key and bucket size */
 			  int hash_flags)	/* info about infoP */
 {
+	return ShmemInitHashInSegment(name, init_size, max_size, infoP, hash_flags,
+							   MAIN_SHMEM_SEGMENT);
+}
+
+HTAB *
+ShmemInitHashInSegment(const char *name,		/* table string name for shmem index */
+			  long init_size,		/* initial table size */
+			  long max_size,		/* max size of the table */
+			  HASHCTL *infoP,		/* info about key and bucket size */
+			  int hash_flags,		/* info about infoP */
+			  int shmem_segment) 	/* in which segment to keep the table */
+{
 	bool		found;
 	void	   *location;
 
@@ -345,9 +395,9 @@ ShmemInitHash(const char *name,		/* table string name for shmem index */
 	hash_flags |= HASH_SHARED_MEM | HASH_ALLOC | HASH_DIRSIZE;
 
 	/* look it up in the shmem index */
-	location = ShmemInitStruct(name,
+	location = ShmemInitStructInSegment(name,
 							   hash_get_shared_size(infoP, hash_flags),
-							   &found);
+							   &found, shmem_segment);
 
 	/*
 	 * if it already exists, attach to it rather than allocate and initialize
@@ -381,6 +431,13 @@ ShmemInitHash(const char *name,		/* table string name for shmem index */
 void *
 ShmemInitStruct(const char *name, Size size, bool *foundPtr)
 {
+	return ShmemInitStructInSegment(name, size, foundPtr, MAIN_SHMEM_SEGMENT);
+}
+
+void *
+ShmemInitStructInSegment(const char *name, Size size, bool *foundPtr,
+					  int shmem_segment)
+{
 	ShmemIndexEnt *result;
 	void	   *structPtr;
 
@@ -388,7 +445,7 @@ ShmemInitStruct(const char *name, Size size, bool *foundPtr)
 
 	if (!ShmemIndex)
 	{
-		PGShmemHeader *shmemseghdr = ShmemSegHdr;
+		PGShmemHeader *shmemseghdr = Segments[shmem_segment].ShmemSegHdr;
 
 		/* Must be trying to create/attach to ShmemIndex itself */
 		Assert(strcmp(name, "ShmemIndex") == 0);
@@ -411,7 +468,7 @@ ShmemInitStruct(const char *name, Size size, bool *foundPtr)
 			 * process can be accessing shared memory yet.
 			 */
 			Assert(shmemseghdr->index == NULL);
-			structPtr = ShmemAlloc(size);
+			structPtr = ShmemAllocInSegment(size, shmem_segment);
 			shmemseghdr->index = structPtr;
 			*foundPtr = false;
 		}
@@ -428,8 +485,8 @@ ShmemInitStruct(const char *name, Size size, bool *foundPtr)
 		LWLockRelease(ShmemIndexLock);
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
-				 errmsg("could not create ShmemIndex entry for data structure \"%s\"",
-						name)));
+				 errmsg("could not create ShmemIndex entry for data structure \"%s\" in segment %d",
+						name, shmem_segment)));
 	}
 
 	if (*foundPtr)
@@ -454,7 +511,7 @@ ShmemInitStruct(const char *name, Size size, bool *foundPtr)
 		Size		allocated_size;
 
 		/* It isn't in the table yet. allocate and initialize it */
-		structPtr = ShmemAllocRaw(size, &allocated_size);
+		structPtr = ShmemAllocRawInSegment(size, &allocated_size, shmem_segment);
 		if (structPtr == NULL)
 		{
 			/* out of memory; remove the failed ShmemIndex entry */
@@ -473,13 +530,12 @@ ShmemInitStruct(const char *name, Size size, bool *foundPtr)
 
 	LWLockRelease(ShmemIndexLock);
 
-	Assert(ShmemAddrIsValid(structPtr));
+	Assert(ShmemAddrIsValidInSegment(structPtr, shmem_segment));
 
 	Assert(structPtr == (void *) CACHELINEALIGN(structPtr));
 
 	return structPtr;
 }
-
 
 /*
  * Add two Size values, checking for overflow
@@ -537,10 +593,11 @@ pg_get_shmem_allocations(PG_FUNCTION_ARGS)
 
 	/* output all allocated entries */
 	memset(nulls, 0, sizeof(nulls));
+	/* XXX: take all shared memory segments into account. */
 	while ((ent = (ShmemIndexEnt *) hash_seq_search(&hstat)) != NULL)
 	{
 		values[0] = CStringGetTextDatum(ent->key);
-		values[1] = Int64GetDatum((char *) ent->location - (char *) ShmemSegHdr);
+		values[1] = Int64GetDatum((char *) ent->location - (char *) Segments[MAIN_SHMEM_SEGMENT].ShmemSegHdr);
 		values[2] = Int64GetDatum(ent->size);
 		values[3] = Int64GetDatum(ent->allocated_size);
 		named_allocated += ent->allocated_size;
@@ -552,15 +609,15 @@ pg_get_shmem_allocations(PG_FUNCTION_ARGS)
 	/* output shared memory allocated but not counted via the shmem index */
 	values[0] = CStringGetTextDatum("<anonymous>");
 	nulls[1] = true;
-	values[2] = Int64GetDatum(ShmemSegHdr->freeoffset - named_allocated);
+	values[2] = Int64GetDatum(Segments[MAIN_SHMEM_SEGMENT].ShmemSegHdr->freeoffset - named_allocated);
 	values[3] = values[2];
 	tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 
 	/* output as-of-yet unused shared memory */
 	nulls[0] = true;
-	values[1] = Int64GetDatum(ShmemSegHdr->freeoffset);
+	values[1] = Int64GetDatum(Segments[MAIN_SHMEM_SEGMENT].ShmemSegHdr->freeoffset);
 	nulls[1] = false;
-	values[2] = Int64GetDatum(ShmemSegHdr->totalsize - ShmemSegHdr->freeoffset);
+	values[2] = Int64GetDatum(Segments[MAIN_SHMEM_SEGMENT].ShmemSegHdr->totalsize - Segments[MAIN_SHMEM_SEGMENT].ShmemSegHdr->freeoffset);
 	values[3] = values[2];
 	tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 
