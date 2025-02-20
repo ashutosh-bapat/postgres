@@ -83,6 +83,9 @@ RequestAddinShmemSpace(Size size)
  *
  * If num_semaphores is not NULL, it will be set to the number of semaphores
  * required.
+ *
+ * XXX: Calculation for non main shared memory segments are incorrect, it
+ * includes more than needed for buffers only.
  */
 Size
 CalculateShmemSize(int *num_semaphores, int shmem_segment)
@@ -148,6 +151,14 @@ CalculateShmemSize(int *num_semaphores, int shmem_segment)
 	size = add_size(size, WaitEventCustomShmemSize());
 	size = add_size(size, InjectionPointShmemSize());
 	size = add_size(size, SlotSyncShmemSize());
+
+	/*
+	 * XXX: For some reason slightly more memory is needed for larger
+	 * shared_buffers, but this size is enough for any large value I've tested
+	 * with. Is it a mistake in how slots are split, or there was a hidden
+	 * inconsistency in shmem calculation?
+	 */
+	size = add_size(size, 1024 * 1024 * 100);
 
 	/* include additional requested shmem from preload libraries */
 	size = add_size(size, total_addin_request);

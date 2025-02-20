@@ -298,6 +298,7 @@ extern bool EvictUnpinnedBuffer(Buffer buf);
 /* in buf_init.c */
 extern void BufferManagerShmemInit(void);
 extern Size BufferManagerShmemSize(int);
+extern void ResizeBufferPool(int, bool);
 
 /* in localbuf.c */
 extern void AtProcExit_LocalBuffers(void);

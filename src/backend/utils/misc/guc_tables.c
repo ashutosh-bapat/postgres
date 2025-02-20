@@ -2341,14 +2341,14 @@ struct config_int ConfigureNamesInt[] =
 	 * checking for overflow, so we mustn't allow more than INT_MAX / 2.
 	 */
 	{
-		{"shared_buffers", PGC_POSTMASTER, RESOURCES_MEM,
+		{"shared_buffers", PGC_SIGHUP, RESOURCES_MEM,
 			gettext_noop("Sets the number of shared memory buffers used by the server."),
 			NULL,
 			GUC_UNIT_BLOCKS
 		},
 		&NBuffers,
 		16384, 16, INT_MAX / 2,
-		NULL, NULL, NULL
+		NULL, assign_shared_buffers, NULL
 	},
 
 	{

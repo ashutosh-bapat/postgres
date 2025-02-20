@@ -418,6 +418,7 @@ static void process_pm_pmsignal(void);
 static void process_pm_child_exit(void);
 static void process_pm_reload_request(void);
 static void process_pm_shutdown_request(void);
+static void process_pm_shmem_resize(void);
 static void dummy_handler(SIGNAL_ARGS);
 static void CleanupBackend(PMChild *bp, int exitstatus);
 static void HandleChildCrash(int pid, int exitstatus, const char *procname);
@@ -1680,6 +1681,9 @@ ServerLoop(void)
 			if (pending_pm_pmsignal)
 				process_pm_pmsignal();
 
+			if (pending_pm_shmem_resize)
+				process_pm_shmem_resize();
+
 			if (events[i].events & WL_SOCKET_ACCEPT)
 			{
 				ClientSocket s;
@@ -2024,6 +2028,17 @@ process_pm_reload_request(void)
 		write_nondefault_variables(PGC_SIGHUP);
 #endif
 	}
+}
+
+static void
+process_pm_shmem_resize(void)
+{
+	/*
+	 * Failure to resize is considered to be fatal and will not be
+	 * retried, which means we can disable pending flag right here.
+	 */
+	pending_pm_shmem_resize = false;
+	CoordinateShmemResize();
 }
 
 /*

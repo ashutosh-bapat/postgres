@@ -24,6 +24,7 @@
 #ifndef PG_SHMEM_H
 #define PG_SHMEM_H
 
+#include "storage/barrier.h"
 #include "storage/dsm_impl.h"
 #include "storage/spin.h"
 
@@ -55,6 +56,23 @@ typedef struct ShmemSegment
 #define ANON_MAPPINGS 6
 
 extern PGDLLIMPORT ShmemSegment Segments[ANON_MAPPINGS];
+
+/*
+ * ShmemControl is shared between backends and helps to coordinate shared
+ * memory resize.
+ */
+typedef struct
+{
+	pg_atomic_uint32 	NSharedBuffers;
+	Barrier 			Barrier;
+} ShmemControl;
+
+extern PGDLLIMPORT ShmemControl *ShmemCtrl;
+
+/* The phases for shared memory resizing, used by for ProcSignal barrier. */
+#define SHMEM_RESIZE_REQUESTED			0
+#define SHMEM_RESIZE_START				1
+#define SHMEM_RESIZE_DONE				2
 
 /* GUC variables */
 extern PGDLLIMPORT int shared_memory_type;
@@ -104,6 +122,12 @@ extern PGShmemHeader *PGSharedMemoryCreate(Size size,
 extern bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2);
 extern void PGSharedMemoryDetach(void);
 extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags);
+
+bool ProcessBarrierShmemResize(Barrier *barrier);
+void assign_shared_buffers(int newval, void *extra, bool *pending);
+void AdjustShmemSize(void);
+extern void WaitOnShmemBarrier(int phase);
+extern void ResetShmemBarrier(void);
 
 /*
  * To be able to dynamically resize largest parts of the data stored in shared

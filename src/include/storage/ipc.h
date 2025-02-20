@@ -64,6 +64,7 @@ typedef void (*shmem_startup_hook_type) (void);
 /* ipc.c */
 extern PGDLLIMPORT bool proc_exit_inprogress;
 extern PGDLLIMPORT bool shmem_exit_inprogress;
+extern PGDLLIMPORT volatile bool pending_pm_shmem_resize;
 
 extern void proc_exit(int code) pg_attribute_noreturn();
 extern void shmem_exit(int code);
@@ -83,5 +84,6 @@ extern void CreateSharedMemoryAndSemaphores(void);
 extern void AttachSharedMemoryStructs(void);
 #endif
 extern void InitializeShmemGUCs(void);
+extern void CoordinateShmemResize(void);
 
 #endif							/* IPC_H */

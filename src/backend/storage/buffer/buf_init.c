@@ -23,6 +23,41 @@ ConditionVariableMinimallyPadded *BufferIOCVArray;
 WritebackContext BackendWritebackContext;
 CkptSortItem *CkptBufferIds;
 
+/*
+ * Currently broadcasted value of NBuffers in shared memory.
+ *
+ * Most of the time this value is going to be equal to NBuffers. But if
+ * postmaster is resizing shared memory and a new backend was created
+ * at the same time, there is a possibility for the new backend to inherit the
+ * old NBuffers value, but miss the resize signal if ProcSignal infrastructure
+ * was not initialized yet. Consider this situation:
+ *
+ *     Postmaster ------> New Backend
+ *         |                   |
+ *         |                Launch
+ *         |                   |
+ *         |             Inherit NBuffers
+ *         |                   |
+ *     Resize NBuffers         |
+ *         |                   |
+ *     Emit Barrier            |
+ *         |            Init ProcSignal
+ *         |                   |
+ *     Finish resize           |
+ *         |                   |
+ *     New NBuffers       Old NBuffers
+ *
+ * In this case the backend is not yet ready to receive a signal from
+ * EmitProcSignalBarrier, and will be ignored. The same happens if ProcSignal
+ * is initialized even later, after the resizing was finished.
+ *
+ * To address resulting inconsistency, postmaster broadcasts the current
+ * NBuffers value via shared memory. Every new backend has to verify this value
+ * before it will access the buffer pool: if it differs from its own value,
+ * this indicates a shared memory resize has happened and the backend has to
+ * first synchronize with rest of the pack.
+ */
+ShmemControl *ShmemCtrl = NULL;
 
 /*
  * Data Structures:
@@ -72,7 +107,19 @@ BufferManagerShmemInit(void)
 	bool		foundBufs,
 				foundDescs,
 				foundIOCV,
-				foundBufCkpt;
+				foundBufCkpt,
+				foundShmemCtrl;
+
+	ShmemCtrl = (ShmemControl *)
+		ShmemInitStruct("Shmem Control", sizeof(ShmemControl),
+						&foundShmemCtrl);
+
+	if (!foundShmemCtrl)
+	{
+		/* Initialize with the currently known value */
+		pg_atomic_init_u32(&ShmemCtrl->NSharedBuffers, NBuffers);
+		BarrierInit(&ShmemCtrl->Barrier, 0);
+	}
 
 	/* Align descriptors to a cacheline boundary. */
 	BufferDescriptors = (BufferDescPadded *)
@@ -144,6 +191,109 @@ BufferManagerShmemInit(void)
 		/* Correct last entry of linked list */
 		GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 	}
+
+	/* Init other shared buffer-management stuff */
+	StrategyInitialize(!foundDescs);
+
+	/* Initialize per-backend file flush context */
+	WritebackContextInit(&BackendWritebackContext,
+						 &backend_flush_after);
+}
+
+/*
+ * Reinitialize shared memory structures, which size depends on NBuffers. It's
+ * similar to InitBufferPool, but applied only to the buffers in the range
+ * between NBuffersOld and NBuffers.
+ *
+ * NBuffersOld tells what was the original value of NBuffersOld. It will be
+ * used to identify new and not yet initialized buffers.
+ *
+ * initNew flag indicates that the caller wants new buffers to be initialized.
+ * No locks are taking in this function, it is the caller responsibility to
+ * make sure only one backend can work with new buffers.
+ */
+void
+ResizeBufferPool(int NBuffersOld, bool initNew)
+{
+	bool		foundBufs,
+				foundDescs,
+				foundIOCV,
+				foundBufCkpt;
+	int			i;
+	elog(DEBUG1, "Resizing buffer pool from %d to %d", NBuffersOld, NBuffers);
+
+	/* XXX: Only increasing of shared_buffers is supported in this function */
+	if(NBuffersOld > NBuffers)
+		return;
+
+	/* Align descriptors to a cacheline boundary. */
+	BufferDescriptors = (BufferDescPadded *)
+		ShmemInitStructInSegment("Buffer Descriptors",
+						NBuffers * sizeof(BufferDescPadded),
+						&foundDescs, BUFFER_DESCRIPTORS_SHMEM_SEGMENT);
+
+	/* Align condition variables to cacheline boundary. */
+	BufferIOCVArray = (ConditionVariableMinimallyPadded *)
+		ShmemInitStructInSegment("Buffer IO Condition Variables",
+						NBuffers * sizeof(ConditionVariableMinimallyPadded),
+						&foundIOCV, BUFFER_IOCV_SHMEM_SEGMENT);
+
+	/*
+	 * The array used to sort to-be-checkpointed buffer ids is located in
+	 * shared memory, to avoid having to allocate significant amounts of
+	 * memory at runtime. As that'd be in the middle of a checkpoint, or when
+	 * the checkpointer is restarted, memory allocation failures would be
+	 * painful.
+	 */
+	CkptBufferIds = (CkptSortItem *)
+		ShmemInitStructInSegment("Checkpoint BufferIds",
+						NBuffers * sizeof(CkptSortItem), &foundBufCkpt,
+						CHECKPOINT_BUFFERS_SHMEM_SEGMENT);
+
+	/* Align buffer pool on IO page size boundary. */
+	BufferBlocks = (char *)
+		TYPEALIGN(PG_IO_ALIGN_SIZE,
+				  ShmemInitStructInSegment("Buffer Blocks",
+								  NBuffers * (Size) BLCKSZ + PG_IO_ALIGN_SIZE,
+								  &foundBufs, BUFFERS_SHMEM_SEGMENT));
+
+	/*
+	 * It's enough to only resize shmem structures, if some other backend will
+	 * do initialization of new buffers for us.
+	 */
+	if (!initNew)
+		return;
+
+	elog(DEBUG1, "Initialize new buffers");
+
+	/*
+	 * Initialize the headers for new buffers.
+	 */
+	for (i = NBuffersOld; i < NBuffers; i++)
+	{
+		BufferDesc *buf = GetBufferDescriptor(i);
+
+		ClearBufferTag(&buf->tag);
+
+		pg_atomic_init_u32(&buf->state, 0);
+		buf->wait_backend_pgprocno = INVALID_PROC_NUMBER;
+
+		buf->buf_id = i;
+
+		/*
+		 * Initially link all the buffers together as unused. Subsequent
+		 * management of this list is done by freelist.c.
+		 */
+		buf->freeNext = i + 1;
+
+		LWLockInitialize(BufferDescriptorGetContentLock(buf),
+						 LWTRANCHE_BUFFER_CONTENT);
+
+		ConditionVariableInit(BufferDescriptorGetIOCV(buf));
+	}
+
+	/* Correct last entry of linked list */
+	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
 	/* Init other shared buffer-management stuff */
 	StrategyInitialize(!foundDescs);
