@@ -105,6 +105,7 @@ typedef struct AnonymousMapping
 	void *shmem; 				/* Pointer to the start of the mapped memory */
 	void *seg_addr; 			/* SysV shared memory for the header */
 	unsigned long seg_id; 		/* IPC key */
+	int segment_fd; 			/* fd for the backing anon file */
 } AnonymousMapping;
 
 static AnonymousMapping Mappings[ANON_MAPPINGS];
@@ -125,7 +126,7 @@ static int next_free_segment = 0;
  * 00400000-00490000         /path/bin/postgres
  * ...
  * 012d9000-0133e000         [heap]
- * 7f443a800000-7f470a800000 /dev/zero (deleted)
+ * 7f443a800000-7f470a800000 /memfd:main (deleted)
  * 7f470a800000-7f471831d000 /usr/lib/locale/locale-archive
  * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
  * ...
@@ -152,9 +153,9 @@ static int next_free_segment = 0;
  * The result would look like this:
  *
  * 012d9000-0133e000         [heap]
- * 7f4426f54000-7f442e010000 /dev/zero (deleted)
+ * 7f4426f54000-7f442e010000 /memfd:main (deleted)
  * [...free space...]
- * 7f443a800000-7f444196c000 /dev/zero (deleted)
+ * 7f443a800000-7f444196c000 /memfd:buffers (deleted)
  * [...free space...]
  * 7f470a800000-7f471831d000 /usr/lib/locale/locale-archive
  * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
@@ -717,6 +718,18 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 	void	   *ptr = MAP_FAILED;
 	int			mmap_errno = 0;
 
+	/*
+	 * Prepare an anonymous file backing the segment. Its size will be
+	 * specified later via ftruncate.
+	 *
+	 * The file behaves like a regular file, but lives in memory. Once all
+	 * references to the file are dropped,  it is automatically released.
+	 * Anonymous memory is used for all backing pages of the file, thus it has
+	 * the same semantics as anonymous memory allocations using mmap with the
+	 * MAP_ANONYMOUS flag.
+	 */
+	mapping->segment_fd = memfd_create(MappingName(mapping->shmem_segment), 0);
+
 #ifndef MAP_HUGETLB
 	/* PGSharedMemoryCreate should have dealt with this case */
 	Assert(huge_pages != HUGE_PAGES_ON);
@@ -734,8 +747,13 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 		if (allocsize % hugepagesize != 0)
 			allocsize += hugepagesize - (allocsize % hugepagesize);
 
+		/*
+		 * Do not use an anonymous file here yet. When adding it, do not forget
+		 * to use ftruncate and flags MFD_HUGETLB & MFD_HUGE_2MB/MFD_HUGE_1GB
+		 * in memfd_create.
+		 */
 		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
-				   PG_MMAP_FLAGS | mmap_flags, -1, 0);
+				   PG_MMAP_FLAGS | MAP_ANONYMOUS | mmap_flags, -1, 0);
 		mmap_errno = errno;
 		if (huge_pages == HUGE_PAGES_TRY && ptr == MAP_FAILED)
 		{
@@ -771,7 +789,8 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 		 * - First create the temporary probe mapping of a fixed size and let
 		 *   kernel to place it at address of its choice. By the virtue of the
 		 *   probe mapping size we expect it to be located at the lowest
-		 *   possible address, expecting some non mapped space above.
+		 *   possible address, expecting some non mapped space above. The probe
+		 *   is does not need to be  backed by an anonymous file.
 		 *
 		 * - Unmap the probe mapping, remember the address.
 		 *
@@ -786,7 +805,7 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 		 *   without a restart.
 		 */
 		probe = mmap(NULL, PROBE_MAPPING_SIZE, PROT_READ | PROT_WRITE,
-				   PG_MMAP_FLAGS, -1, 0);
+				   PG_MMAP_FLAGS | MAP_ANONYMOUS, -1, 0);
 
 		if (probe == MAP_FAILED)
 		{
@@ -802,8 +821,14 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 
 			munmap(probe, PROBE_MAPPING_SIZE);
 
+			/*
+			 * Specify the segment file size using allocsize, which contains
+			 * potentially modified size.
+			 */
+			ftruncate(mapping->segment_fd, allocsize);
+
 			ptr = mmap(probe - offset, allocsize, PROT_READ | PROT_WRITE,
-					   PG_MMAP_FLAGS | MAP_FIXED_NOREPLACE, -1, 0);
+					   PG_MMAP_FLAGS | MAP_FIXED_NOREPLACE, mapping->segment_fd, 0);
 			mmap_errno = errno;
 			if (ptr == MAP_FAILED)
 			{
@@ -822,8 +847,11 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 		 */
 		allocsize = mapping->shmem_size;
 
+		/* Specify the segment file size using allocsize. */
+		ftruncate(mapping->segment_fd, allocsize);
+
 		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
-						   PG_MMAP_FLAGS, -1, 0);
+						   PG_MMAP_FLAGS, mapping->segment_fd, 0);
 		mmap_errno = errno;
 	}
 
@@ -917,6 +945,8 @@ AnonymousShmemResize(void)
 		if (m->shmem_size == new_size)
 			continue;
 
+		/* Resize the backing anon file. */
+		ftruncate(m->segment_fd, new_size);
 
 		/*
 		 * Fail hard if faced any issues. In theory we could try to handle this
