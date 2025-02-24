@@ -491,9 +491,9 @@ StrategyInitialize(bool init)
 	 * Get or create the shared strategy control block
 	 */
 	StrategyControl = (BufferStrategyControl *)
-		ShmemInitStruct("Buffer Strategy Status",
+		ShmemInitStructInSegment("Buffer Strategy Status",
 						sizeof(BufferStrategyControl),
-						&found);
+						&found, STRATEGY_SHMEM_SEGMENT);
 
 	if (!found)
 	{

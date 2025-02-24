@@ -149,8 +149,13 @@ static int next_free_segment = 0;
  * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
  * ...
  */
-Size SHMEM_EXTRA_SIZE_LIMIT[1] = {
-	0, 									/* MAIN_SHMEM_SLOT */
+Size SHMEM_EXTRA_SIZE_LIMIT[6] = {
+	0, 									/* MAIN_SHMEM_SEGMENT */
+	(Size) 1024 * 1024 * 1024 * 10, 	/* BUFFERS_SHMEM_SEGMENT */
+	(Size) 1024 * 1024 * 1024 * 1, 		/* BUFFER_DESCRIPTORS_SHMEM_SEGMENT */
+	(Size) 1024 * 1024 * 100, 			/* BUFFER_IOCV_SHMEM_SEGMENT */
+	(Size) 1024 * 1024 * 100, 			/* CHECKPOINT_BUFFERS_SHMEM_SEGMENT */
+	(Size) 1024 * 1024 * 100, 			/* STRATEGY_SHMEM_SEGMENT */
 };
 
 /* Remembers offset of the last mapping from the probe address */
@@ -179,6 +184,16 @@ MappingName(int shmem_segment)
 	{
 		case MAIN_SHMEM_SEGMENT:
 			return "main";
+		case BUFFERS_SHMEM_SEGMENT:
+			return "buffers";
+		case BUFFER_DESCRIPTORS_SHMEM_SEGMENT:
+			return "descriptors";
+		case BUFFER_IOCV_SHMEM_SEGMENT:
+			return "iocv";
+		case CHECKPOINT_BUFFERS_SHMEM_SEGMENT:
+			return "checkpoint";
+		case STRATEGY_SHMEM_SEGMENT:
+			return "strategy";
 		default:
 			return "unknown";
 	}

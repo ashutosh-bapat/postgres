@@ -52,7 +52,7 @@ typedef struct ShmemSegment
 } ShmemSegment;
 
 /* Number of available segments for anonymous memory mappings */
-#define ANON_MAPPINGS 1
+#define ANON_MAPPINGS 6
 
 extern PGDLLIMPORT ShmemSegment Segments[ANON_MAPPINGS];
 
@@ -105,7 +105,29 @@ extern bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2);
 extern void PGSharedMemoryDetach(void);
 extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags);
 
+/*
+ * To be able to dynamically resize largest parts of the data stored in shared
+ * memory, we split it into multiple shared memory mappings segments. Each
+ * segment contains only certain part of the data, which size depends on
+ * NBuffers.
+ */
+
 /* The main segment, contains everything except buffer blocks and related data. */
 #define MAIN_SHMEM_SEGMENT 0
+
+/* Buffer blocks */
+#define BUFFERS_SHMEM_SEGMENT 1
+
+/* Buffer descriptors */
+#define BUFFER_DESCRIPTORS_SHMEM_SEGMENT 2
+
+/* Condition variables for buffers */
+#define BUFFER_IOCV_SHMEM_SEGMENT 3
+
+/* Checkpoint BufferIds */
+#define CHECKPOINT_BUFFERS_SHMEM_SEGMENT 4
+
+/* Buffer strategy status */
+#define STRATEGY_SHMEM_SEGMENT 5
 
 #endif							/* PG_SHMEM_H */
