@@ -825,16 +825,20 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 			 * Specify the segment file size using allocsize, which contains
 			 * potentially modified size.
 			 */
-			ftruncate(mapping->segment_fd, allocsize);
+			if (ftruncate(mapping->segment_fd, allocsize) < 0)
+				ereport(FATAL,
+						(errcode(ERRCODE_SYSTEM_ERROR),
+						errmsg("could not set the size of file backing shared memory %p: %m",
+								mapping->shmem)));
 
-			ptr = mmap(probe - offset, allocsize, PROT_READ | PROT_WRITE,
+			ptr = mmap((void *)((char *) probe - offset), allocsize, PROT_READ | PROT_WRITE,
 					   PG_MMAP_FLAGS | MAP_FIXED_NOREPLACE, mapping->segment_fd, 0);
 			mmap_errno = errno;
 			if (ptr == MAP_FAILED)
 			{
 				DebugMappings();
 				elog(DEBUG1, "segment[%s]: mmap(%zu) at address %p failed: %m",
-					 MappingName(mapping->shmem_segment), allocsize, probe - offset);
+					 MappingName(mapping->shmem_segment), allocsize, ((void *) ((char *)probe - offset)));
 			}
 
 		}
@@ -848,7 +852,11 @@ CreateAnonymousSegment(AnonymousMapping *mapping)
 		allocsize = mapping->shmem_size;
 
 		/* Specify the segment file size using allocsize. */
-		ftruncate(mapping->segment_fd, allocsize);
+		if (ftruncate(mapping->segment_fd, allocsize) < 0)
+			ereport(FATAL,
+					(errcode(ERRCODE_SYSTEM_ERROR),
+					errmsg("could not set the size of file backing shared memory %p: %m",
+							mapping->shmem)));
 
 		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
 						   PG_MMAP_FLAGS, mapping->segment_fd, 0);
@@ -946,7 +954,11 @@ AnonymousShmemResize(void)
 			continue;
 
 		/* Resize the backing anon file. */
-		ftruncate(m->segment_fd, new_size);
+		if (ftruncate(m->segment_fd, new_size) < 0)
+			ereport(FATAL,
+					(errcode(ERRCODE_SYSTEM_ERROR),
+					errmsg("could not resize file backing shared memory %p: %m",
+							m->shmem)));
 
 		/*
 		 * Fail hard if faced any issues. In theory we could try to handle this
