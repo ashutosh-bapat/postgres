@@ -119,6 +119,7 @@ BufferManagerShmemInit(void)
 		/* Initialize with the currently known value */
 		pg_atomic_init_u32(&ShmemCtrl->NSharedBuffers, NBuffers);
 		BarrierInit(&ShmemCtrl->Barrier, 0);
+		ShmemCtrl->evictor_pid = 0;
 	}
 
 	/* Align descriptors to a cacheline boundary. */
@@ -227,10 +228,6 @@ ResizeBufferPool(int NBuffersOld, bool initNew)
 				foundBufCkpt;
 	int			i;
 	elog(DEBUG1, "Resizing buffer pool from %d to %d", NBuffersOld, NBuffers);
-
-	/* XXX: Only increasing of shared_buffers is supported in this function */
-	if(NBuffersOld > NBuffers)
-		return;
 
 	/* Align descriptors to a cacheline boundary. */
 	BufferDescriptors = (BufferDescPadded *)

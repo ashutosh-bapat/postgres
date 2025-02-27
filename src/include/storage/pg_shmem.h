@@ -68,6 +68,7 @@ extern PGDLLIMPORT ShmemSegment Segments[ANON_MAPPINGS];
 typedef struct
 {
 	pg_atomic_uint32 	NSharedBuffers;
+	pid_t				evictor_pid;
 	Barrier 			Barrier;
 } ShmemControl;
 
@@ -131,7 +132,7 @@ bool ProcessBarrierShmemResize(Barrier *barrier);
 void assign_shared_buffers(int newval, void *extra, bool *pending);
 void AdjustShmemSize(void);
 extern void WaitOnShmemBarrier(int phase);
-extern void ResetShmemBarrier(void);
+extern void ResetShmemCtrl(void);
 
 /*
  * To be able to dynamically resize largest parts of the data stored in shared
