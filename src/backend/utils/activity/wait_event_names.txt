@@ -156,6 +156,7 @@ REPLICATION_SLOT_DROP	"Waiting for a replication slot to become inactive so it c
 RESTORE_COMMAND	"Waiting for <xref linkend="guc-restore-command"/> to complete."
 SAFE_SNAPSHOT	"Waiting to obtain a valid snapshot for a <literal>READ ONLY DEFERRABLE</literal> transaction."
 SHMEM_RESIZE_START	"Waiting for other backends to start resizing shared memory."
+SHMEM_RESIZE_EVICT	"Waiting for other backends to finish buffer evication phase."
 SHMEM_RESIZE_DONE	"Waiting for other backends to finish resizing shared memory."
 SYNC_REP	"Waiting for confirmation from a remote server during synchronous replication."
 WAL_BUFFER_INIT	"Waiting on WAL buffer to be initialized."

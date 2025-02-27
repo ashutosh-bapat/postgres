@@ -1096,14 +1096,6 @@ AnonymousShmemResize(void)
 	 */
 	pending_pm_shmem_resize = false;
 
-	/*
-	 * XXX: Currently only increasing of shared_buffers is supported. For
-	 * decreasing something similar has to be done, but buffer blocks with
-	 * data have to be drained first.
-	 */
-	if(NBuffersOld > NBuffers)
-		return false;
-
 	for(int i = 0; i < next_free_segment; i++)
 	{
 		/* Note that CalculateShmemSize indirectly depends on NBuffers */
@@ -1201,8 +1193,6 @@ AnonymousShmemResize(void)
 				 * all the pointers are still valid, and we only need to update
 				 * structures size in the ShmemIndex once -- any other backend
 				 * will pick up this shared structure from the index.
-				 *
-				 * XXX: This is the right place for buffer eviction as well.
 				 */
 				BufferManagerShmemInit(NBuffersOld);
 
@@ -1221,6 +1211,51 @@ AnonymousShmemResize(void)
 		}
 
 	return true;
+}
+/*
+ * When shrinking shared buffers pool, evict the buffers which will not be part
+ * of the shrunk buffer pool.
+ */
+static bool
+EvictExtraBuffers()
+{
+	bool result = true;
+
+	/*
+	 * If the buffer being evicated is locked, this function will need to wait.
+	 * This function should not be called from a Postmaster since it can not wait on a lock.
+	 */
+	Assert(IsUnderPostmaster);
+
+	/*
+	 * Let only one backend perform eviction. We could split the work across all
+	 * the backends but that doesn't seem necessary. The first backend to acquire sets its own PID as the evictor PID so that other backends do not perform eviction. Any backend which can not take this lock already knows that some backend is evicting the buffers without looking at evictor_pid. All the backends which do not perform eviction still wait for this phase to finish and thus release lock before the next phase begins. Thus the same LWLock can be used to select a leader for each phase. TODO: This comment would better be placed at a place common to all phases.
+	 */
+	if (LWLockConditionalAcquire(ShmemResizeLock, LW_EXCLUSIVE))
+	{
+		if (ShmemCtrl->evictor_pid == 0)
+		{
+			ShmemCtrl->evictor_pid = MyProcPid;
+
+			/*
+			 * TODO: Before evicting any buffer, we should check whether any of the
+			 * buffers are pinned. If we find that a buffer is pinned after evicting
+			 * most of them, that will impact performance since all those evicted
+			 * buffers might need to be read again.
+			 */
+			for (Buffer b = NBuffers + 1; b <= NBuffersOld; b++)
+			{
+				if (!EvictUnpinnedBuffer(b))
+				{
+					elog(WARNING, "could not remove buffer %u, it is pinned", b);
+					result = false;
+				}
+			}
+		}
+		LWLockRelease(ShmemResizeLock);
+	}
+
+	return result;
 }
 
 /*
@@ -1266,6 +1301,22 @@ ProcessBarrierShmemResize(Barrier *barrier)
 	{
 		Assert(IsUnderPostmaster);
 		SendPostmasterSignal(PMSIGNAL_SHMEM_RESIZE);
+	}
+
+	/*
+	 * Evict extra buffers when shrinking shared buffers. We need to do this
+	 * while the memory for extra buffers is still mapped i.e. before remapping
+	 * the shared memory segments to a smaller memory area.
+	 */
+	if (NBuffersOld > NBuffers)
+	{
+		/*
+		 * TODO: If the buffer eviction fails for any reason, we should gracefully rollback the shared buffer resizing and try again. But the infrastructure to do so is not available right now. Hence just raise a FATAL so that the system restarts.
+		 */
+		if (!EvictExtraBuffers())
+			elog(FATAL, "buffer eviction failed");
+
+		BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_EVICT);
 	}
 
 	AnonymousShmemResize();
@@ -1769,5 +1820,6 @@ ShmemControlInit(void)
 
 		/* shmem_resizable should be initialized by now */
 		ShmemCtrl->Resizable = shmem_resizable;
+		ShmemCtrl->evictor_pid = 0;
 	}
 }

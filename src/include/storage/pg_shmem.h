@@ -68,6 +68,7 @@ extern PGDLLIMPORT ShmemSegment Segments[ANON_MAPPINGS];
 typedef struct
 {
 	pg_atomic_uint32 	NSharedBuffers;
+	pid_t				evictor_pid;
 	Barrier 			Barrier;
 	pg_atomic_uint64 	Generation;
 	bool                Resizable;
