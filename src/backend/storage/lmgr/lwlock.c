@@ -80,6 +80,8 @@
 #include "pg_trace.h"
 #include "pgstat.h"
 #include "port/pg_bitutils.h"
+#include "postmaster/postmaster.h"
+#include "storage/pg_shmem.h"
 #include "storage/proc.h"
 #include "storage/proclist.h"
 #include "storage/procnumber.h"
@@ -618,10 +620,15 @@ LWLockNewTrancheId(void)
 	int		   *LWLockCounter;
 
 	LWLockCounter = (int *) ((char *) MainLWLockArray - sizeof(int));
-	/* We use the ShmemLock spinlock to protect LWLockCounter */
-	SpinLockAcquire(ShmemLock);
+	/*
+	 * We use the ShmemLock spinlock to protect LWLockCounter.
+	 *
+	 * XXX: Looks like this is the only use of Segments outside of shmem.c,
+	 * it's maybe worth it to reshape this part to hide Segments structure.
+	 */
+	SpinLockAcquire(Segments[MAIN_SHMEM_SEGMENT].ShmemLock);
 	result = (*LWLockCounter)++;
-	SpinLockRelease(ShmemLock);
+	SpinLockRelease(Segments[MAIN_SHMEM_SEGMENT].ShmemLock);
 
 	return result;
 }

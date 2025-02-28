@@ -94,8 +94,19 @@ typedef enum
 unsigned long UsedShmemSegID = 0;
 void	   *UsedShmemSegAddr = NULL;
 
-static Size AnonymousShmemSize;
-static void *AnonymousShmem = NULL;
+typedef struct AnonymousMapping
+{
+	int shmem_segment;
+	Size shmem_size; 			/* Size of the mapping */
+	Pointer shmem; 				/* Pointer to the start of the mapped memory */
+	Pointer seg_addr; 			/* SysV shared memory for the header */
+	unsigned long seg_id; 		/* IPC key */
+} AnonymousMapping;
+
+static AnonymousMapping Mappings[ANON_MAPPINGS];
+
+/* Keeps track of used mapping segments */
+static int next_free_segment = 0;
 
 static void *InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size);
 static void IpcMemoryDetach(int status, Datum shmaddr);
@@ -104,6 +115,28 @@ static IpcMemoryState PGSharedMemoryAttach(IpcMemoryId shmId,
 										   void *attachAt,
 										   PGShmemHeader **addr);
 
+static const char*
+MappingName(int shmem_segment)
+{
+	switch (shmem_segment)
+	{
+		case MAIN_SHMEM_SEGMENT:
+			return "main";
+		default:
+			return "unknown";
+	}
+}
+
+static void
+DebugMappings()
+{
+	for(int i = 0; i < next_free_segment; i++)
+	{
+		AnonymousMapping m = Mappings[i];
+		elog(DEBUG1, "Mapping[%s]: addr %p, size %zu",
+			 MappingName(i), m.shmem, m.shmem_size);
+	}
+}
 
 /*
  *	InternalIpcMemoryCreate(memKey, size)
@@ -591,14 +624,13 @@ check_huge_page_size(int *newval, void **extra, GucSource source)
 /*
  * Creates an anonymous mmap()ed shared memory segment.
  *
- * Pass the requested size in *size.  This function will modify *size to the
- * actual size of the allocation, if it ends up allocating a segment that is
- * larger than requested.
+ * This function will modify mapping size to the actual size of the allocation,
+ * if it ends up allocating a segment that is larger than requested.
  */
-static void *
-CreateAnonymousSegment(Size *size)
+static void
+CreateAnonymousSegment(AnonymousMapping *mapping)
 {
-	Size		allocsize = *size;
+	Size		allocsize = mapping->shmem_size;
 	void	   *ptr = MAP_FAILED;
 	int			mmap_errno = 0;
 
@@ -623,8 +655,11 @@ CreateAnonymousSegment(Size *size)
 				   PG_MMAP_FLAGS | mmap_flags, -1, 0);
 		mmap_errno = errno;
 		if (huge_pages == HUGE_PAGES_TRY && ptr == MAP_FAILED)
-			elog(DEBUG1, "mmap(%zu) with MAP_HUGETLB failed, huge pages disabled: %m",
-				 allocsize);
+		{
+			DebugMappings();
+			elog(DEBUG1, "segment[%s]: mmap(%zu) with MAP_HUGETLB failed, huge pages disabled: %m",
+				 MappingName(mapping->shmem_segment), allocsize);
+		}
 	}
 #endif
 
@@ -642,7 +677,7 @@ CreateAnonymousSegment(Size *size)
 		 * Use the original size, not the rounded-up value, when falling back
 		 * to non-huge pages.
 		 */
-		allocsize = *size;
+		allocsize = mapping->shmem_size;
 		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
 				   PG_MMAP_FLAGS, -1, 0);
 		mmap_errno = errno;
@@ -651,8 +686,10 @@ CreateAnonymousSegment(Size *size)
 	if (ptr == MAP_FAILED)
 	{
 		errno = mmap_errno;
+		DebugMappings();
 		ereport(FATAL,
-				(errmsg("could not map anonymous shared memory: %m"),
+				(errmsg("segment[%s]: could not map anonymous shared memory: %m",
+						MappingName(mapping->shmem_segment)),
 				 (mmap_errno == ENOMEM) ?
 				 errhint("This error usually means that PostgreSQL's request "
 						 "for a shared memory segment exceeded available memory, "
@@ -663,8 +700,8 @@ CreateAnonymousSegment(Size *size)
 						 allocsize) : 0));
 	}
 
-	*size = allocsize;
-	return ptr;
+	mapping->shmem = ptr;
+	mapping->shmem_size = allocsize;
 }
 
 /*
@@ -674,13 +711,18 @@ CreateAnonymousSegment(Size *size)
 static void
 AnonymousShmemDetach(int status, Datum arg)
 {
-	/* Release anonymous shared memory block, if any. */
-	if (AnonymousShmem != NULL)
+	for(int i = 0; i < next_free_segment; i++)
 	{
-		if (munmap(AnonymousShmem, AnonymousShmemSize) < 0)
-			elog(LOG, "munmap(%p, %zu) failed: %m",
-				 AnonymousShmem, AnonymousShmemSize);
-		AnonymousShmem = NULL;
+		AnonymousMapping m = Mappings[i];
+
+		/* Release anonymous shared memory block, if any. */
+		if (m.shmem != NULL)
+		{
+			if (munmap(m.shmem, m.shmem_size) < 0)
+				elog(LOG, "munmap(%p, %zu) failed: %m",
+					 m.shmem, m.shmem_size);
+			m.shmem = NULL;
+		}
 	}
 }
 
@@ -705,6 +747,7 @@ PGSharedMemoryCreate(Size size,
 	PGShmemHeader *hdr;
 	struct stat statbuf;
 	Size		sysvsize;
+	AnonymousMapping *mapping = &Mappings[next_free_segment];
 
 	/*
 	 * We use the data directory's ID info (inode and device numbers) to
@@ -733,11 +776,15 @@ PGSharedMemoryCreate(Size size,
 
 	/* Room for a header? */
 	Assert(size > MAXALIGN(sizeof(PGShmemHeader)));
+	mapping->shmem_size = size;
+	mapping->shmem_segment = next_free_segment;
 
 	if (shared_memory_type == SHMEM_TYPE_MMAP)
 	{
-		AnonymousShmem = CreateAnonymousSegment(&size);
-		AnonymousShmemSize = size;
+		/* On success, mapping data will be modified. */
+		CreateAnonymousSegment(mapping);
+
+		next_free_segment++;
 
 		/* Register on-exit routine to unmap the anonymous segment */
 		on_shmem_exit(AnonymousShmemDetach, (Datum) 0);
@@ -760,7 +807,7 @@ PGSharedMemoryCreate(Size size,
 	 * loop simultaneously.  (CreateDataDirLockFile() does not entirely ensure
 	 * that, but prefer fixing it over coping here.)
 	 */
-	NextShmemSegID = statbuf.st_ino;
+	NextShmemSegID = statbuf.st_ino + next_free_segment;
 
 	for (;;)
 	{
@@ -852,13 +899,13 @@ PGSharedMemoryCreate(Size size,
 	/*
 	 * Initialize space allocation status for segment.
 	 */
-	hdr->totalsize = size;
+	hdr->totalsize = mapping->shmem_size;
 	hdr->freeoffset = MAXALIGN(sizeof(PGShmemHeader));
 	*shim = hdr;
 
 	/* Save info for possible future use */
-	UsedShmemSegAddr = memAddress;
-	UsedShmemSegID = (unsigned long) NextShmemSegID;
+	mapping->seg_addr = memAddress;
+	mapping->seg_id = (unsigned long) NextShmemSegID;
 
 	/*
 	 * If AnonymousShmem is NULL here, then we're not using anonymous shared
@@ -866,10 +913,10 @@ PGSharedMemoryCreate(Size size,
 	 * block. Otherwise, the System V shared memory block is only a shim, and
 	 * we must return a pointer to the real block.
 	 */
-	if (AnonymousShmem == NULL)
+	if (mapping->shmem == NULL)
 		return hdr;
-	memcpy(AnonymousShmem, hdr, sizeof(PGShmemHeader));
-	return (PGShmemHeader *) AnonymousShmem;
+	memcpy(mapping->shmem, hdr, sizeof(PGShmemHeader));
+	return (PGShmemHeader *) mapping->shmem;
 }
 
 #ifdef EXEC_BACKEND
@@ -969,23 +1016,28 @@ PGSharedMemoryNoReAttach(void)
 void
 PGSharedMemoryDetach(void)
 {
-	if (UsedShmemSegAddr != NULL)
+	for(int i = 0; i < next_free_segment; i++)
 	{
-		if ((shmdt(UsedShmemSegAddr) < 0)
-#if defined(EXEC_BACKEND) && defined(__CYGWIN__)
-		/* Work-around for cygipc exec bug */
-			&& shmdt(NULL) < 0
-#endif
-			)
-			elog(LOG, "shmdt(%p) failed: %m", UsedShmemSegAddr);
-		UsedShmemSegAddr = NULL;
-	}
+		AnonymousMapping m = Mappings[i];
 
-	if (AnonymousShmem != NULL)
-	{
-		if (munmap(AnonymousShmem, AnonymousShmemSize) < 0)
-			elog(LOG, "munmap(%p, %zu) failed: %m",
-				 AnonymousShmem, AnonymousShmemSize);
-		AnonymousShmem = NULL;
+		if (m.seg_addr != NULL)
+		{
+			if ((shmdt(m.seg_addr) < 0)
+#if defined(EXEC_BACKEND) && defined(__CYGWIN__)
+			/* Work-around for cygipc exec bug */
+				&& shmdt(NULL) < 0
+#endif
+				)
+				elog(LOG, "shmdt(%p) failed: %m", m.seg_addr);
+			m.seg_addr = NULL;
+		}
+
+		if (m.shmem != NULL)
+		{
+			if (munmap(m.shmem, m.shmem_size) < 0)
+				elog(LOG, "munmap(%p, %zu) failed: %m",
+					 m.shmem, m.shmem_size);
+			m.shmem = NULL;
+		}
 	}
 }

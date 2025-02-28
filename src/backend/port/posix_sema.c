@@ -193,7 +193,7 @@ PGSemaphoreShmemSize(int maxSemas)
  * we don't have to expose the counters to other processes.)
  */
 void
-PGReserveSemaphores(int maxSemas)
+PGReserveSemaphores(int maxSemas, int shmem_segment)
 {
 	struct stat statbuf;
 
@@ -220,7 +220,7 @@ PGReserveSemaphores(int maxSemas)
 	 * ShmemAlloc() won't be ready yet.
 	 */
 	sharedSemas = (PGSemaphore)
-		ShmemAllocUnlocked(PGSemaphoreShmemSize(maxSemas));
+		ShmemAllocUnlockedInSegment(PGSemaphoreShmemSize(maxSemas), shmem_segment);
 #endif
 
 	numSems = 0;

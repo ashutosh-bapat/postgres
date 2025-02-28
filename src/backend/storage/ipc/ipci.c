@@ -86,7 +86,7 @@ RequestAddinShmemSpace(Size size)
  * required.
  */
 Size
-CalculateShmemSize(int *num_semaphores)
+CalculateShmemSize(int *num_semaphores, int shmem_segment)
 {
 	Size		size;
 	int			numSemas;
@@ -206,33 +206,38 @@ CreateSharedMemoryAndSemaphores(void)
 
 	Assert(!IsUnderPostmaster);
 
-	/* Compute the size of the shared-memory block */
-	size = CalculateShmemSize(&numSemas);
-	elog(DEBUG3, "invoking IpcMemoryCreate(size=%zu)", size);
+	for(int segment = 0; segment < ANON_MAPPINGS; segment++)
+	{
+		/* Compute the size of the shared-memory block */
+		size = CalculateShmemSize(&numSemas, segment);
+		elog(DEBUG3, "invoking IpcMemoryCreate(size=%zu)", size);
 
-	/*
-	 * Create the shmem segment
-	 */
-	seghdr = PGSharedMemoryCreate(size, &shim);
+		/*
+		 * Create the shmem segment.
+		 *
+		 * XXX: Do multiple shims are needed, one per segment?
+		 */
+		seghdr = PGSharedMemoryCreate(size, &shim);
 
-	/*
-	 * Make sure that huge pages are never reported as "unknown" while the
-	 * server is running.
-	 */
-	Assert(strcmp("unknown",
-				  GetConfigOption("huge_pages_status", false, false)) != 0);
+		/*
+		 * Make sure that huge pages are never reported as "unknown" while the
+		 * server is running.
+		 */
+		Assert(strcmp("unknown",
+					  GetConfigOption("huge_pages_status", false, false)) != 0);
 
-	InitShmemAccess(seghdr);
+		InitShmemAccessInSegment(seghdr, segment);
 
-	/*
-	 * Create semaphores
-	 */
-	PGReserveSemaphores(numSemas);
+		/*
+		 * Create semaphores
+		 */
+		PGReserveSemaphores(numSemas, segment);
 
-	/*
-	 * Set up shared memory allocation mechanism
-	 */
-	InitShmemAllocation();
+		/*
+		 * Set up shared memory allocation mechanism
+		 */
+		InitShmemAllocationInSegment(segment);
+	}
 
 	/* Initialize subsystems */
 	CreateOrAttachShmemStructs();
@@ -363,7 +368,7 @@ InitializeShmemGUCs(void)
 	/*
 	 * Calculate the shared memory size and round up to the nearest megabyte.
 	 */
-	size_b = CalculateShmemSize(&num_semas);
+	size_b = CalculateShmemSize(&num_semas, MAIN_SHMEM_SEGMENT);
 	size_mb = add_size(size_b, (1024 * 1024) - 1) / (1024 * 1024);
 	sprintf(buf, "%zu", size_mb);
 	SetConfigOption("shared_memory_size", buf,
