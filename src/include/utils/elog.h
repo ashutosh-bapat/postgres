@@ -29,6 +29,7 @@ struct Node;
 #define DEBUG3		12
 #define DEBUG2		13
 #define DEBUG1		14			/* used by GUC debug_* variables */
+#define SBR_DEBUG	DEBUG1		/* Identifies the elogs added for diagnosing issues with resizing shared buffers. Depending upon the issue to be diagnosed, we flip these to LOG/WARNING etc. temporarily and flip back. These changes and elogs should not be committed. */
 #define LOG			15			/* Server operational messages; sent only to
 								 * server log by default. */
 #define LOG_SERVER_ONLY 16		/* Same as LOG for server reporting, but never

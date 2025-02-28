@@ -3675,9 +3675,13 @@ BgBufferSync(WritebackContext *wb_context, bool reset)
 	 * BgBufferSync() continues its execution. It's not safe to resize shared
 	 * buffers when this function is being executed.
 	 */
+	elog(SBR_DEBUG, "BgBufferSync called with reset = %d, saved_info_valid = %d",
+	reset, saved_info_valid);
 	if (reset)
 	{
 		saved_info_valid = false;
+		elog(SBR_DEBUG, "resetting bgwriter saved state prev_strategy_buf_id = %d, prev_strategy_passes = %d, next_to_clean = %d, next_passes = %d, reset = %d, wb_context = %p",
+			prev_strategy_buf_id, prev_strategy_passes, next_to_clean, next_passes, reset, wb_context);
 
 		/*
 		 * Return from here, if we don't have a valid WritebackContext. Next time
@@ -3685,7 +3689,10 @@ BgBufferSync(WritebackContext *wb_context, bool reset)
 		 * start over again.
 		 */
 		if (!wb_context)
+		{
+			elog(SBR_DEBUG, "done resetting, next call would reinitialize");
 			return false;
+		}
 	}
 
 	/*
@@ -3723,7 +3730,14 @@ BgBufferSync(WritebackContext *wb_context, bool reset)
 		strategy_delta = strategy_buf_id - prev_strategy_buf_id;
 		strategy_delta += (long) passes_delta * NBuffers;
 
-		Assert(strategy_delta >= 0);
+		if (strategy_delta < 0)
+		{
+			ereport(SBR_DEBUG,
+					errmsg("invalid stretegy_delta (%ld)", strategy_delta),
+					errcontext("strategy_buf_id = %d, prev_strategy_buf_id = %d, NBuffers = %d, passes_delta = %d, strategy_passes = %d, prev_strategy_passes = %d",
+							strategy_buf_id, prev_strategy_buf_id, NBuffers, passes_delta, strategy_passes, prev_strategy_passes));
+			Assert(strategy_delta >= 0);
+		}
 
 		if ((int32) (next_passes - strategy_passes) > 0)
 		{
@@ -3760,6 +3774,10 @@ BgBufferSync(WritebackContext *wb_context, bool reset)
 				 strategy_passes, strategy_buf_id,
 				 strategy_delta);
 #endif
+			elog(SBR_DEBUG, "bgwriter behind: bgw %u-%u strategy %u-%u delta=%ld",
+				 next_passes, next_to_clean,
+				 strategy_passes, strategy_buf_id,
+				 strategy_delta);
 			next_to_clean = strategy_buf_id;
 			next_passes = strategy_passes;
 			bufs_to_lap = NBuffers;
@@ -3779,6 +3797,8 @@ BgBufferSync(WritebackContext *wb_context, bool reset)
 		next_to_clean = strategy_buf_id;
 		next_passes = strategy_passes;
 		bufs_to_lap = NBuffers;
+		elog(SBR_DEBUG, "bgwriter initializing: strategy %u-%u, strategy_delta = %ld, next_to_clean = %d, next_passes = %d, bufs_to_lap = %d",
+			 strategy_passes, strategy_buf_id, strategy_delta, next_to_clean, next_passes, bufs_to_lap);
 	}
 
 	/* Update saved info for next time */
