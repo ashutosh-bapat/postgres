@@ -1077,7 +1077,7 @@ EvictExtraBuffers()
 bool
 ProcessBarrierShmemResize(Barrier *barrier)
 {
-	elog(DEBUG1, "Handle a barrier for shmem resizing from %d to %d, %d",
+	elog(SBR_DEBUG, "Handle a barrier for shmem resizing from %d to %d, %d",
 		 NBuffersOld, NBuffersPending, pending_pm_shmem_resize);
 
 	/* Wait until we have seen the new NBuffers value */
@@ -1191,7 +1191,7 @@ AdjustShmemSize(void)
 void
 CoordinateShmemResize(void)
 {
-	elog(DEBUG1, "Coordinating shmem resize from %d to %d",
+	elog(SBR_DEBUG, "Coordinating shmem resize from %d to %d",
 		 NBuffersOld, NBuffers);
 	Assert(!IsUnderPostmaster);
 
