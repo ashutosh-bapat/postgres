@@ -1277,6 +1277,8 @@ EvictExtraBuffers()
 bool
 ProcessBarrierShmemResize(Barrier *barrier)
 {
+	int	phase;
+
 	elog(SBR_DEBUG, "Handle a barrier for shmem resizing from %d to %d, %d",
 		 NBuffersOld, NBuffersPending, pending_pm_shmem_resize);
 
@@ -1292,9 +1294,14 @@ ProcessBarrierShmemResize(Barrier *barrier)
 	 * when the first group is already finished before the second has appeared,
 	 * and the barrier will only synchonize withing those groups.
 	 */
-	if (BarrierAttach(barrier) == SHMEM_RESIZE_REQUESTED)
+	phase = BarrierAttach(barrier);
+	if (phase == SHMEM_RESIZE_REQUESTED)
+	{
+
+		elog(SBR_DEBUG, "attached when barrier was at phase %d", phase);
 		WaitForProcSignalBarrierReceived(
 				pg_atomic_read_u64(&ShmemCtrl->Generation));
+	}
 
 	/*
 	 * Now start the procedure, and elect one backend to ping postmaster to do
@@ -1305,6 +1312,7 @@ ProcessBarrierShmemResize(Barrier *barrier)
 	 */
 	if (BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_START))
 	{
+		elog(SBR_DEBUG, "reached barrier phase %d", BarrierPhase(barrier));
 		Assert(IsUnderPostmaster);
 		SendPostmasterSignal(PMSIGNAL_SHMEM_RESIZE);
 	}
@@ -1323,14 +1331,17 @@ ProcessBarrierShmemResize(Barrier *barrier)
 			elog(FATAL, "buffer eviction failed");
 
 		BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_EVICT);
+		elog(SBR_DEBUG, "reached barrier phase %d", BarrierPhase(barrier));
 	}
 
 	AnonymousShmemResize();
 
 	/* The second phase means the resize has finished, SHMEM_RESIZE_DONE */
 	BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_DONE);
+	elog(SBR_DEBUG, "reached barrier phase %d", BarrierPhase(barrier));
 
 	BarrierDetach(barrier);
+	elog(SBR_DEBUG, "buffer resizing operation finished at phase %d", BarrierPhase(barrier));
 	return true;
 }
 
