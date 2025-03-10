@@ -1077,6 +1077,8 @@ EvictExtraBuffers()
 bool
 ProcessBarrierShmemResize(Barrier *barrier)
 {
+	int	phase;
+
 	elog(SBR_DEBUG, "Handle a barrier for shmem resizing from %d to %d, %d",
 		 NBuffersOld, NBuffersPending, pending_pm_shmem_resize);
 
@@ -1102,10 +1104,12 @@ ProcessBarrierShmemResize(Barrier *barrier)
 	 * done. In that case proceed as well, relying on AnonymousShmemResize not
 	 * reinitialize anything since the NSharedBuffers is already broadcasted.
 	 */
-	BarrierAttach(barrier);
+	phase = BarrierAttach(barrier);
+	elog(SBR_DEBUG, "attached when barrier was at phase %d", phase);
 
 	/* First phase means the resize has begun, SHMEM_RESIZE_START */
 	BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_START);
+	elog(SBR_DEBUG, "reached barrier phase %d", BarrierPhase(barrier));
 
 	/*
 	 * Evict extra buffers when shrinking shared buffers. We need to do this
@@ -1121,6 +1125,7 @@ ProcessBarrierShmemResize(Barrier *barrier)
 			elog(FATAL, "buffer eviction failed");
 
 		BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_EVICT);
+		elog(SBR_DEBUG, "reached barrier phase %d", BarrierPhase(barrier));
 	}
 
 	/* XXX: Split mremap and buffer reinitialization into two barrier phases */
@@ -1128,10 +1133,14 @@ ProcessBarrierShmemResize(Barrier *barrier)
 
 	/* The second phase means the resize has finished, SHMEM_RESIZE_DONE */
 	BarrierArriveAndWait(barrier, WAIT_EVENT_SHMEM_RESIZE_DONE);
+	elog(SBR_DEBUG, "reached barrier phase %d", BarrierPhase(barrier));
 
 	/* Allow the last backend to reset the control area. */
 	if (BarrierArriveAndDetach(barrier))
+	{
+		elog(SBR_DEBUG, "buffer resizing operation finished at phase %d", BarrierPhase(barrier));
 		ResetShmemCtrl();
+	}
 
 	return true;
 }
