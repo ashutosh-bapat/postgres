@@ -107,6 +107,7 @@ typedef struct AnonymousMapping
 	Pointer shmem; 				/* Pointer to the start of the mapped memory */
 	Pointer seg_addr; 			/* SysV shared memory for the header */
 	unsigned long seg_id; 		/* IPC key */
+	int segment_fd; 			/* fd for the backing anon file */
 } AnonymousMapping;
 
 static AnonymousMapping Mappings[ANON_MAPPINGS];
@@ -127,7 +128,7 @@ static int next_free_segment = 0;
  * 00400000-00490000         /path/bin/postgres
  * ...
  * 012d9000-0133e000         [heap]
- * 7f443a800000-7f470a800000 /dev/zero (deleted)
+ * 7f443a800000-7f470a800000 /memfd:main (deleted)
  * 7f470a800000-7f471831d000 /usr/lib/locale/locale-archive
  * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
  * ...
@@ -150,9 +151,9 @@ static int next_free_segment = 0;
  * The result would look like this:
  *
  * 012d9000-0133e000         [heap]
- * 7f4426f54000-7f442e010000 /dev/zero (deleted)
+ * 7f4426f54000-7f442e010000 /memfd:main (deleted)
  * 7f442e010000-7f443a800000                     # reserved empty space
- * 7f443a800000-7f444196c000 /dev/zero (deleted)
+ * 7f443a800000-7f444196c000 /memfd:buffers (deleted)
  * 7f444196c000-7f470a800000                     # reserved empty space
  * 7f470a800000-7f471831d000 /usr/lib/locale/locale-archive
  * 7f4718400000-7f4718401000 /usr/lib64/libicudata.so.74.2
@@ -643,13 +644,14 @@ PGSharedMemoryAttach(IpcMemoryId shmId,
  * *hugepagesize and *mmap_flags are set to 0.
  */
 void
-GetHugePageSize(Size *hugepagesize, int *mmap_flags)
+GetHugePageSize(Size *hugepagesize, int *mmap_flags, int *memfd_flags)
 {
 #ifdef MAP_HUGETLB
 
 	Size		default_hugepagesize = 0;
 	Size		hugepagesize_local = 0;
 	int			mmap_flags_local = 0;
+	int			memfd_flags_local = 0;
 
 	/*
 	 * System-dependent code to find out the default huge page size.
@@ -708,6 +710,7 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 	}
 
 	mmap_flags_local = MAP_HUGETLB;
+	memfd_flags_local = MFD_HUGETLB;
 
 	/*
 	 * On recent enough Linux, also include the explicit page size, if
@@ -718,7 +721,16 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 	{
 		int			shift = pg_ceil_log2_64(hugepagesize_local);
 
-		mmap_flags_local |= (shift & MAP_HUGE_MASK) << MAP_HUGE_SHIFT;
+		memfd_flags_local |= (shift & MAP_HUGE_MASK) << MAP_HUGE_SHIFT;
+	}
+#endif
+
+#if defined(MFD_HUGE_MASK) && defined(MFD_HUGE_SHIFT)
+	if (hugepagesize_local != default_hugepagesize)
+	{
+		int			shift = pg_ceil_log2_64(hugepagesize_local);
+
+		memfd_flags_local |= (shift & MAP_HUGE_MASK) << MAP_HUGE_SHIFT;
 	}
 #endif
 
@@ -727,6 +739,8 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 		*mmap_flags = mmap_flags_local;
 	if (hugepagesize)
 		*hugepagesize = hugepagesize_local;
+	if (memfd_flags)
+		*memfd_flags = memfd_flags_local;
 
 #else
 
@@ -734,6 +748,8 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 		*hugepagesize = 0;
 	if (mmap_flags)
 		*mmap_flags = 0;
+	if (memfd_flags)
+		*memfd_flags = 0;
 
 #endif							/* MAP_HUGETLB */
 }
@@ -771,7 +787,7 @@ CreateAnonymousSegment(AnonymousMapping *mapping, Pointer base)
 	Size		allocsize = mapping->shmem_size;
 	void	   *ptr = MAP_FAILED;
 	int			mmap_errno = 0;
-	int			mmap_flags = PG_MMAP_FLAGS;
+	int			mmap_flags = PG_MMAP_FLAGS, memfd_flags = 0;
 
 #ifndef MAP_HUGETLB
 	/* ReserveAnonymousMemory should have dealt with this case */
@@ -785,7 +801,7 @@ CreateAnonymousSegment(AnonymousMapping *mapping, Pointer base)
 		Assert(huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY);
 
 		/* Round up the request size to a suitable large value */
-		GetHugePageSize(&hugepagesize, &mmap_flags);
+		GetHugePageSize(&hugepagesize, &mmap_flags, &memfd_flags);
 
 		if (allocsize % hugepagesize != 0)
 			allocsize += hugepagesize - (allocsize % hugepagesize);
@@ -793,6 +809,29 @@ CreateAnonymousSegment(AnonymousMapping *mapping, Pointer base)
 		mmap_flags = PG_MMAP_FLAGS | mmap_flags;
 	}
 #endif
+
+	/*
+	 * Prepare an anonymous file backing the segment. Its size will be
+	 * specified later via ftruncate.
+	 *
+	 * The file behaves like a regular file, but lives in memory. Once all
+	 * references to the file are dropped,  it is automatically released.
+	 * Anonymous memory is used for all backing pages of the file, thus it has
+	 * the same semantics as anonymous memory allocations using mmap with the
+	 * MAP_ANONYMOUS flag.
+	 */
+	mapping->segment_fd = memfd_create(MappingName(mapping->shmem_segment),
+									   memfd_flags);
+
+	/*
+	 * Specify the segment file size using allocsize, which contains
+	 * potentially modified size.
+	 */
+	if(ftruncate(mapping->segment_fd, allocsize) == -1)
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("could not truncase anonymous file for \"%s\": %m",
+						MappingName(mapping->shmem_segment))));
 
 	elog(DEBUG1, "segment[%s]: mmap(%zu) at address %p",
 		 MappingName(mapping->shmem_segment), allocsize, base + reserved_offset);
@@ -807,7 +846,7 @@ CreateAnonymousSegment(AnonymousMapping *mapping, Pointer base)
 	 * a restart.
 	 */
 	ptr = mmap(base + reserved_offset, allocsize, PROT_READ | PROT_WRITE,
-			   mmap_flags | MAP_FIXED, -1, 0);
+			   mmap_flags | MAP_FIXED, mapping->segment_fd, 0);
 	mmap_errno = errno;
 
 	if (ptr == MAP_FAILED)
@@ -817,8 +856,15 @@ CreateAnonymousSegment(AnonymousMapping *mapping, Pointer base)
 					 "fallback to the non-resizable allocation",
 			 MappingName(mapping->shmem_segment), allocsize, base + reserved_offset);
 
+		/* Specify the segment file size using allocsize. */
+		if(ftruncate(mapping->segment_fd, allocsize) == -1)
+			ereport(FATAL,
+					(errcode(ERRCODE_SYSTEM_ERROR),
+					 errmsg("could not truncase anonymous file for \"%s\": %m",
+							MappingName(mapping->shmem_segment))));
+
 		ptr = mmap(NULL, allocsize, PROT_READ | PROT_WRITE,
-						   PG_MMAP_FLAGS, -1, 0);
+						   PG_MMAP_FLAGS, mapping->segment_fd, 0);
 		mmap_errno = errno;
 	}
 	else
@@ -889,7 +935,7 @@ ReserveAnonymousMemory(Size reserve_size)
 		Size		hugepagesize, total_size = 0;
 		int			mmap_flags;
 
-		GetHugePageSize(&hugepagesize, &mmap_flags);
+		GetHugePageSize(&hugepagesize, &mmap_flags, NULL);
 
 		/*
 		 * Figure out how much memory is needed for all segments, keeping in
@@ -1069,6 +1115,13 @@ AnonymousShmemResize(void)
 
 		if (m->shmem_size == new_size)
 			continue;
+
+		/* Resize the backing anon file. */
+		if(ftruncate(m->segment_fd, new_size) == -1)
+			ereport(FATAL,
+					(errcode(ERRCODE_SYSTEM_ERROR),
+					 errmsg("could not truncase anonymous file for \"%s\": %m",
+							MappingName(m->shmem_segment))));
 
 		/* Clean up some reserved space to resize into */
 		if (munmap(m->shmem + m->shmem_size, new_size - m->shmem_size) == -1)

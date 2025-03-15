@@ -627,7 +627,7 @@ pgwin32_ReserveSharedMemoryRegion(HANDLE hChild)
  * use GetLargePageMinimum() instead.
  */
 void
-GetHugePageSize(Size *hugepagesize, int *mmap_flags)
+GetHugePageSize(Size *hugepagesize, int *mmap_flags, int *memfd_flags)
 {
 	if (hugepagesize)
 		*hugepagesize = 0;

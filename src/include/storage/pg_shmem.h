@@ -124,7 +124,8 @@ extern PGShmemHeader *PGSharedMemoryCreate(Size size,
 										   PGShmemHeader **shim, Pointer base);
 extern bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2);
 extern void PGSharedMemoryDetach(void);
-extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags);
+extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags,
+							int *memfd_flags);
 void *ReserveAnonymousMemory(Size reserve_size);
 
 bool ProcessBarrierShmemResize(Barrier *barrier);

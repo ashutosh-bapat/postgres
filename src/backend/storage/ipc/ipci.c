@@ -396,7 +396,7 @@ InitializeShmemGUCs(void)
 	/*
 	 * Calculate the number of huge pages required.
 	 */
-	GetHugePageSize(&hp_size, NULL);
+	GetHugePageSize(&hp_size, NULL, NULL);
 	if (hp_size != 0)
 	{
 		Size		hp_required;
