@@ -113,7 +113,7 @@ CalculateShmemSize(int *num_semaphores, int shmem_segment)
 											 sizeof(ShmemIndexEnt)));
 	size = add_size(size, dsm_estimate_size());
 	size = add_size(size, DSMRegistryShmemSize());
-	size = add_size(size, BufferManagerShmemSize());
+	size = add_size(size, BufferManagerShmemSize(shmem_segment));
 	size = add_size(size, LockManagerShmemSize());
 	size = add_size(size, PredicateLockShmemSize());
 	size = add_size(size, ProcGlobalShmemSize());

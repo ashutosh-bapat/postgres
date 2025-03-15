@@ -147,10 +147,18 @@ static int next_free_segment = 0;
  *
  * The reserved space pointer is calculated to slice up the total reserved
  * space into fixed fractions of address space for each segment, as specified
- * in the SHMEM_RESIZE_RATIO array.
+ * in the SHMEM_RESIZE_RATIO array. E.g. we allow BUFFERS_SHMEM_SEGMENT to take
+ * up to 60% of the whole space when resizing, based on the fact that it most
+ * likely will be the main consumer of this memory. Those numbers are pulled
+ * out of thin air for now, makes sense to evaluate them more precise.
  */
-static double SHMEM_RESIZE_RATIO[1] = {
-	1.0, 									/* MAIN_SHMEM_SLOT */
+static double SHMEM_RESIZE_RATIO[6] = {
+	0.1,    /* MAIN_SHMEM_SEGMENT */
+	0.6,    /* BUFFERS_SHMEM_SEGMENT */
+	0.1,    /* BUFFER_DESCRIPTORS_SHMEM_SEGMENT */
+	0.1,    /* BUFFER_IOCV_SHMEM_SEGMENT */
+	0.05,   /* CHECKPOINT_BUFFERS_SHMEM_SEGMENT */
+	0.05,   /* STRATEGY_SHMEM_SEGMENT */
 };
 
 /*
@@ -182,6 +190,16 @@ MappingName(int shmem_segment)
 	{
 		case MAIN_SHMEM_SEGMENT:
 			return "main";
+		case BUFFERS_SHMEM_SEGMENT:
+			return "buffers";
+		case BUFFER_DESCRIPTORS_SHMEM_SEGMENT:
+			return "descriptors";
+		case BUFFER_IOCV_SHMEM_SEGMENT:
+			return "iocv";
+		case CHECKPOINT_BUFFERS_SHMEM_SEGMENT:
+			return "checkpoint";
+		case STRATEGY_SHMEM_SEGMENT:
+			return "strategy";
 		default:
 			return "unknown";
 	}

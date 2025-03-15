@@ -22,6 +22,7 @@
 #include "postgres.h"
 
 #include "storage/buf_internals.h"
+#include "storage/pg_shmem.h"
 
 /* entry for buffer lookup hashtable */
 typedef struct
@@ -59,10 +60,11 @@ InitBufTable(int size)
 	info.entrysize = sizeof(BufferLookupEnt);
 	info.num_partitions = NUM_BUFFER_PARTITIONS;
 
-	SharedBufHash = ShmemInitHash("Shared Buffer Lookup Table",
+	SharedBufHash = ShmemInitHashInSegment("Shared Buffer Lookup Table",
 								  size, size,
 								  &info,
-								  HASH_ELEM | HASH_BLOBS | HASH_PARTITION);
+								  HASH_ELEM | HASH_BLOBS | HASH_PARTITION,
+								  STRATEGY_SHMEM_SEGMENT);
 }
 
 /*
