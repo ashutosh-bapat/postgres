@@ -79,6 +79,7 @@ extern void SendCancelRequest(int backendPID, char *cancel_key, int cancel_key_l
 
 extern uint64 EmitProcSignalBarrier(ProcSignalBarrierType type);
 extern void WaitForProcSignalBarrier(uint64 generation);
+extern void WaitForProcSignalBarrierReceived(uint64 generation);
 extern void ProcessProcSignalBarrier(void);
 
 extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
