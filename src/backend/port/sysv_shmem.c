@@ -1109,12 +1109,51 @@ AnonymousShmemResize(void)
 		/* Note that CalculateShmemSize indirectly depends on NBuffers */
 		Size new_size = CalculateShmemSize(&numSemas, i);
 		AnonymousMapping *m = &Mappings[i];
+		int	mmap_flags = PG_MMAP_FLAGS;
 
 		if (m->shmem == NULL)
 			continue;
 
 		if (m->shmem_size == new_size)
 			continue;
+
+#ifndef MAP_HUGETLB
+		/* ReserveAnonymousMemory should have dealt with this case */
+		Assert(huge_pages != HUGE_PAGES_ON && !huge_pages_on);
+#else
+		if (huge_pages_on)
+		{
+			Size		hugepagesize;
+
+			/* Make sure nothing is messed up */
+			Assert(huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY);
+
+			/* Round up the new size to a suitable large value */
+			GetHugePageSize(&hugepagesize, &mmap_flags, NULL);
+
+			if (new_size % hugepagesize != 0)
+				new_size += hugepagesize - (new_size % hugepagesize);
+
+			mmap_flags = PG_MMAP_FLAGS | mmap_flags;
+		}
+#endif
+
+		/*
+		 * Linux limitations do not allow us to mremap hugetlb in the way we
+		 * want. E.g. no size increase is allowed, and for shrinking the memory
+		 * will not be released back. To work around this unmap the segment and
+		 * create a new one at the same address. Thanks for the backing anon
+		 * file the content will still be kept in memory.
+		 */
+		elog(DEBUG1, "segment[%s]: remap from %zu to %zu at address %p",
+					 MappingName(m->shmem_segment), m->shmem_size,
+					 new_size, m->shmem);
+
+		if (munmap(m->shmem, m->shmem_size) < 0)
+			ereport(FATAL,
+					(errcode(ERRCODE_SYSTEM_ERROR),
+					 errmsg("could not unmap shared memory segment %s [%p]: %m",
+							MappingName(m->shmem_segment), m->shmem)));
 
 		/* Resize the backing anon file. */
 		if(ftruncate(m->segment_fd, new_size) == -1)
@@ -1123,25 +1162,14 @@ AnonymousShmemResize(void)
 					 errmsg("could not truncase anonymous file for \"%s\": %m",
 							MappingName(m->shmem_segment))));
 
-		/* Clean up some reserved space to resize into */
-		if (munmap(m->shmem + m->shmem_size, new_size - m->shmem_size) == -1)
-			ereport(FATAL,
-					(errcode(ERRCODE_SYSTEM_ERROR),
-					 errmsg("could not unmap %zu from reserved shared memory %p: %m",
-							new_size - m->shmem_size, m->shmem)));
-
-		/* Claim the unused space */
-		elog(DEBUG1, "segment[%s]: remap from %zu to %zu at address %p",
-					 MappingName(m->shmem_segment), m->shmem_size,
-					 new_size, m->shmem);
-
-		ptr = mremap(m->shmem, m->shmem_size, new_size, 0);
+		/* Reclaim the space */
+		ptr = mmap(m->shmem, new_size, PROT_READ | PROT_WRITE,
+				   mmap_flags | MAP_FIXED, m->segment_fd, 0);
 		if (ptr == MAP_FAILED)
 			ereport(FATAL,
 					(errcode(ERRCODE_SYSTEM_ERROR),
-					 errmsg("could not resize shared memory segment %s [%p] to %d (%zu): %m",
-							MappingName(m->shmem_segment), m->shmem, NBuffers,
-							new_size)));
+					 errmsg("could not map shared memory segment %s [%p] with size %zu: %m",
+							MappingName(m->shmem_segment), m->shmem, new_size)));
 
 		reinit = true;
 		m->shmem_size = new_size;
