@@ -212,6 +212,8 @@ static const char *default_timezone = NULL;
 "# use another authentication method.\n"
 static bool authwarning = false;
 
+#define VALGRIND_CMD "valgrind --quiet --trace-children=yes --track-origins=yes --read-var-info=yes --num-callers=20 --leak-check=no --gen-suppressions=all --suppressions=%s/src/tools/valgrind.supp --error-limit=no --log-file=/tmp/valgrind.%d.log"
+#define VALGRIND_ARGS getenv("PGDir"), getpid()
 /*
  * Centralized knowledge of switches to pass to backend
  *
@@ -1617,7 +1619,7 @@ bootstrap_template1(void)
 
 	initPQExpBuffer(&cmd);
 
-	printfPQExpBuffer(&cmd, "\"%s\" --boot %s %s", backend_exec, boot_options, extra_options);
+	printfPQExpBuffer(&cmd, VALGRIND_CMD " \"%s\" --boot %s %s", VALGRIND_ARGS, backend_exec, boot_options, extra_options);
 	appendPQExpBuffer(&cmd, " -X %d", wal_segment_size_mb * (1024 * 1024));
 	if (data_checksums)
 		appendPQExpBuffer(&cmd, " -k");
@@ -3117,7 +3119,7 @@ initialize_data_directory(void)
 	fflush(stdout);
 
 	initPQExpBuffer(&cmd);
-	printfPQExpBuffer(&cmd, "\"%s\" %s %s template1 >%s",
+	printfPQExpBuffer(&cmd, VALGRIND_CMD " \"%s\" %s %s template1 >%s", VALGRIND_ARGS,
 					  backend_exec, backend_options, extra_options, DEVNULL);
 
 	PG_CMD_OPEN(cmd.data);
