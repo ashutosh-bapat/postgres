@@ -1952,7 +1952,7 @@ pq_settcpusertimeout(int timeout, Port *port)
  * GUC assign_hook for tcp_keepalives_idle
  */
 void
-assign_tcp_keepalives_idle(int newval, void *extra)
+assign_tcp_keepalives_idle(int newval, void *extra, bool *pending)
 {
 	/*
 	 * The kernel API provides no way to test a value without setting it; and
@@ -1985,7 +1985,7 @@ show_tcp_keepalives_idle(void)
  * GUC assign_hook for tcp_keepalives_interval
  */
 void
-assign_tcp_keepalives_interval(int newval, void *extra)
+assign_tcp_keepalives_interval(int newval, void *extra, bool *pending)
 {
 	/* See comments in assign_tcp_keepalives_idle */
 	(void) pq_setkeepalivesinterval(newval, MyProcPort);
@@ -2008,7 +2008,7 @@ show_tcp_keepalives_interval(void)
  * GUC assign_hook for tcp_keepalives_count
  */
 void
-assign_tcp_keepalives_count(int newval, void *extra)
+assign_tcp_keepalives_count(int newval, void *extra, bool *pending)
 {
 	/* See comments in assign_tcp_keepalives_idle */
 	(void) pq_setkeepalivescount(newval, MyProcPort);
@@ -2031,7 +2031,7 @@ show_tcp_keepalives_count(void)
  * GUC assign_hook for tcp_user_timeout
  */
 void
-assign_tcp_user_timeout(int newval, void *extra)
+assign_tcp_user_timeout(int newval, void *extra, bool *pending)
 {
 	/* See comments in assign_tcp_keepalives_idle */
 	(void) pq_settcpusertimeout(newval, MyProcPort);

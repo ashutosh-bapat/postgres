@@ -187,7 +187,7 @@ typedef bool (*GucStringCheckHook) (char **newval, void **extra, GucSource sourc
 typedef bool (*GucEnumCheckHook) (int *newval, void **extra, GucSource source);
 
 typedef void (*GucBoolAssignHook) (bool newval, void *extra);
-typedef void (*GucIntAssignHook) (int newval, void *extra);
+typedef void (*GucIntAssignHook) (int newval, void *extra, bool *pending);
 typedef void (*GucRealAssignHook) (double newval, void *extra);
 typedef void (*GucStringAssignHook) (const char *newval, void *extra);
 typedef void (*GucEnumAssignHook) (int newval, void *extra);

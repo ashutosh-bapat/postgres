@@ -1679,6 +1679,7 @@ InitializeOneGUCOption(struct config_generic *gconf)
 				struct config_int *conf = (struct config_int *) gconf;
 				int			newval = conf->boot_val;
 				void	   *extra = NULL;
+				bool 	   pending = false;
 
 				Assert(newval >= conf->min);
 				Assert(newval <= conf->max);
@@ -1687,9 +1688,13 @@ InitializeOneGUCOption(struct config_generic *gconf)
 					elog(FATAL, "failed to initialize %s to %d",
 						 conf->gen.name, newval);
 				if (conf->assign_hook)
-					conf->assign_hook(newval, extra);
-				*conf->variable = conf->reset_val = newval;
-				conf->gen.extra = conf->reset_extra = extra;
+					conf->assign_hook(newval, extra, &pending);
+
+				if (!pending)
+				{
+					*conf->variable = conf->reset_val = newval;
+					conf->gen.extra = conf->reset_extra = extra;
+				}
 				break;
 			}
 		case PGC_REAL:
@@ -2041,13 +2046,18 @@ ResetAllOptions(void)
 			case PGC_INT:
 				{
 					struct config_int *conf = (struct config_int *) gconf;
+					bool 			  pending = false;
 
 					if (conf->assign_hook)
 						conf->assign_hook(conf->reset_val,
-										  conf->reset_extra);
-					*conf->variable = conf->reset_val;
-					set_extra_field(&conf->gen, &conf->gen.extra,
-									conf->reset_extra);
+										  conf->reset_extra,
+										  &pending);
+					if (!pending)
+					{
+						*conf->variable = conf->reset_val;
+						set_extra_field(&conf->gen, &conf->gen.extra,
+										conf->reset_extra);
+					}
 					break;
 				}
 			case PGC_REAL:
@@ -2424,16 +2434,21 @@ AtEOXact_GUC(bool isCommit, int nestLevel)
 							struct config_int *conf = (struct config_int *) gconf;
 							int			newval = newvalue.val.intval;
 							void	   *newextra = newvalue.extra;
+							bool 	    pending = false;
 
 							if (*conf->variable != newval ||
 								conf->gen.extra != newextra)
 							{
 								if (conf->assign_hook)
-									conf->assign_hook(newval, newextra);
-								*conf->variable = newval;
-								set_extra_field(&conf->gen, &conf->gen.extra,
-												newextra);
-								changed = true;
+									conf->assign_hook(newval, newextra, &pending);
+
+								if (!pending)
+								{
+									*conf->variable = newval;
+									set_extra_field(&conf->gen, &conf->gen.extra,
+													newextra);
+									changed = true;
+								}
 							}
 							break;
 						}
@@ -3850,18 +3865,24 @@ set_config_with_handle(const char *name, config_handle *handle,
 
 				if (changeVal)
 				{
+					bool pending = false;
+
 					/* Save old value to support transaction abort */
 					if (!makeDefault)
 						push_old_value(&conf->gen, action);
 
 					if (conf->assign_hook)
-						conf->assign_hook(newval, newextra);
-					*conf->variable = newval;
-					set_extra_field(&conf->gen, &conf->gen.extra,
-									newextra);
-					set_guc_source(&conf->gen, source);
-					conf->gen.scontext = context;
-					conf->gen.srole = srole;
+						conf->assign_hook(newval, newextra, &pending);
+
+					if (!pending)
+					{
+						*conf->variable = newval;
+						set_extra_field(&conf->gen, &conf->gen.extra,
+										newextra);
+						set_guc_source(&conf->gen, source);
+						conf->gen.scontext = context;
+						conf->gen.srole = srole;
+					}
 				}
 				if (makeDefault)
 				{
