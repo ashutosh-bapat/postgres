@@ -493,17 +493,26 @@ ShmemInitStructInSegment(const char *name, Size size, bool *foundPtr,
 	{
 		/*
 		 * Structure is in the shmem index so someone else has allocated it
-		 * already.  The size better be the same as the size we are trying to
-		 * initialize to, or there is a name conflict (or worse).
+		 * already. Verify the structure's size:
+		 * - If it's the same, we've found the expected structure.
+		 * - If it's different, we're resizing the expected structure.
+		 *
+		 * XXX: There is an implicit assumption this can only happen in
+		 * "resizable" segments, where only one shared structure is allowed.
+		 * This has to be implemented more cleanly.
 		 */
 		if (result->size != size)
 		{
-			LWLockRelease(ShmemIndexLock);
-			ereport(ERROR,
-					(errmsg("ShmemIndex entry size is wrong for data structure"
-							" \"%s\": expected %zu, actual %zu",
-							name, size, result->size)));
+			Size delta = size - result->size;
+
+			result->size = size;
+
+			/* Reflect size change in the shared segment */
+			SpinLockAcquire(Segments[shmem_segment].ShmemLock);
+			Segments[shmem_segment].ShmemSegHdr->freeoffset += delta;
+			SpinLockRelease(Segments[shmem_segment].ShmemLock);
 		}
+
 		structPtr = result->location;
 	}
 	else

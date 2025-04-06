@@ -307,7 +307,7 @@ extern void LimitAdditionalLocalPins(uint32 *additional_pins);
 extern bool EvictUnpinnedBuffer(Buffer buf);
 
 /* in buf_init.c */
-extern void BufferManagerShmemInit(void);
+extern void BufferManagerShmemInit(int);
 extern Size BufferManagerShmemSize(int);
 
 /* in localbuf.c */

@@ -42,6 +42,7 @@ typedef enum
 	PMSIGNAL_START_WALRECEIVER, /* start a walreceiver */
 	PMSIGNAL_ADVANCE_STATE_MACHINE, /* advance postmaster's state machine */
 	PMSIGNAL_XLOG_IS_SHUTDOWN,	/* ShutdownXLOG() completed */
+	PMSIGNAL_SHMEM_RESIZE,	/* resize shared memory */
 } PMSignalReason;
 
 #define NUM_PMSIGNALS (PMSIGNAL_XLOG_IS_SHUTDOWN+1)

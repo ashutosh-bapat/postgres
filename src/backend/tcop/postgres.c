@@ -62,6 +62,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
+#include "storage/pg_shmem.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procsignal.h"
@@ -4310,6 +4311,15 @@ PostgresMain(const char *dbname, const char *username)
 	 * appropriate.
 	 */
 	BeginReportingGUCOptions();
+
+	/* Verify the shared barrier, if it's still active: join and wait. */
+	WaitOnShmemBarrier();
+
+	/*
+	 * After waiting on the barrier above we guaranteed to have NSharedBuffers
+	 * broadcasted, so we can use it in the function below.
+	 */
+	AdjustShmemSize();
 
 	/*
 	 * Also set up handler to log session end; we have to wait till now to be

@@ -17,13 +17,13 @@
 #include "storage/aio.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
+#include "storage/pg_shmem.h"
 
 BufferDescPadded *BufferDescriptors;
 char	   *BufferBlocks;
 ConditionVariableMinimallyPadded *BufferIOCVArray;
 WritebackContext BackendWritebackContext;
 CkptSortItem *CkptBufferIds;
-
 
 /*
  * Data Structures:
@@ -62,18 +62,28 @@ CkptSortItem *CkptBufferIds;
  * Initialize shared buffer pool
  *
  * This is called once during shared-memory initialization (either in the
- * postmaster, or in a standalone backend). Size of data structures initialized
- * here depends on NBuffers, and to be able to change NBuffers without a
- * restart we store each structure into a separate shared memory segment, which
- * could be resized on demand.
+ * postmaster, or in a standalone backend) or during shared-memory resize. Size
+ * of data structures initialized here depends on NBuffers, and to be able to
+ * change NBuffers without a restart we store each structure into a separate
+ * shared memory segment, which could be resized on demand.
+ *
+ * FirstBufferToInit tells where to start initializing buffers. For
+ * initialization it always will be zero, but when resizing shared-memory it
+ * indicates the number of already initialized buffers.
+ *
+ * No locks are taking in this function, it is the caller responsibility to
+ * make sure only one backend can work with new buffers.
  */
 void
-BufferManagerShmemInit(void)
+BufferManagerShmemInit(int FirstBufferToInit)
 {
 	bool		foundBufs,
 				foundDescs,
 				foundIOCV,
 				foundBufCkpt;
+	int			i;
+	elog(DEBUG1, "BufferManagerShmemInit from %d to %d",
+				 FirstBufferToInit, NBuffers);
 
 	/* Align descriptors to a cacheline boundary. */
 	BufferDescriptors = (BufferDescPadded *)
@@ -110,43 +120,44 @@ BufferManagerShmemInit(void)
 	{
 		/* should find all of these, or none of them */
 		Assert(foundDescs && foundBufs && foundIOCV && foundBufCkpt);
-		/* note: this path is only taken in EXEC_BACKEND case */
+		/*
+		 * note: this path is only taken in EXEC_BACKEND case when initializing
+		 * shared memory, or in all cases when resizing shared memory.
+		 */
 	}
-	else
+
+#ifndef EXEC_BACKEND
+	/*
+	 * Initialize all the buffer headers.
+	 */
+	for (i = FirstBufferToInit; i < NBuffers; i++)
 	{
-		int			i;
+		BufferDesc *buf = GetBufferDescriptor(i);
+
+		ClearBufferTag(&buf->tag);
+
+		pg_atomic_init_u32(&buf->state, 0);
+		buf->wait_backend_pgprocno = INVALID_PROC_NUMBER;
+
+		buf->buf_id = i;
+
+		pgaio_wref_clear(&buf->io_wref);
 
 		/*
-		 * Initialize all the buffer headers.
+		 * Initially link all the buffers together as unused. Subsequent
+		 * management of this list is done by freelist.c.
 		 */
-		for (i = 0; i < NBuffers; i++)
-		{
-			BufferDesc *buf = GetBufferDescriptor(i);
+		buf->freeNext = i + 1;
 
-			ClearBufferTag(&buf->tag);
+		LWLockInitialize(BufferDescriptorGetContentLock(buf),
+						 LWTRANCHE_BUFFER_CONTENT);
 
-			pg_atomic_init_u32(&buf->state, 0);
-			buf->wait_backend_pgprocno = INVALID_PROC_NUMBER;
-
-			buf->buf_id = i;
-
-			pgaio_wref_clear(&buf->io_wref);
-
-			/*
-			 * Initially link all the buffers together as unused. Subsequent
-			 * management of this list is done by freelist.c.
-			 */
-			buf->freeNext = i + 1;
-
-			LWLockInitialize(BufferDescriptorGetContentLock(buf),
-							 LWTRANCHE_BUFFER_CONTENT);
-
-			ConditionVariableInit(BufferDescriptorGetIOCV(buf));
-		}
-
-		/* Correct last entry of linked list */
-		GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
+		ConditionVariableInit(BufferDescriptorGetIOCV(buf));
 	}
+#endif
+
+	/* Correct last entry of linked list */
+	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
 	/* Init other shared buffer-management stuff */
 	StrategyInitialize(!foundDescs);
