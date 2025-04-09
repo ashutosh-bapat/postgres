@@ -593,6 +593,7 @@ PrefetchSharedBuffer(SMgrRelation smgr_reln,
 		 * to avoid a buffer table lookup, but it's not pinned and it must be
 		 * rechecked!
 		 */
+		/* TODO: probably we should add a macro to convert buf_id to buffer and back. Use it here and then in BufferDescriptorGetBuffer() and BufferGetBlock().*/
 		result.recent_buffer = buf_id + 1;
 	}
 
@@ -2922,6 +2923,13 @@ BufferSync(int flags)
 	int			mask = BM_DIRTY;
 	WritebackContext wb_context;
 
+	/*
+	 * TODO: We should not resize the buffers while this function is executing.
+	 * It may be possible to find parts of this function which are safe to
+	 * execute while resizing is going on. But given that the function scans all
+	 * the buffers and uses all the data structures being resized, attempting
+	 * those parts doesn't seem worth it.
+	 */
 	/*
 	 * Unless this is a shutdown checkpoint or we have been explicitly told,
 	 * we write only permanent, dirty buffers.  But at shutdown or end of
