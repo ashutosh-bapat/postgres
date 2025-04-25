@@ -159,10 +159,8 @@ BufferManagerShmemInit(int FirstBufferToInit)
 	/* Correct last entry of linked list */
 	/*
 	 * If we are here because of a resize:
-	 * TODO: I think this needs to be done only when expanding the buffers.
-	 * 
-	 * TODO: We should also fix the freelist to not point to a shrunk
-	 * buffer and to append the new buffers to the existing free list.
+	 * TODO: I think this needs to be done only when expanding the buffers. And
+	 * I think it should be moved into #ifndef EXEC_BACKEND block above.
 	 */
 	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
