@@ -1235,13 +1235,24 @@ EvictExtraBuffers()
 
 	/*
 	 * Let only one backend perform eviction. We could split the work across all
-	 * the backends but that doesn't seem necessary. The first backend to acquire sets its own PID as the evictor PID so that other backends do not perform eviction. Any backend which can not take this lock already knows that some backend is evicting the buffers without looking at evictor_pid. All the backends which do not perform eviction still wait for this phase to finish and thus release lock before the next phase begins. Thus the same LWLock can be used to select a leader for each phase. TODO: This comment would better be placed at a place common to all phases.
+	 * the backends but that doesn't seem necessary. The first backend to
+	 * acquire sets its own PID as the evictor PID so that other backends do not
+	 * perform eviction. Any backend which can not take this lock already knows
+	 * that some backend is evicting the buffers without looking at evictor_pid.
+	 * All the backends which do not perform eviction still wait for this phase
+	 * to finish and thus release lock before the next phase begins. Thus the
+	 * same LWLock can be used to select a leader for each phase. TODO: This
+	 * comment would better be placed at a place common to all phases.
 	 */
 	if (LWLockConditionalAcquire(ShmemResizeLock, LW_EXCLUSIVE))
 	{
 		if (ShmemCtrl->evictor_pid == 0)
 		{
+			int free_bufid;
+
 			ShmemCtrl->evictor_pid = MyProcPid;
+
+			StrategyPurgeFreeList(NBuffers);
 
 			/*
 			 * TODO: Before evicting any buffer, we should check whether any of the

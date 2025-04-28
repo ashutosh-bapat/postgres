@@ -128,7 +128,8 @@ BufferManagerShmemInit(int FirstBufferToInit)
 
 #ifndef EXEC_BACKEND
 	/*
-	 * Initialize all the buffer headers.
+	 * Initialize all the buffer headers. This will be executed only when
+	 * expanding shared buffers
 	 */
 	for (i = FirstBufferToInit; i < NBuffers; i++)
 	{

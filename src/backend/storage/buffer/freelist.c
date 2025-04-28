@@ -25,6 +25,7 @@
 #define INT_ACCESS_ONCE(var)	((int)(*((volatile int *)&(var))))
 
 
+
 /*
  * The shared freelist control information.
  */
@@ -560,6 +561,59 @@ StrategyReInitialize(void)
 
 	/* No pending notification */
 	StrategyControl->bgwprocno = -1;
+
+	/* TODO: Check sanity of free buffer list under Assert. */
+}
+
+/*
+ * StrategyPurgeFreeList -- remove all buffers with id higher than the number of
+ *		buffers from the free list.
+ *
+ * This is called when we are about to resize the buffer pool.
+ */
+void
+StrategyPurgeFreeList(int numBuffers)
+{
+	int firstBuffer = FREENEXT_NOT_IN_LIST;
+    int nextFree = StrategyControl->firstFreeBuffer;
+	BufferDesc *prevValidBuf = NULL;
+    BufferDesc *buf;
+
+    for (nextFree = StrategyControl->firstFreeBuffer;
+		 nextFree != FREENEXT_END_OF_LIST && (buf = GetBufferDescriptor(nextFree));
+		 nextFree = buf->freeNext)
+    {
+		Assert(nextFree == buf->buf_id);
+		Assert(buf->freeNext != FREENEXT_NOT_IN_LIST);
+
+        if (buf->buf_id < numBuffers)
+        {
+			/* Link next valid free buffer. */
+			if (prevValidBuf == NULL)
+				prevValidBuf->freeNext = buf->buf_id;
+
+			/* Save the first free buffer in the list if not already known. */
+			if (firstBuffer == FREENEXT_NOT_IN_LIST)
+				firstBuffer = nextFree;
+
+			prevValidBuf = buf;
+        }
+    }
+
+	/* Update the last valid free buffer, if there's any. */
+	if (prevValidBuf != NULL)
+		StrategyControl->lastFreeBuffer = prevValidBuf->buf_id;
+	else
+		StrategyControl->lastFreeBuffer = FREENEXT_END_OF_LIST;
+
+	/* Update first valid free buffer, if there's any. */
+	if (firstBuffer != FREENEXT_NOT_IN_LIST)
+	{
+		StrategyControl->firstFreeBuffer = firstBuffer;
+		Assert(StrategyControl->lastFreeBuffer != FREENEXT_END_OF_LIST);
+	}
+	else
+		Assert(StrategyControl->lastFreeBuffer == FREENEXT_END_OF_LIST);
 }
 
 /* ----------------------------------------------------------------
