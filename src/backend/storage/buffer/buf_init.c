@@ -157,13 +157,12 @@ BufferManagerShmemInit(int FirstBufferToInit)
 	}
 #endif
 
-	/* Correct last entry of linked list */
 	/*
-	 * If we are here because of a resize:
-	 * TODO: I think this needs to be done only when expanding the buffers. And
-	 * I think it should be moved into #ifndef EXEC_BACKEND block above.
+	 * Correct last entry of linked list, when initializing the buffers or when
+	 * expanding the buffers.
 	 */
-	GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
+	if (FirstBufferToInit < NBuffers)
+		GetBufferDescriptor(NBuffers - 1)->freeNext = FREENEXT_END_OF_LIST;
 
 	/*
 	 * Init other shared buffer-management stuff from scratch when rebuilding
