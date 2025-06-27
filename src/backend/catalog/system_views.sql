@@ -388,7 +388,14 @@ CREATE VIEW pg_publication_tables AS
           WHERE a.attrelid = GPT.relid AND
                 a.attnum = ANY(GPT.attrs)
         ) AS attnames,
-        pg_get_expr(GPT.qual, GPT.relid) AS rowfilter
+        pg_get_expr(GPT.qual, GPT.relid) AS rowfilter,
+        case C.relreplident
+            when 'd' then 'default'
+            when 'n' then 'nothing'
+            when 'f' then 'full'
+            when 'i' then 'index'
+            else NULL
+        end as replica_identity
     FROM pg_publication P,
          LATERAL pg_get_publication_tables(P.pubname) GPT,
          pg_class C JOIN pg_namespace N ON (N.oid = C.relnamespace)

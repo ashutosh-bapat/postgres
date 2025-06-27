@@ -1476,7 +1476,14 @@ pg_publication_tables| SELECT p.pubname,
     ( SELECT array_agg(a.attname ORDER BY a.attnum) AS array_agg
            FROM pg_attribute a
           WHERE ((a.attrelid = gpt.relid) AND (a.attnum = ANY ((gpt.attrs)::smallint[])))) AS attnames,
-    pg_get_expr(gpt.qual, gpt.relid) AS rowfilter
+    pg_get_expr(gpt.qual, gpt.relid) AS rowfilter,
+        CASE c.relreplident
+            WHEN 'd'::"char" THEN 'default'::text
+            WHEN 'n'::"char" THEN 'nothing'::text
+            WHEN 'f'::"char" THEN 'full'::text
+            WHEN 'i'::"char" THEN 'index'::text
+            ELSE NULL::text
+        END AS replica_identity
    FROM pg_publication p,
     LATERAL pg_get_publication_tables(VARIADIC ARRAY[(p.pubname)::text]) gpt(pubid, relid, attrs, qual),
     (pg_class c

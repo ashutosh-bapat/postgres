@@ -2698,6 +2698,15 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        Expression for the table's publication qualifying condition
       </para></entry>
      </row>
+
+     <row>
+      <entry role="catalog_table_entry"><para role="column_definition">
+       <structfield>replica_identity</structfield> <type>text</type>
+      </para>
+      <para>
+       Replica identity setting of the table.
+      </para></entry>
+     </row>
     </tbody>
    </tgroup>
   </table>

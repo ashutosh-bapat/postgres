@@ -364,10 +364,12 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (d > 99);
 -- fail - "d" is not part of the PK
 UPDATE rf_tbl_abcd_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 -- 1b. REPLICA IDENTITY is DEFAULT and table has no PK
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- fail - "a" is not part of REPLICA IDENTITY
 UPDATE rf_tbl_abcd_nopk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 
 -- Case 2. REPLICA IDENTITY FULL
 ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY FULL;
@@ -375,9 +377,11 @@ ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY FULL;
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
 -- ok - "c" is in REPLICA IDENTITY now even though not in PK
 UPDATE rf_tbl_abcd_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- ok - "a" is in REPLICA IDENTITY now
 UPDATE rf_tbl_abcd_nopk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 
 -- Case 3. REPLICA IDENTITY NOTHING
 ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY NOTHING;
@@ -388,9 +392,11 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
 -- fail - "c" is not in PK and not in REPLICA IDENTITY NOTHING
 UPDATE rf_tbl_abcd_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- fail - "a" is not in REPLICA IDENTITY NOTHING
 UPDATE rf_tbl_abcd_nopk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 
 -- Case 4. REPLICA IDENTITY INDEX
 ALTER TABLE rf_tbl_abcd_pk ALTER COLUMN c SET NOT NULL;
@@ -405,12 +411,14 @@ UPDATE rf_tbl_abcd_pk SET a = 1;
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
 -- ok - "c" is not in PK but it is part of REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- fail - "a" is not in REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_nopk SET a = 1;
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (c > 99);
 -- ok - "c" is part of REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_nopk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 
 -- Tests for partitioned table
 
@@ -451,6 +459,7 @@ ALTER PUBLICATION testpub6 SET (PUBLISH_VIA_PARTITION_ROOT=1);
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_part_pk WHERE (b > 99);
 -- fail - "b" is not in REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_part_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
 
 DROP PUBLICATION testpub6;
 DROP TABLE rf_tbl_abcd_pk;

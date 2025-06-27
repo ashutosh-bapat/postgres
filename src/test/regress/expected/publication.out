@@ -677,21 +677,45 @@ ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (d > 99);
 UPDATE rf_tbl_abcd_pk SET a = 1;
 ERROR:  cannot update table "rf_tbl_abcd_pk"
 DETAIL:  Column used in the publication WHERE expression is not part of the replica identity.
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |   tablename    | attnames  | rowfilter | replica_identity 
+----------+------------+----------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_pk | {a,b,c,d} | (d > 99)  | default
+(1 row)
+
 -- 1b. REPLICA IDENTITY is DEFAULT and table has no PK
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- fail - "a" is not part of REPLICA IDENTITY
 UPDATE rf_tbl_abcd_nopk SET a = 1;
 ERROR:  cannot update table "rf_tbl_abcd_nopk"
 DETAIL:  Column used in the publication WHERE expression is not part of the replica identity.
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |    tablename     | attnames  | rowfilter | replica_identity 
+----------+------------+------------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_nopk | {a,b,c,d} | (a > 99)  | default
+(1 row)
+
 -- Case 2. REPLICA IDENTITY FULL
 ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY FULL;
 ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY FULL;
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
 -- ok - "c" is in REPLICA IDENTITY now even though not in PK
 UPDATE rf_tbl_abcd_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |   tablename    | attnames  | rowfilter | replica_identity 
+----------+------------+----------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_pk | {a,b,c,d} | (c > 99)  | full
+(1 row)
+
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- ok - "a" is in REPLICA IDENTITY now
 UPDATE rf_tbl_abcd_nopk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |    tablename     | attnames  | rowfilter | replica_identity 
+----------+------------+------------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_nopk | {a,b,c,d} | (a > 99)  | full
+(1 row)
+
 -- Case 3. REPLICA IDENTITY NOTHING
 ALTER TABLE rf_tbl_abcd_pk REPLICA IDENTITY NOTHING;
 ALTER TABLE rf_tbl_abcd_nopk REPLICA IDENTITY NOTHING;
@@ -705,11 +729,23 @@ ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
 UPDATE rf_tbl_abcd_pk SET a = 1;
 ERROR:  cannot update table "rf_tbl_abcd_pk"
 DETAIL:  Column used in the publication WHERE expression is not part of the replica identity.
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |   tablename    | attnames  | rowfilter | replica_identity 
+----------+------------+----------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_pk | {a,b,c,d} | (c > 99)  | nothing
+(1 row)
+
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- fail - "a" is not in REPLICA IDENTITY NOTHING
 UPDATE rf_tbl_abcd_nopk SET a = 1;
 ERROR:  cannot update table "rf_tbl_abcd_nopk"
 DETAIL:  Column used in the publication WHERE expression is not part of the replica identity.
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |    tablename     | attnames  | rowfilter | replica_identity 
+----------+------------+------------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_nopk | {a,b,c,d} | (a > 99)  | nothing
+(1 row)
+
 -- Case 4. REPLICA IDENTITY INDEX
 ALTER TABLE rf_tbl_abcd_pk ALTER COLUMN c SET NOT NULL;
 CREATE UNIQUE INDEX idx_abcd_pk_c ON rf_tbl_abcd_pk(c);
@@ -725,6 +761,12 @@ DETAIL:  Column used in the publication WHERE expression is not part of the repl
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_pk WHERE (c > 99);
 -- ok - "c" is not in PK but it is part of REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_pk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |   tablename    | attnames  | rowfilter | replica_identity 
+----------+------------+----------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_pk | {a,b,c,d} | (c > 99)  | index
+(1 row)
+
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (a > 99);
 -- fail - "a" is not in REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_nopk SET a = 1;
@@ -733,6 +775,12 @@ DETAIL:  Column used in the publication WHERE expression is not part of the repl
 ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_nopk WHERE (c > 99);
 -- ok - "c" is part of REPLICA IDENTITY INDEX
 UPDATE rf_tbl_abcd_nopk SET a = 1;
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |    tablename     | attnames  | rowfilter | replica_identity 
+----------+------------+------------------+-----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_nopk | {a,b,c,d} | (c > 99)  | index
+(1 row)
+
 -- Tests for partitioned table
 -- set PUBLISH_VIA_PARTITION_ROOT to false and test row filter for partitioned
 -- table
@@ -779,6 +827,12 @@ ALTER PUBLICATION testpub6 SET TABLE rf_tbl_abcd_part_pk WHERE (b > 99);
 UPDATE rf_tbl_abcd_part_pk SET a = 1;
 ERROR:  cannot update table "rf_tbl_abcd_part_pk_1"
 DETAIL:  Column used in the publication WHERE expression is not part of the replica identity.
+SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
+ pubname  | schemaname |      tablename      | attnames | rowfilter | replica_identity 
+----------+------------+---------------------+----------+-----------+------------------
+ testpub6 | public     | rf_tbl_abcd_part_pk | {a,b}    | (b > 99)  | default
+(1 row)
+
 DROP PUBLICATION testpub6;
 DROP TABLE rf_tbl_abcd_pk;
 DROP TABLE rf_tbl_abcd_nopk;
@@ -1863,52 +1917,52 @@ CREATE TABLE sch2.tbl1_part1 PARTITION OF sch1.tbl1 FOR VALUES FROM (1) to (10);
 -- Schema publication that does not include the schema that has the parent table
 CREATE PUBLICATION pub FOR TABLES IN SCHEMA sch2 WITH (PUBLISH_VIA_PARTITION_ROOT=1);
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename  | attnames | rowfilter 
----------+------------+------------+----------+-----------
- pub     | sch2       | tbl1_part1 | {a}      | 
+ pubname | schemaname | tablename  | attnames | rowfilter | replica_identity 
+---------+------------+------------+----------+-----------+------------------
+ pub     | sch2       | tbl1_part1 | {a}      |           | default
 (1 row)
 
 DROP PUBLICATION pub;
 -- Table publication that does not include the parent table
 CREATE PUBLICATION pub FOR TABLE sch2.tbl1_part1 WITH (PUBLISH_VIA_PARTITION_ROOT=1);
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename  | attnames | rowfilter 
----------+------------+------------+----------+-----------
- pub     | sch2       | tbl1_part1 | {a}      | 
+ pubname | schemaname | tablename  | attnames | rowfilter | replica_identity 
+---------+------------+------------+----------+-----------+------------------
+ pub     | sch2       | tbl1_part1 | {a}      |           | default
 (1 row)
 
 -- Table publication that includes both the parent table and the child table
 ALTER PUBLICATION pub ADD TABLE sch1.tbl1;
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename | attnames | rowfilter 
----------+------------+-----------+----------+-----------
- pub     | sch1       | tbl1      | {a}      | 
+ pubname | schemaname | tablename | attnames | rowfilter | replica_identity 
+---------+------------+-----------+----------+-----------+------------------
+ pub     | sch1       | tbl1      | {a}      |           | default
 (1 row)
 
 DROP PUBLICATION pub;
 -- Schema publication that does not include the schema that has the parent table
 CREATE PUBLICATION pub FOR TABLES IN SCHEMA sch2 WITH (PUBLISH_VIA_PARTITION_ROOT=0);
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename  | attnames | rowfilter 
----------+------------+------------+----------+-----------
- pub     | sch2       | tbl1_part1 | {a}      | 
+ pubname | schemaname | tablename  | attnames | rowfilter | replica_identity 
+---------+------------+------------+----------+-----------+------------------
+ pub     | sch2       | tbl1_part1 | {a}      |           | default
 (1 row)
 
 DROP PUBLICATION pub;
 -- Table publication that does not include the parent table
 CREATE PUBLICATION pub FOR TABLE sch2.tbl1_part1 WITH (PUBLISH_VIA_PARTITION_ROOT=0);
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename  | attnames | rowfilter 
----------+------------+------------+----------+-----------
- pub     | sch2       | tbl1_part1 | {a}      | 
+ pubname | schemaname | tablename  | attnames | rowfilter | replica_identity 
+---------+------------+------------+----------+-----------+------------------
+ pub     | sch2       | tbl1_part1 | {a}      |           | default
 (1 row)
 
 -- Table publication that includes both the parent table and the child table
 ALTER PUBLICATION pub ADD TABLE sch1.tbl1;
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename  | attnames | rowfilter 
----------+------------+------------+----------+-----------
- pub     | sch2       | tbl1_part1 | {a}      | 
+ pubname | schemaname | tablename  | attnames | rowfilter | replica_identity 
+---------+------------+------------+----------+-----------+------------------
+ pub     | sch2       | tbl1_part1 | {a}      |           | default
 (1 row)
 
 DROP PUBLICATION pub;
@@ -1921,9 +1975,9 @@ CREATE TABLE sch1.tbl1_part3 (a int) PARTITION BY RANGE(a);
 ALTER TABLE sch1.tbl1 ATTACH PARTITION sch1.tbl1_part3 FOR VALUES FROM (20) to (30);
 CREATE PUBLICATION pub FOR TABLES IN SCHEMA sch1 WITH (PUBLISH_VIA_PARTITION_ROOT=1);
 SELECT * FROM pg_publication_tables;
- pubname | schemaname | tablename | attnames | rowfilter 
----------+------------+-----------+----------+-----------
- pub     | sch1       | tbl1      | {a}      | 
+ pubname | schemaname | tablename | attnames | rowfilter | replica_identity 
+---------+------------+-----------+----------+-----------+------------------
+ pub     | sch1       | tbl1      | {a}      |           | default
 (1 row)
 
 RESET client_min_messages;
