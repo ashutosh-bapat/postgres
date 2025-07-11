@@ -3,7 +3,10 @@
 MODULE_big = exprs
 OBJS = \
 	$(WIN32RES) \
+	palloc_exprs.o \
 	exprs.o \
+	dynahash_exprs.o
+	
 
 EXTENSION = exprs
 DATA = exprs--1.1.sql

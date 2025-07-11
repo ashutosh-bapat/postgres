@@ -1,7 +1,10 @@
 # Copyright (c) 20244-2024, Ashutosh Bapat
 
 exprs_sources = files(
+  'palloc_exprs.c',
   'exprs.c',
+  'dynahash_exprs.c',
+  'common.c',
 )
 
 exprs = shared_module('exprs',
