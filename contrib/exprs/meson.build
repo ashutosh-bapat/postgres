@@ -2,7 +2,7 @@
 
 exprs_sources = files(
   'palloc_exprs.c',
-  'exprs.c',
+  'relids_exprs.c',
   'dynahash_exprs.c',
   'common.c',
 )

@@ -5,7 +5,8 @@ OBJS = \
 	$(WIN32RES) \
 	palloc_exprs.o \
 	exprs.o \
-	dynahash_exprs.o
+	dynahash_exprs.o \
+	relid_exprs.o
 	
 
 EXTENSION = exprs
