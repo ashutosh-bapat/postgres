@@ -830,7 +830,7 @@ DETAIL:  Column used in the publication WHERE expression is not part of the repl
 SELECT * FROM pg_publication_tables WHERE pubname = 'testpub6';
  pubname  | schemaname |      tablename      | attnames | rowfilter | replica_identity 
 ----------+------------+---------------------+----------+-----------+------------------
- testpub6 | public     | rf_tbl_abcd_part_pk | {a,b}    | (b > 99)  | default
+ testpub6 | public     | rf_tbl_abcd_part_pk | {a,b}    | (b > 99)  | default (mixed)
 (1 row)
 
 DROP PUBLICATION testpub6;
@@ -1936,7 +1936,7 @@ ALTER PUBLICATION pub ADD TABLE sch1.tbl1;
 SELECT * FROM pg_publication_tables;
  pubname | schemaname | tablename | attnames | rowfilter | replica_identity 
 ---------+------------+-----------+----------+-----------+------------------
- pub     | sch1       | tbl1      | {a}      |           | default
+ pub     | sch1       | tbl1      | {a}      |           | default (mixed)
 (1 row)
 
 DROP PUBLICATION pub;
@@ -1977,7 +1977,7 @@ CREATE PUBLICATION pub FOR TABLES IN SCHEMA sch1 WITH (PUBLISH_VIA_PARTITION_ROO
 SELECT * FROM pg_publication_tables;
  pubname | schemaname | tablename | attnames | rowfilter | replica_identity 
 ---------+------------+-----------+----------+-----------+------------------
- pub     | sch1       | tbl1      | {a}      |           | default
+ pub     | sch1       | tbl1      | {a}      |           | default (mixed)
 (1 row)
 
 RESET client_min_messages;

@@ -2704,7 +2704,13 @@ SELECT * FROM pg_locks pl LEFT JOIN pg_prepared_xacts ppx
        <structfield>replica_identity</structfield> <type>text</type>
       </para>
       <para>
-       Replica identity setting of the table.
+       Replica identity setting of the table. If publication_via_root is true
+       for the given publication, only the root partitioned table is part of the
+       publication but the replica identity of the respective partition is used
+       for replication. Each partition may have different replica identity which
+       in turn may be different from the partitioned table's replica identity.
+       To accomodate this the column shows replica identity of the root
+       partitioned table suffixed by '(mixed)' publication_via_root is true.
       </para></entry>
      </row>
     </tbody>
