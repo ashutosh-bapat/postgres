@@ -53,6 +53,7 @@
 #include "common/int.h"
 #include "executor/instrument.h"
 #include "funcapi.h"
+#include "hll.h"
 #include "jit/jit.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
@@ -71,6 +72,8 @@
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
+#include "storage/bufmgr.h"
+#include "storage/shmem.h"
 
 PG_MODULE_MAGIC_EXT(
 					.name = "pg_stat_statements",
@@ -90,6 +93,10 @@ static const uint32 PGSS_FILE_HEADER = 0x20250731;
 
 /* PostgreSQL major version number, changes in which invalidate all entries */
 static const uint32 PGSS_PG_MAJOR_VERSION = PG_VERSION_NUM / 100;
+
+static HyperLogLogState *BufferPoolWss = NULL;
+
+static void orion_wss_add_hash(uint32 hash);
 
 /* XXX: Should USAGE_EXEC reflect execution time and/or buffer usage? */
 #define USAGE_EXEC(duration)	(1.0)
@@ -505,6 +512,12 @@ pgss_shmem_request(void)
 
 	RequestAddinShmemSpace(pgss_memsize());
 	RequestNamedLWLockTranche("pg_stat_statements", 1);
+
+	/* Request shared memory for buffer pool WSS HLL state */
+	RequestAddinShmemSpace(sizeof(HyperLogLogState));
+
+	/* Register the WSS tracking hook */
+	WssAddHashHook = orion_wss_add_hash;
 }
 
 /*
@@ -563,6 +576,14 @@ pgss_shmem_startup(void)
 							  pgss_max, pgss_max,
 							  &info,
 							  HASH_ELEM | HASH_BLOBS);
+
+	/* Initialize buffer pool working set size HLL state */
+	BufferPoolWss = (HyperLogLogState *)
+		ShmemInitStruct("Orion Buffer Pool WSS",
+						sizeof(HyperLogLogState),
+						&found);
+	if (!found)
+		initSHLL(BufferPoolWss);
 
 	LWLockRelease(AddinShmemInitLock);
 
@@ -3075,4 +3096,37 @@ comp_location(const void *a, const void *b)
 	int			r = ((const LocationLen *) b)->location;
 
 	return pg_cmp_s32(l, r);
+}
+
+/*
+ * WSS hook function: add buffer tag hash to HLL estimator.
+ * Called from BufferAlloc() for every buffer allocation.
+ */
+static void
+orion_wss_add_hash(uint32 hash)
+{
+  addSHLL(BufferPoolWss, hash);
+}
+
+/*
+ * SQL function: pg_bufferpool_working_set_size_pages
+ *
+ * Returns the estimated number of unique buffer pages accessed
+ * in the last 'duration' seconds.
+ */
+PG_FUNCTION_INFO_V1(pg_bufferpool_working_set_size_pages);
+
+Datum
+pg_bufferpool_working_set_size_pages(PG_FUNCTION_ARGS)
+{
+	int32		result;
+	time_t		duration;
+
+	if (BufferPoolWss == NULL)
+		PG_RETURN_NULL();
+
+	duration = (time_t) PG_GETARG_INT32(0);
+	result = (int32) estimateSHLL(BufferPoolWss, duration);
+
+	PG_RETURN_INT32(result);
 }

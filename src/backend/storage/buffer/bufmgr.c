@@ -171,6 +171,13 @@ typedef struct SMgrSortArray
 	SMgrRelation srel;
 } SMgrSortArray;
 
+/*
+ * Hook for working set size tracking.
+ * Initially NULL - extensions set this to enable tracking.
+ */
+WssAddHashHook_type WssAddHashHook = NULL;
+
+
 /* GUC variables */
 bool		zero_damaged_pages = false;
 int			bgwriter_lru_maxpages = 100;
@@ -2123,6 +2130,10 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	/* determine its hash code and partition lock ID */
 	newHash = BufTableHashCode(&newTag);
 	newPartitionLock = BufMappingPartitionLock(newHash);
+
+	/* Track buffer access for working set size estimation */
+	if (likely(WssAddHashHook != NULL))
+		WssAddHashHook(newHash);
 
 	/* see if the block is in the buffer pool already */
 	LWLockAcquire(newPartitionLock, LW_SHARED);

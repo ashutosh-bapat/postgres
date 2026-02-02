@@ -393,6 +393,14 @@ extern int	GetAccessStrategyPinLimit(BufferAccessStrategy strategy);
 
 extern void FreeAccessStrategy(BufferAccessStrategy strategy);
 
+/*
+ * Hook for working set size tracking.
+ * Called from PinBuffer/PinBuffer_Locked with the hash of the buffer tag.
+ * Extensions can set this hook to track unique buffer pages accessed.
+ */
+typedef void (*WssAddHashHook_type)(uint32 hash);
+extern PGDLLIMPORT WssAddHashHook_type WssAddHashHook;
+
 
 /* inline functions */
 
