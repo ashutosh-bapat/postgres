@@ -19,8 +19,6 @@ pairingheap.c - a pairing heap
 
 rbtree.c - a red-black tree
 
-hll.c - Sliding HyperLogLog cardinality estimator
-
 
 Aside from the inherent characteristics of the data structures, there are a
 few practical differences between the binary heap and the pairing heap. The

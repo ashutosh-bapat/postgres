@@ -76,3 +76,10 @@ CREATE VIEW pg_stat_statements AS
   SELECT * FROM pg_stat_statements(true);
 
 GRANT SELECT ON pg_stat_statements TO PUBLIC;
+
+CREATE FUNCTION pg_bufferpool_working_set_size_pages(duration integer)
+RETURNS integer
+AS 'MODULE_PATHNAME', 'pg_bufferpool_working_set_size_pages'
+LANGUAGE C PARALLEL SAFE;
+
+GRANT EXECUTE ON FUNCTION pg_bufferpool_working_set_size_pages(integer) TO PUBLIC;

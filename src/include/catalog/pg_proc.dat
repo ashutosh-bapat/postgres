@@ -12703,10 +12703,6 @@
   proname => 'hashoid8extended', prorettype => 'int8',
   proargtypes => 'oid8 int8', prosrc => 'hashoid8extended' },
 
-{ oid => '9998', descr => 'Returns the estimated number of unique buffer pages accessed in the last 'duration' seconds.',
-  proname => 'pg_bufferpool_working_set_size_pages', prorettype => 'int4',
-  proargtypes => 'int4', prosrc => 'pg_bufferpool_working_set_size_pages' },
-
 { oid => '9999', descr => 'resize shared buffers according to the value of GUC `shared_buffers`',
   proname => 'pg_resize_shared_buffers',
   provolatile => 'v',

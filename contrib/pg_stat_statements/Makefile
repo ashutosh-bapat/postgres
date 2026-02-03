@@ -3,7 +3,8 @@
 MODULE_big = pg_stat_statements
 OBJS = \
 	$(WIN32RES) \
-	pg_stat_statements.o
+	pg_stat_statements.o \
+	hll.o
 
 EXTENSION = pg_stat_statements
 DATA = pg_stat_statements--1.4.sql \

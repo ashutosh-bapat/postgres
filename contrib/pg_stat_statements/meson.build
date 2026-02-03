@@ -2,6 +2,7 @@
 
 pg_stat_statements_sources = files(
   'pg_stat_statements.c',
+  'hhl.c'
 )
 
 if host_system == 'windows'
