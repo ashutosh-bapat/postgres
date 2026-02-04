@@ -759,7 +759,7 @@ round_off_mapping_sizes_for_hugepages(MemoryMappingSizes *mapping, int hugepages
 		return;
 
 	if (mapping->shmem_req_size % hugepagesize != 0)
-		mapping->shmem_req_size += add_size(mapping->shmem_req_size,
+		mapping->shmem_req_size = add_size(mapping->shmem_req_size,
 											hugepagesize - (mapping->shmem_req_size % hugepagesize));
 
 	if (mapping->shmem_reserved % hugepagesize != 0)
