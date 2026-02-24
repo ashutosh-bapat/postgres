@@ -17,6 +17,7 @@
 #include "storage/bufmgr.h"
 #include "utils/rel.h"
 #include "utils/tuplestore.h"
+#include "utils/injection_point.h"
 
 
 #define NUM_BUFFERCACHE_PAGES_MIN_ELEM	8
@@ -199,6 +200,11 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 		 * snapshot across all buffers, but we do grab the buffer header
 		 * locks, so the information of each buffer is self-consistent.
 		 */
+
+		/*
+		 * This point fails when lock bufHdr fails later because of invalid buffer after resize. 
+		 */
+		INJECTION_POINT("pg-buffercache-scan-start", NULL);
 		for (i = 0; i < currentNBuffers; i++)
 		{
 			BufferDesc *bufHdr;
@@ -212,17 +218,27 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 			 * happen if only we setup the descriptor array large enough at
 			 * the server startup time.
 			 */
-			if (currentNBuffers != pg_atomic_read_u32(&ShmemCtrl->currentNBuffers))
-				ereport(ERROR,
-						(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-						 errmsg("number of shared buffers changed during scan of buffer cache")));
+			// if (currentNBuffers != pg_atomic_read_u32(&ShmemCtrl->currentNBuffers))
+			// 	ereport(ERROR,
+			// 			(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+			// 			 errmsg("number of shared buffers changed during scan of buffer cache")));
 
+			elog(DEBUG1, "scanning buffer %d", i);
+			
 			bufHdr = GetBufferDescriptor(i);
-			/* Lock each buffer header before inspecting. */
-			buf_state = LockBufHdr(bufHdr);
-
+			
+			/* Injection point during scan to test resize interaction during buffer resize and accessing invalid buffers after resize in case of shrinking */
+			if(i==currentNBuffers/2) 
+				INJECTION_POINT("pg-buffercache-after-getdesc", NULL);
+			/*
+			 * Point of failure is when invalid buffer is accessed after resize.
+			 * All the places where bufHdr is being called.
+			 * One injection point before locking buffer descriptor helps covers all the later cases.
+			*/
+			buf_state = LockBufHdr(bufHdr);			
+			elog(DEBUG1, "got buffer descriptor for buffer %d", i);
 			fctx->record[i].bufferid = BufferDescriptorGetBuffer(bufHdr);
-			fctx->record[i].relfilenumber = BufTagGetRelNumber(&bufHdr->tag);
+			fctx->record[i].relfilenumber = BufTagGetRelNumber(&bufHdr->tag);								
 			fctx->record[i].reltablespace = bufHdr->tag.spcOid;
 			fctx->record[i].reldatabase = bufHdr->tag.dbOid;
 			fctx->record[i].forknum = BufTagGetForkNum(&bufHdr->tag);
@@ -350,6 +366,7 @@ pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 		int			max_entries;
 		char	   *startptr,
 				   *endptr;
+		int			currentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
 
 		/* If NUMA information is requested, initialize NUMA support. */
 		if (include_numa && pg_numa_init() == -1)
@@ -392,7 +409,7 @@ pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 			startptr = (char *) TYPEALIGN_DOWN(os_page_size,
 											   BufferGetBlock(1));
 			endptr = (char *) TYPEALIGN(os_page_size,
-										(char *) BufferGetBlock(NBuffers) + BLCKSZ);
+										(char *) BufferGetBlock(currentNBuffers) + BLCKSZ);
 			os_page_count = (endptr - startptr) / os_page_size;
 
 			/* Used to determine the NUMA node for all OS pages at once */
@@ -418,7 +435,7 @@ pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 			Assert(idx == os_page_count);
 
 			elog(DEBUG1, "NUMA: NBuffers=%d os_page_count=" UINT64_FORMAT " "
-				 "os_page_size=%zu", NBuffers, os_page_count, os_page_size);
+				 "os_page_size=%zu", currentNBuffers, os_page_count, os_page_size);
 
 			/*
 			 * If we ever get 0xff back from kernel inquiry, then we probably
@@ -467,7 +484,7 @@ pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 		 * without reallocating memory.
 		 */
 		pages_per_buffer = Max(1, BLCKSZ / os_page_size) + 1;
-		max_entries = NBuffers * pages_per_buffer;
+		max_entries = currentNBuffers * pages_per_buffer;
 
 		/* Allocate entries for BufferCacheOsPagesRec records. */
 		fctx->record = (BufferCacheOsPagesRec *)
@@ -490,7 +507,7 @@ pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 		 */
 		startptr = (char *) TYPEALIGN_DOWN(os_page_size, (char *) BufferGetBlock(1));
 		idx = 0;
-		for (i = 0; i < NBuffers; i++)
+		for (i = 0; i < currentNBuffers; i++)
 		{
 			char	   *buffptr = (char *) BufferGetBlock(i + 1);
 			BufferDesc *bufHdr;
@@ -500,6 +517,11 @@ pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 					   *endptr_buff;
 
 			CHECK_FOR_INTERRUPTS();
+
+			if (currentNBuffers != pg_atomic_read_u32(&ShmemCtrl->currentNBuffers))
+				ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("number of shared buffers changed during scan of buffer cache")));
 
 			bufHdr = GetBufferDescriptor(i);
 
@@ -632,16 +654,22 @@ pg_buffercache_summary(PG_FUNCTION_ARGS)
 	int32		buffers_dirty = 0;
 	int32		buffers_pinned = 0;
 	int64		usagecount_total = 0;
+	int			currentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
 
 	if (get_call_result_type(fcinfo, NULL, &tupledesc) != TYPEFUNC_COMPOSITE)
 		elog(ERROR, "return type must be a row type");
 
-	for (int i = 0; i < NBuffers; i++)
+	for (int i = 0; i < currentNBuffers; i++)
 	{
 		BufferDesc *bufHdr;
 		uint64		buf_state;
 
 		CHECK_FOR_INTERRUPTS();
+
+		if (currentNBuffers != pg_atomic_read_u32(&ShmemCtrl->currentNBuffers))
+			ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("number of shared buffers changed during scan of buffer cache")));
 
 		/*
 		 * This function summarizes the state of all headers. Locking the
@@ -694,16 +722,22 @@ pg_buffercache_usage_counts(PG_FUNCTION_ARGS)
 	int			pinned[BM_MAX_USAGE_COUNT + 1] = {0};
 	Datum		values[NUM_BUFFERCACHE_USAGE_COUNTS_ELEM];
 	bool		nulls[NUM_BUFFERCACHE_USAGE_COUNTS_ELEM] = {0};
+	int			currentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
 
 	InitMaterializedSRF(fcinfo, 0);
 
-	for (int i = 0; i < NBuffers; i++)
+	for (int i = 0; i < currentNBuffers; i++)
 	{
 		BufferDesc *bufHdr = GetBufferDescriptor(i);
 		uint64		buf_state = pg_atomic_read_u64(&bufHdr->state);
 		int			usage_count;
 
 		CHECK_FOR_INTERRUPTS();
+
+		if (currentNBuffers != pg_atomic_read_u32(&ShmemCtrl->currentNBuffers))
+			ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				errmsg("number of shared buffers changed during scan of buffer cache")));
 
 		usage_count = BUF_STATE_GET_USAGECOUNT(buf_state);
 		usage_counts[usage_count]++;
@@ -755,13 +789,15 @@ pg_buffercache_evict(PG_FUNCTION_ARGS)
 
 	Buffer		buf = PG_GETARG_INT32(0);
 	bool		buffer_flushed;
+	int			currentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
+
 
 	if (get_call_result_type(fcinfo, NULL, &tupledesc) != TYPEFUNC_COMPOSITE)
 		elog(ERROR, "return type must be a row type");
 
 	pg_buffercache_superuser_check("pg_buffercache_evict");
 
-	if (buf < 1 || buf > NBuffers)
+	if (buf < 1 || buf > currentNBuffers)
 		elog(ERROR, "bad buffer ID: %d", buf);
 
 	values[0] = BoolGetDatum(EvictUnpinnedBuffer(buf, &buffer_flushed));

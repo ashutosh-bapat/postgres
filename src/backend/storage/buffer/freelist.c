@@ -887,3 +887,12 @@ StrategyRejectBuffer(BufferAccessStrategy strategy, BufferDesc *buf, bool from_r
 
 	return true;
 }
+
+/*
+ * GetActiveBufferCount -- return the current active buffer count
+ */
+int
+GetActiveBufferCount(void)
+{
+	return pg_atomic_read_u32(&StrategyControl->activeNBuffers);
+}

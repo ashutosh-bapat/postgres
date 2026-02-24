@@ -38,5 +38,13 @@ tests += {
       'pg_buffercache',
       'pg_buffercache_numa',
     ],
-  },
+   },
+  'tap': {
+    'env': {
+      'enable_injection_points': get_option('injection_points') ? 'yes' : 'no',
+    },
+    'tests': [
+      't/001_basic.pl',
+    ],
+   }
 }

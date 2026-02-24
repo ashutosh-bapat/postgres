@@ -1,6 +1,6 @@
 CREATE EXTENSION pg_buffercache;
 
-select pg_size_bytes(setting)/(select setting::bigint from pg_settings where name = 'block_size') AS nbuffers
+select setting::bigint AS nbuffers
         from pg_settings
         where name = 'shared_buffers'
 \gset

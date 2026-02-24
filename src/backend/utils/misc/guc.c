@@ -5353,7 +5353,7 @@ ShowGUCOption(const struct config_generic *record, bool use_units)
 			{
 				const struct config_int *conf = &record->_int;
 
-				if (conf->show_hook)
+				if (conf->show_hook && use_units)
 					val = conf->show_hook();
 				else
 				{
