@@ -913,6 +913,7 @@ void
 PrepareHugePages()
 {
 	void	   *ptr = MAP_FAILED;
+	Size		total_size = 0;
 	MemoryMappingSizes mapping_sizes[NUM_MEMORY_MAPPINGS];
 	int			mmap_flags = (MAP_SHARED | MAP_HASSEMAPHORE);
 
@@ -927,8 +928,7 @@ PrepareHugePages()
 #else
 	if (huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY)
 	{
-		Size		hugepagesize,
-					total_size = 0;
+		Size		hugepagesize;
 		int			huge_mmap_flags;
 
 		GetHugePageSize(&hugepagesize, &huge_mmap_flags, NULL);
@@ -964,6 +964,13 @@ PrepareHugePages()
 	SetConfigOption("huge_pages_status", (ptr == MAP_FAILED) ? "off" : "on",
 					PGC_INTERNAL, PGC_S_DYNAMIC_DEFAULT);
 	huge_pages_on = ptr != MAP_FAILED;
+
+	/* Release the mapped memory if huge pages are in use */
+    if (ptr != MAP_FAILED)
+    {
+        if (munmap(ptr, total_size) < 0)
+            elog(LOG, "munmap(%p, %zu) failed: %m", ptr, total_size);
+    }
 }
 
 /*
