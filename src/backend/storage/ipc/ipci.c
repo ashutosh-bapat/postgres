@@ -173,12 +173,18 @@ CalculateShmemSize(MemoryMappingSizes *mapping_sizes)
 	 */
 	mapping_sizes[MAIN_SHMEM_SEGMENT].shmem_req_size = size;
 	mapping_sizes[MAIN_SHMEM_SEGMENT].shmem_reserved = size;
+	round_off_mapping_sizes(&mapping_sizes[MAIN_SHMEM_SEGMENT], BLCKSZ);
+	if (huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY)
+	{
+		Size 	hugepagesize = 0;
+		GetHugePageSize(&hugepagesize, NULL, NULL);
+		round_off_mapping_sizes(&mapping_sizes[MAIN_SHMEM_SEGMENT], hugepagesize);
+	}
 
 	size = 0;
 	/* might as well round it off to a multiple of a typical page size */
 	for (int segment = 0; segment < NUM_MEMORY_MAPPINGS; segment++)
 	{
-		round_off_mapping_sizes(&mapping_sizes[segment]);
 		/* Compute the total size of all segments */
 		size = size + mapping_sizes[segment].shmem_req_size;
 	}
@@ -234,7 +240,7 @@ CreateSharedMemoryAndSemaphores(void)
 	CalculateShmemSize(mapping_sizes);
 
 	/* Decide if we use huge pages or regular size pages */
-	PrepareHugePages();
+	PrepareHugePages(mapping_sizes);
 
 	/*
 	 * Make sure that huge pages are never reported as "unknown" while the
@@ -404,17 +410,23 @@ CreateOrAttachShmemStructs(void)
 void
 InitializeShmemGUCs(void)
 {
-	char		buf[64];
 	Size		size_b;
-	Size		size_mb;
-	Size		hp_size;
 	MemoryMappingSizes mapping_sizes[NUM_MEMORY_MAPPINGS];
-
 
 	/*
 	 * Calculate the shared memory size and round up to the nearest megabyte.
 	 */
 	size_b = CalculateShmemSize(mapping_sizes);
+	UpdateShmemGUCs(size_b);
+}
+
+
+void
+UpdateShmemGUCs(Size size_b)
+{
+	char		buf[64];
+	Size		size_mb;
+	Size		hp_size;
 	size_mb = add_size(size_b, (1024 * 1024) - 1) / (1024 * 1024);
 	sprintf(buf, "%zu", size_mb);
 	SetConfigOption("shared_memory_size", buf,

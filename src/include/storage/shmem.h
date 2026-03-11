@@ -39,9 +39,9 @@ extern HTAB *ShmemInitHash(const char *name, int64 init_size, int64 max_size,
 						   HASHCTL *infoP, int hash_flags);
 extern void *ShmemInitStruct(const char *name, Size size, bool *foundPtr);
 extern void *ShmemInitStructInSegment(const char *name, Size size,
-									  bool *foundPtr, int segment_id);
-extern void *ShmemResizeStructInSegment(const char *name, Size size,
-										bool *foundPtr, int segment_id);
+										  bool *foundPtr, int segment_id);
+extern void ShmemResizeStructInSegment(const char *name, Size size,
+											bool *foundPtr, int segment_id, const void * originalPtr);
 extern Size add_size(Size s1, Size s2);
 extern Size mul_size(Size s1, Size s2);
 

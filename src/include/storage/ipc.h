@@ -86,5 +86,6 @@ extern void CreateSharedMemoryAndSemaphores(void);
 extern void AttachSharedMemoryStructs(void);
 #endif
 extern void InitializeShmemGUCs(void);
+extern void UpdateShmemGUCs(Size size_b);
 
 #endif							/* IPC_H */

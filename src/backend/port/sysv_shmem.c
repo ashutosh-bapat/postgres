@@ -749,25 +749,6 @@ shmem_fallocate(int fd, const char *mapping_name, Size size, int elevel)
 }
 
 /*
- * Round up the required amount of memory and the amount of required reserved
- * address space to the nearest huge page size.
- */
-static inline void
-round_off_mapping_sizes_for_hugepages(MemoryMappingSizes *mapping, int hugepagesize)
-{
-	if (hugepagesize == 0)
-		return;
-
-	if (mapping->shmem_req_size % hugepagesize != 0)
-		mapping->shmem_req_size = add_size(mapping->shmem_req_size,
-											hugepagesize - (mapping->shmem_req_size % hugepagesize));
-
-	if (mapping->shmem_reserved % hugepagesize != 0)
-		mapping->shmem_reserved = add_size(mapping->shmem_reserved,
-										   hugepagesize - (mapping->shmem_reserved % hugepagesize));
-}
-
-/*
  * Creates an anonymous mmap()ed shared memory segment.
  *
  * This function will modify mapping size to the actual size of the allocation,
@@ -803,9 +784,7 @@ CreateAnonymousSegment(int segment_id, MemoryMappingSizes *mapping)
 		/* Make sure nothing is messed up */
 		Assert(huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY);
 
-		/* Round up the request size to a suitable large value */
 		GetHugePageSize(&hugepagesize, &huge_mmap_flags, &huge_memfd_flags);
-		round_off_mapping_sizes_for_hugepages(mapping, hugepagesize);
 
 		/* Verify that the new size is withing the reserved boundaries */
 		Assert(mapping->shmem_reserved >= mapping->shmem_req_size);
@@ -910,14 +889,11 @@ CreateAnonymousSegment(int segment_id, MemoryMappingSizes *mapping)
  * we go with a simple solution.
  */
 void
-PrepareHugePages()
+PrepareHugePages(MemoryMappingSizes *mapping_sizes)
 {
 	void	   *ptr = MAP_FAILED;
 	Size		total_size = 0;
-	MemoryMappingSizes mapping_sizes[NUM_MEMORY_MAPPINGS];
 	int			mmap_flags = (MAP_SHARED | MAP_HASSEMAPHORE);
-
-	CalculateShmemSize(mapping_sizes);
 
 	/* Complain if hugepages demanded but we can't possibly support them */
 #if !defined(MAP_HUGETLB)
@@ -1016,7 +992,6 @@ AnonymousShmemDetach(int status, Datum arg)
 static bool
 AnonymousShmemResize(int segment_id, MemoryMappingSizes *mapping, bool expanding)
 {
-	Size		hugepagesize;
 	AnonShmemSegment *anonseg = &AnonShmemSegs[segment_id];
 
 	Assert(!pg_atomic_unlocked_test_flag(&ShmemCtrl->resize_in_progress));
@@ -1036,8 +1011,6 @@ AnonymousShmemResize(int segment_id, MemoryMappingSizes *mapping, bool expanding
 	if (huge_pages_on)
 	{
 		Assert(huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY);
-		GetHugePageSize(&hugepagesize, NULL, NULL);
-		round_off_mapping_sizes_for_hugepages(mapping, hugepagesize);
 	}
 #endif
 	Assert(anonseg->addr);
@@ -1053,10 +1026,11 @@ AnonymousShmemResize(int segment_id, MemoryMappingSizes *mapping, bool expanding
 	 * more memory on supported platforms if required.
 	 */
 	if (ftruncate(anonseg->fd, mapping->shmem_req_size) == -1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("could not truncate anonymous file segment for \"%s\": %m",
-						MappingName(segment_id))));
+	{
+		elog(WARNING, "segment[%s]: could not resize anonymous file to size %zu: %m",
+			 MappingName(segment_id), mapping->shmem_req_size);
+		return false;
+	}
 	if (expanding)
 		shmem_fallocate(anonseg->fd, MappingName(segment_id), mapping->shmem_req_size, ERROR);
 

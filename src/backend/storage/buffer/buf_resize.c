@@ -167,6 +167,7 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 	bool		result = true;
 	int			currentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
 	int			targetNBuffers = NBuffersPending;
+	Size		size_b;
 	MemoryMappingSizes mapping_sizes[NUM_MEMORY_MAPPINGS];
 
 	if (currentNBuffers == targetNBuffers)
@@ -186,16 +187,7 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 	 * leading to wrong memory size estimates. Find a way to pass
 	 * targetNBuffers value to BufferManagerShmemSize().
 	 */
-	BufferManagerShmemSize(mapping_sizes);
-	/* Round it off to a multiple of a typical page size */
-	for (int i = 0; i < NUM_MEMORY_MAPPINGS; i++)
-	{
-		/* Structures in main memory segment are never resized. */
-		if (i == MAIN_SHMEM_SEGMENT)
-			continue;
-
-		round_off_mapping_sizes(&mapping_sizes[i]);
-	}
+	size_b = CalculateShmemSize(mapping_sizes);
 
 	/*
 	 * TODO: What if the NBuffersPending value seen here is not the desired
@@ -281,6 +273,8 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 
 		SharedBufferResizeBarrier(PROCSIGNAL_BARRIER_SHBUF_EXPAND, CppAsString(PROCSIGNAL_BARRIER_SHBUF_EXPAND));
 	}
+
+	UpdateShmemGUCs(size_b);
 
 	/*
 	 * Reset buffer resize control area.
