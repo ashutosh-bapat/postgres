@@ -8626,12 +8626,15 @@ EvictExtraBuffers(int targetNBuffers, int currentNBuffers)
 			continue;
 
 		/*
-		 * XXX: Looks like CurrentResourceOwner can be NULL here, find another
-		 * one in that case?
+		 * Ensure we have a valid resource owner. If CurrentResourceOwner is
+		 * NULL, we cannot proceed with pinning.
 		 */
-		if (CurrentResourceOwner)
-			ResourceOwnerEnlarge(CurrentResourceOwner);
+		if (CurrentResourceOwner == NULL)
+		{
+			elog(ERROR, "CurrentResourceOwner is NULL, cannot evict buffers");
+		}
 
+		ResourceOwnerEnlarge(CurrentResourceOwner);
 		ReservePrivateRefCountEntry();
 
 		LockBufHdr(desc);

@@ -96,6 +96,8 @@
 #include "utils/injection_point.h"
 #include "utils/wait_event.h"
 
+static void VerifyAfterShmemUpdateInSegment(const char *name, const void * originalPtr, void * targetPtr);
+
 /* Structure managing one shared memory segment. */
 typedef struct ShmemSegment
 {
@@ -550,6 +552,7 @@ ShmemInitStructInSegment(const char *name, Size size, bool *foundPtr, int segmen
 		/*
 		 * Structure is in the shmem index so someone else has allocated it
 		 * already. The size better be the same as the size we are trying to
+		 * initialize to, or there is a name conflict (or worse).
 		 */
 		if (result->size != size)
 		{
@@ -594,18 +597,25 @@ ShmemInitStructInSegment(const char *name, Size size, bool *foundPtr, int segmen
 	return structPtr;
 }
 
+void
+VerifyAfterShmemUpdateInSegment(const char *name, const void *originalPtr,
+										   void *targetPtr)
+{
+	if (originalPtr != targetPtr)
+		elog(FATAL, "validating %s failed: expected pointer %p, got %p",
+			 name, originalPtr, targetPtr);
+}
+
 /*
  * ShmemResizeStructInSegment -- Resize the given structure in shared memory.
  *
  * This function resizes an existing shared memory structure while preserving
  * the existing memory location.
  *
- * Returns: pointer to the existing structure location, if the resize is
- * successful, otherwise NULL.
  */
-void *
+void
 ShmemResizeStructInSegment(const char *name, Size size, bool *foundPtr,
-						   int segment_id)
+						   int segment_id, const void *originalPtr)
 {
 	ShmemIndexEnt *result;
 	void	   *structPtr;
@@ -619,6 +629,7 @@ ShmemResizeStructInSegment(const char *name, Size size, bool *foundPtr,
 												 * resizable */
 	Assert(ShmemIndex);
 	Assert(size > 0);
+	Assert(originalPtr != NULL);
 	segment = &Segments[segment_id];
 	shmhdr = segment->ShmemSegHdr;
 	Assert(shmhdr != NULL);
@@ -634,6 +645,11 @@ ShmemResizeStructInSegment(const char *name, Size size, bool *foundPtr,
 
 	/* Save the existing structure pointer to be returned. */
 	structPtr = result->location;
+	if (segment_id == BUFFERS_SHMEM_SEGMENT)
+	{
+		/* For buffer blocks, its pointer aligns buffer pool on IO page size boundary */
+		structPtr = (char *) TYPEALIGN(PG_IO_ALIGN_SIZE, structPtr);
+	}
 
 	/* Cachealign new size */
 	allocated_size = CACHELINEALIGN(size);
@@ -641,9 +657,11 @@ ShmemResizeStructInSegment(const char *name, Size size, bool *foundPtr,
 	if (allocated_size == result->allocated_size)
 	{
 		result->size = size;
+
 		/* No need to resize if the existing allocated size is sufficient */
 		LWLockRelease(ShmemIndexLock);
-		return structPtr;
+		VerifyAfterShmemUpdateInSegment(name, originalPtr, structPtr);
+		return;
 	}
 
 	SpinLockAcquire(segment->ShmemLock);
@@ -654,17 +672,12 @@ ShmemResizeStructInSegment(const char *name, Size size, bool *foundPtr,
 	 * same as the start of free memory in that segment.
 	 */
 	Assert((char *) segment->ShmemBase + shmhdr->freeoffset == (char *) result->location + result->allocated_size);
-	newFree = shmhdr->freeoffset + (allocated_size - result->allocated_size);
-	if (newFree > shmhdr->totalsize)
-	{
-		structPtr = NULL;
-	}
-	else
-	{
-		shmhdr->freeoffset = newFree;
-		result->size = size;
-		result->allocated_size = allocated_size;
-	}
+	newFree = shmhdr->freeoffset + allocated_size - result->allocated_size;
+
+	Assert(newFree <= shmhdr->totalsize);
+	shmhdr->freeoffset = newFree;
+	result->size = size;
+	result->allocated_size = allocated_size;
 
 	/*
 	 * End of the structure should still be same as the start of free memory
@@ -677,11 +690,9 @@ ShmemResizeStructInSegment(const char *name, Size size, bool *foundPtr,
 
 	/* note this assert is okay with structPtr == NULL */
 	Assert(structPtr == (void *) CACHELINEALIGN(structPtr));
-
-	return structPtr;
+	VerifyAfterShmemUpdateInSegment(name, originalPtr, structPtr);
+	return;
 }
-
-
 
 /*
  * Add two Size values, checking for overflow

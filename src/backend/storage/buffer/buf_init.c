@@ -176,41 +176,60 @@ Size
 BufferManagerShmemSize(MemoryMappingSizes *mapping_sizes)
 {
 	size_t		size;
+	Size		hugepagesize = 0;
+	size_t		padsize = 0;
+
+	padsize = add_size(sizeof(PGShmemHeader), sizeof(slock_t));
+	padsize = TYPEALIGN(PG_IO_ALIGN_SIZE, padsize);
 
 	/* size of buffer descriptors, plus alignment padding */
-	size = add_size(0, mul_size(NBuffersPending, sizeof(BufferDescPadded)));
-	size = add_size(size, PG_CACHE_LINE_SIZE);
+	size = add_size(padsize, mul_size(NBuffersPending, sizeof(BufferDescPadded)));
 	mapping_sizes[BUFFER_DESCRIPTORS_SHMEM_SEGMENT].shmem_req_size = size;
-	size = add_size(0, mul_size(MaxNBuffers, sizeof(BufferDescPadded)));
-	size = add_size(size, PG_CACHE_LINE_SIZE);
+	size = add_size(padsize, mul_size(MaxNBuffers, sizeof(BufferDescPadded)));
 	mapping_sizes[BUFFER_DESCRIPTORS_SHMEM_SEGMENT].shmem_reserved = size;
 
 	/* size of data pages, plus alignment padding */
-	size = add_size(0, PG_IO_ALIGN_SIZE);
-	size = add_size(size, mul_size(NBuffersPending, BLCKSZ));
+	size = add_size(padsize, mul_size(NBuffersPending, BLCKSZ));
+	size = add_size(size, PG_IO_ALIGN_SIZE);
 	mapping_sizes[BUFFERS_SHMEM_SEGMENT].shmem_req_size = size;
-	size = add_size(0, PG_IO_ALIGN_SIZE);
-	size = add_size(size, mul_size(MaxNBuffers, BLCKSZ));
+	size = add_size(padsize, mul_size(MaxNBuffers, BLCKSZ));
+	size = add_size(size, PG_IO_ALIGN_SIZE);
 	mapping_sizes[BUFFERS_SHMEM_SEGMENT].shmem_reserved = size;
 
 	/* size of I/O condition variables, plus alignment padding */
-	size = add_size(0, mul_size(NBuffersPending,
-								sizeof(ConditionVariableMinimallyPadded)));
-	size = add_size(size, PG_CACHE_LINE_SIZE);
+	size = add_size(padsize, mul_size(NBuffersPending,
+									   sizeof(ConditionVariableMinimallyPadded)));
 	mapping_sizes[BUFFER_IOCV_SHMEM_SEGMENT].shmem_req_size = size;
-	size = add_size(0, mul_size(MaxNBuffers,
-								sizeof(ConditionVariableMinimallyPadded)));
-	size = add_size(size, PG_CACHE_LINE_SIZE);
+	size = add_size(padsize, mul_size(MaxNBuffers,
+									   sizeof(ConditionVariableMinimallyPadded)));
 	mapping_sizes[BUFFER_IOCV_SHMEM_SEGMENT].shmem_reserved = size;
 
 	/* size of checkpoint sort array in bufmgr.c */
-	mapping_sizes[CHECKPOINT_BUFFERS_SHMEM_SEGMENT].shmem_req_size = mul_size(NBuffersPending, sizeof(CkptSortItem));
-	mapping_sizes[CHECKPOINT_BUFFERS_SHMEM_SEGMENT].shmem_reserved = mul_size(MaxNBuffers, sizeof(CkptSortItem));
+	mapping_sizes[CHECKPOINT_BUFFERS_SHMEM_SEGMENT].shmem_req_size = add_size(padsize, mul_size(NBuffersPending, sizeof(CkptSortItem)));
+	mapping_sizes[CHECKPOINT_BUFFERS_SHMEM_SEGMENT].shmem_reserved = add_size(padsize, mul_size(MaxNBuffers, sizeof(CkptSortItem)));
+
+	if (huge_pages == HUGE_PAGES_ON || huge_pages == HUGE_PAGES_TRY)
+	{
+		GetHugePageSize(&hugepagesize, NULL, NULL);
+	}
+
+	for (int segment = 0; segment < NUM_MEMORY_MAPPINGS; segment++)
+	{
+		MemoryMappingSizes *mapping;
+
+		// We don't calculate main segment size here.
+		if (segment == MAIN_SHMEM_SEGMENT)
+			continue;
+
+		mapping = &mapping_sizes[segment];
+		round_off_mapping_sizes(mapping, BLCKSZ);
+		round_off_mapping_sizes(mapping, hugepagesize);
+	}
 
 	/* Allocations in the main memory segment, at the end. */
 
 	/* size of stuff controlled by freelist.c */
-	size = add_size(0, StrategyShmemSize());
+	size = add_size(padsize, StrategyShmemSize());
 
 	return size;
 }
@@ -229,40 +248,19 @@ BufferManagerShmemResize(int currentNBuffers, int targetNBuffers)
 {
 	bool		found;
 	int			i;
-	void	   *tmpPtr;
 
-	tmpPtr = (BufferDescPadded *)
-		ShmemResizeStructInSegment("Buffer Descriptors",
-								   targetNBuffers * sizeof(BufferDescPadded),
-								   &found, BUFFER_DESCRIPTORS_SHMEM_SEGMENT);
-	if (BufferDescriptors != tmpPtr || !found)
-		elog(FATAL, "resizing buffer descriptors failed: expected pointer %p, got %p, found=%d",
-			 BufferDescriptors, tmpPtr, found);
-
-	tmpPtr = (ConditionVariableMinimallyPadded *)
-		ShmemResizeStructInSegment("Buffer IO Condition Variables",
-								   targetNBuffers * sizeof(ConditionVariableMinimallyPadded),
-								   &found, BUFFER_IOCV_SHMEM_SEGMENT);
-	if (BufferIOCVArray != tmpPtr || !found)
-		elog(FATAL, "resizing buffer IO condition variables failed: expected pointer %p, got %p, found=%d",
-			 BufferIOCVArray, tmpPtr, found);
-
-	tmpPtr = (CkptSortItem *)
-		ShmemResizeStructInSegment("Checkpoint BufferIds",
-								   targetNBuffers * sizeof(CkptSortItem), &found,
-								   CHECKPOINT_BUFFERS_SHMEM_SEGMENT);
-	if (CkptBufferIds != tmpPtr || !found)
-		elog(FATAL, "resizing checkpoint buffer IDs failed: expected pointer %p, got %p, found=%d",
-			 CkptBufferIds, tmpPtr, found);
-
-	tmpPtr = (char *)
-		TYPEALIGN(PG_IO_ALIGN_SIZE,
-				  ShmemResizeStructInSegment("Buffer Blocks",
-											 targetNBuffers * (Size) BLCKSZ + PG_IO_ALIGN_SIZE,
-											 &found, BUFFERS_SHMEM_SEGMENT));
-	if (BufferBlocks != tmpPtr || !found)
-		elog(FATAL, "resizing buffer blocks failed: expected pointer %p, got %p, found=%d",
-			 BufferBlocks, tmpPtr, found);
+	ShmemResizeStructInSegment("Buffer Descriptors",
+		targetNBuffers * sizeof(BufferDescPadded),
+		&found, BUFFER_DESCRIPTORS_SHMEM_SEGMENT, BufferDescriptors);
+	ShmemResizeStructInSegment("Buffer IO Condition Variables",
+		targetNBuffers * sizeof(ConditionVariableMinimallyPadded),
+		&found, BUFFER_IOCV_SHMEM_SEGMENT, BufferIOCVArray);
+	ShmemResizeStructInSegment("Checkpoint BufferIds",
+		targetNBuffers * sizeof(CkptSortItem), &found,
+		CHECKPOINT_BUFFERS_SHMEM_SEGMENT, CkptBufferIds);
+	ShmemResizeStructInSegment("Buffer Blocks",
+		targetNBuffers * (Size) BLCKSZ + PG_IO_ALIGN_SIZE,
+		&found, BUFFERS_SHMEM_SEGMENT, BufferBlocks);
 
 	/*
 	 * Initialize the headers for new buffers. If we are shrinking the

@@ -187,10 +187,20 @@ extern void PGSharedMemoryNoReAttach(void);
  * round off mapping size to a multiple of a typical page size.
  */
 static inline void
-round_off_mapping_sizes(MemoryMappingSizes *mapping_sizes)
+round_off_mapping_sizes(MemoryMappingSizes *mapping_sizes, int pagesize)
 {
-	mapping_sizes->shmem_req_size = add_size(mapping_sizes->shmem_req_size, 8192 - (mapping_sizes->shmem_req_size % 8192));
-	mapping_sizes->shmem_reserved = add_size(mapping_sizes->shmem_reserved, 8192 - (mapping_sizes->shmem_reserved % 8192));
+	if (pagesize == 0)
+		return;
+
+	if (mapping_sizes->shmem_req_size % pagesize != 0)
+		mapping_sizes->shmem_req_size = add_size(mapping_sizes->shmem_req_size,
+											pagesize - (mapping_sizes->shmem_req_size % pagesize));
+
+	if (mapping_sizes->shmem_reserved % pagesize != 0)
+		mapping_sizes->shmem_reserved = add_size(mapping_sizes->shmem_reserved,
+											pagesize - (mapping_sizes->shmem_reserved % pagesize));
+
+	Assert(mapping_sizes->shmem_reserved >= mapping_sizes->shmem_req_size);
 }
 
 static inline const char *
@@ -223,7 +233,7 @@ extern void GetHugePageSize(Size *hugepagesize, int *mmap_flags,
 							int *memfd_flags);
 extern bool PGSharedMemoryResize(int segment_id, MemoryMappingSizes *mapping_sizes);
 
-extern void PrepareHugePages(void);
+extern void PrepareHugePages(MemoryMappingSizes *mapping_sizes);
 extern const char *show_shared_buffers(void);
 extern bool check_shared_buffers(int *newval, void **extra, GucSource source);
 extern void ShmemControlInit(void);
