@@ -143,6 +143,16 @@ int			NBuffers = 0;
 int			NBuffersPending = 16384;
 bool		finalMaxNBuffers = false;
 int			MaxNBuffers = 0;
+
+/*
+ * Per-process shadow copies of shared buffer pool dimensions, kept in sync
+ * with the shared memory values during buffer pool resize operations via
+ * barrier processing.  Initialized at backend startup in
+ * InitBufferManagerAccess().
+ */
+int			LocalCurrentNBuffers = 0;
+int			LocalActiveNBuffers = 0;
+
 int			MaxConnections = 100;
 int			max_worker_processes = 8;
 int			max_parallel_workers = 8;

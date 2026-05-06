@@ -371,12 +371,12 @@ apw_load_buffers(void)
 	apw_state->prewarmed_blocks = 0;
 
 	/* Don't prewarm more than we can fit. */
-	if (num_elements > NBuffers)
+	if (num_elements > LocalCurrentNBuffers)
 	{
-		num_elements = NBuffers;
+		num_elements = LocalCurrentNBuffers;
 		ereport(LOG,
 				(errmsg("autoprewarm capping prewarmed blocks to %d (shared_buffers size)",
-						NBuffers)));
+						LocalCurrentNBuffers)));
 	}
 
 	/* Get the info position of the first block of the next database. */
@@ -699,9 +699,9 @@ apw_dump_now(bool is_bgworker, bool dump_unlogged)
 	 * memory-efficient data structure.)
 	 */
 	block_info_array = (BlockInfoRecord *)
-		palloc_extended((sizeof(BlockInfoRecord) * NBuffers), MCXT_ALLOC_HUGE);
+		palloc_extended((sizeof(BlockInfoRecord) * LocalCurrentNBuffers), MCXT_ALLOC_HUGE);
 
-	for (num_blocks = 0, i = 0; i < NBuffers; i++)
+	for (num_blocks = 0, i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		uint64		buf_state;
 

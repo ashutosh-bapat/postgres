@@ -6861,7 +6861,7 @@ LogCheckpointEnd(bool restartpoint)
 						"longest=%ld.%03d s, average=%ld.%03d s; distance=%d kB, "
 						"estimate=%d kB; lsn=%X/%08X, redo lsn=%X/%08X",
 						CheckpointStats.ckpt_bufs_written,
-						(double) CheckpointStats.ckpt_bufs_written * 100 / NBuffers,
+						(double) CheckpointStats.ckpt_bufs_written * 100 / LocalCurrentNBuffers,
 						CheckpointStats.ckpt_slru_written,
 						CheckpointStats.ckpt_segs_added,
 						CheckpointStats.ckpt_segs_removed,
@@ -6885,7 +6885,7 @@ LogCheckpointEnd(bool restartpoint)
 						"longest=%ld.%03d s, average=%ld.%03d s; distance=%d kB, "
 						"estimate=%d kB; lsn=%X/%08X, redo lsn=%X/%08X",
 						CheckpointStats.ckpt_bufs_written,
-						(double) CheckpointStats.ckpt_bufs_written * 100 / NBuffers,
+						(double) CheckpointStats.ckpt_bufs_written * 100 / LocalCurrentNBuffers,
 						CheckpointStats.ckpt_slru_written,
 						CheckpointStats.ckpt_segs_added,
 						CheckpointStats.ckpt_segs_removed,
@@ -7486,7 +7486,7 @@ CreateCheckPoint(int flags)
 	update_checkpoint_display(flags, false, true);
 
 	TRACE_POSTGRESQL_CHECKPOINT_DONE(CheckpointStats.ckpt_bufs_written,
-									 NBuffers,
+									 LocalCurrentNBuffers,
 									 CheckpointStats.ckpt_segs_added,
 									 CheckpointStats.ckpt_segs_removed,
 									 CheckpointStats.ckpt_segs_recycled);

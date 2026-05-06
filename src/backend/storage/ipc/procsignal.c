@@ -626,6 +626,9 @@ ProcessProcSignalBarrier(void)
 					case PROCSIGNAL_BARRIER_SHBUF_SHRINK:
 						processed = ProcessBarrierShmemShrink();
 						break;
+					case PROCSIGNAL_BARRIER_SHBUF_SHMEM_RESIZE_SHRINK:
+						processed = ProcessBarrierShmemResizeShrink();
+						break;
 					case PROCSIGNAL_BARRIER_SHBUF_RESIZE_MAP_AND_MEM:
 						processed = ProcessBarrierShmemResizeMapAndMem();
 						break;

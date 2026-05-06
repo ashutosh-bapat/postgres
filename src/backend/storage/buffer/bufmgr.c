@@ -91,7 +91,7 @@
  * being dropped. For the relations with size below this threshold, we find
  * the buffers by doing lookups in BufMapping table.
  */
-#define BUF_DROP_FULL_SCAN_THRESHOLD		(uint64) (NBuffers / 32)
+#define BUF_DROP_FULL_SCAN_THRESHOLD		(uint64) (LocalCurrentNBuffers / 32)
 
 /*
  * This is separated out from PrivateRefCountEntry to allow for copying all
@@ -3496,7 +3496,7 @@ BufferSync(int flags)
 	 * certainly need to be written for the next checkpoint attempt, too.
 	 */
 	num_to_scan = 0;
-	for (buf_id = 0; buf_id < NBuffers; buf_id++)
+	for (buf_id = 0; buf_id < LocalCurrentNBuffers; buf_id++)
 	{
 		BufferDesc *bufHdr = GetBufferDescriptor(buf_id);
 		uint64		set_bits = 0;
@@ -3538,7 +3538,7 @@ BufferSync(int flags)
 
 	WritebackContextInit(&wb_context, &checkpoint_flush_after);
 
-	TRACE_POSTGRESQL_BUFFER_SYNC_START(NBuffers, num_to_scan);
+	TRACE_POSTGRESQL_BUFFER_SYNC_START(LocalCurrentNBuffers, num_to_scan);
 
 	/*
 	 * Sort buffers that need to be written to reduce the likelihood of random
@@ -3722,7 +3722,7 @@ BufferSync(int flags)
 	 */
 	CheckpointStats.ckpt_bufs_written += num_written;
 
-	TRACE_POSTGRESQL_BUFFER_SYNC_DONE(NBuffers, num_written, num_to_scan);
+	TRACE_POSTGRESQL_BUFFER_SYNC_DONE(LocalCurrentNBuffers, num_written, num_to_scan);
 }
 
 #define BGW_DEBUG 1
@@ -4157,13 +4157,28 @@ InitBufferManagerAccess(void)
 	HASHCTL		hash_ctl;
 
 	/*
+	 * Initialize per-process shadow copies of the shared buffer pool
+	 * dimensions.  These are kept in sync with shared memory values during
+	 * buffer pool resize operations via barrier processing.
+	 */
+	LocalCurrentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
+	LocalActiveNBuffers = StrategyGetActiveNBuffers();
+
+	elog(DEBUG1, "InitBufferManagerAccess: backend %d LocalCurrentNBuffers = %d, LocalActiveNBuffers = %d",
+		 MyProcPid, LocalCurrentNBuffers, LocalActiveNBuffers);
+
+	Assert(LocalCurrentNBuffers > 0);
+	Assert(LocalActiveNBuffers > 0);
+	Assert(LocalActiveNBuffers <= LocalCurrentNBuffers);
+
+	/*
 	 * An advisory limit on the number of pins each backend should hold, based
 	 * on shared_buffers and the maximum number of connections possible.
 	 * That's very pessimistic, but outside toy-sized shared_buffers it should
 	 * allow plenty of pins.  LimitAdditionalPins() and
 	 * GetAdditionalPinLimit() can be used to check the remaining balance.
 	 */
-	MaxProportionalPins = NBuffers / (MaxBackends + NUM_AUXILIARY_PROCS);
+	MaxProportionalPins = LocalCurrentNBuffers / (MaxBackends + NUM_AUXILIARY_PROCS);
 
 	memset(&PrivateRefCountArray, 0, sizeof(PrivateRefCountArray));
 	memset(&PrivateRefCountArrayKeys, 0, sizeof(PrivateRefCountArrayKeys));
@@ -4805,7 +4820,7 @@ DropRelationBuffers(SMgrRelation smgr_reln, ForkNumber *forkNum,
 		return;
 	}
 
-	for (i = 0; i < NBuffers; i++)
+	for (i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		BufferDesc *bufHdr = GetBufferDescriptor(i);
 
@@ -4966,7 +4981,7 @@ DropRelationsAllBuffers(SMgrRelation *smgr_reln, int nlocators)
 	if (use_bsearch)
 		qsort(locators, n, sizeof(RelFileLocator), rlocator_comparator);
 
-	for (i = 0; i < NBuffers; i++)
+	for (i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		RelFileLocator *rlocator = NULL;
 		BufferDesc *bufHdr = GetBufferDescriptor(i);
@@ -5093,7 +5108,7 @@ DropDatabaseBuffers(Oid dbid)
 	 * database isn't our own.
 	 */
 
-	for (i = 0; i < NBuffers; i++)
+	for (i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		BufferDesc *bufHdr = GetBufferDescriptor(i);
 
@@ -5179,7 +5194,7 @@ FlushRelationBuffers(Relation rel)
 		return;
 	}
 
-	for (i = 0; i < NBuffers; i++)
+	for (i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		uint64		buf_state;
 
@@ -5249,7 +5264,7 @@ FlushRelationsAllBuffers(SMgrRelation *smgrs, int nrels)
 	if (use_bsearch)
 		qsort(srels, nrels, sizeof(SMgrSortArray), rlocator_comparator);
 
-	for (i = 0; i < NBuffers; i++)
+	for (i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		SMgrSortArray *srelent = NULL;
 		BufferDesc *bufHdr = GetBufferDescriptor(i);
@@ -5500,7 +5515,7 @@ FlushDatabaseBuffers(Oid dbid)
 	int			i;
 	BufferDesc *bufHdr;
 
-	for (i = 0; i < NBuffers; i++)
+	for (i = 0; i < LocalCurrentNBuffers; i++)
 	{
 		uint64		buf_state;
 
@@ -7622,7 +7637,7 @@ EvictAllUnpinnedBuffers(int32 *buffers_evicted, int32 *buffers_flushed,
 	*buffers_skipped = 0;
 	*buffers_flushed = 0;
 
-	for (int buf = 1; buf <= NBuffers; buf++)
+	for (int buf = 1; buf <= LocalCurrentNBuffers; buf++)
 	{
 		BufferDesc *desc = GetBufferDescriptor(buf - 1);
 		uint64		buf_state;
@@ -7674,7 +7689,7 @@ EvictRelUnpinnedBuffers(Relation rel, int32 *buffers_evicted,
 	*buffers_evicted = 0;
 	*buffers_flushed = 0;
 
-	for (int buf = 1; buf <= NBuffers; buf++)
+	for (int buf = 1; buf <= LocalCurrentNBuffers; buf++)
 	{
 		BufferDesc *desc = GetBufferDescriptor(buf - 1);
 		uint64		buf_state = pg_atomic_read_u64(&(desc->state));
@@ -7819,7 +7834,7 @@ MarkDirtyRelUnpinnedBuffers(Relation rel,
 	*buffers_already_dirty = 0;
 	*buffers_skipped = 0;
 
-	for (int buf = 1; buf <= NBuffers; buf++)
+	for (int buf = 1; buf <= LocalCurrentNBuffers; buf++)
 	{
 		BufferDesc *desc = GetBufferDescriptor(buf - 1);
 		uint64		buf_state = pg_atomic_read_u64(&(desc->state));
@@ -7873,7 +7888,7 @@ MarkDirtyAllUnpinnedBuffers(int32 *buffers_dirtied,
 	*buffers_already_dirty = 0;
 	*buffers_skipped = 0;
 
-	for (int buf = 1; buf <= NBuffers; buf++)
+	for (int buf = 1; buf <= LocalCurrentNBuffers; buf++)
 	{
 		BufferDesc *desc = GetBufferDescriptor(buf - 1);
 		uint64		buf_state;

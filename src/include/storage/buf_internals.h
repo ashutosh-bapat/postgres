@@ -576,6 +576,7 @@ extern void StrategyNotifyBgWriter(int bgwprocno);
 extern Size StrategyShmemSize(void);
 extern void StrategyInitialize(bool init);
 extern void StrategyReset(int activeNBuffers);
+extern int StrategyGetActiveNBuffers(void);
 
 /* buf_table.c */
 extern Size BufTableShmemSize(int size);

@@ -162,6 +162,13 @@ typedef struct WritebackContext WritebackContext;
 extern PGDLLIMPORT int NBuffers;
 extern PGDLLIMPORT int NBuffersPending;
 
+/*
+ * Per-process shadow copies of shared buffer pool dimensions.
+ * Updated during buffer pool resize via barrier handlers.
+ */
+extern PGDLLIMPORT int LocalCurrentNBuffers;
+extern PGDLLIMPORT int LocalActiveNBuffers;
+
 /* in bufmgr.c */
 extern PGDLLIMPORT bool zero_damaged_pages;
 extern PGDLLIMPORT int bgwriter_lru_maxpages;
@@ -427,7 +434,7 @@ extern void FreeAccessStrategy(BufferAccessStrategy strategy);
 static inline bool
 BufferIsValid(Buffer bufnum)
 {
-	Assert(bufnum <= (Buffer) pg_atomic_read_u32(&ShmemCtrl->currentNBuffers));
+	Assert(bufnum <= (Buffer) LocalCurrentNBuffers);
 	Assert(bufnum >= -NLocBuffer);
 
 	return bufnum != InvalidBuffer;
@@ -484,6 +491,7 @@ BufferGetPage(Buffer buffer)
 /* buf_resize.c */
 extern Datum pg_resize_shared_buffers(PG_FUNCTION_ARGS);
 extern bool ProcessBarrierShmemShrink(void);
+extern bool ProcessBarrierShmemResizeShrink(void);
 extern bool ProcessBarrierShmemResizeMapAndMem(void);
 extern bool ProcessBarrierShmemExpand(void);
 extern bool ProcessBarrierShmemResizeFailed(void);

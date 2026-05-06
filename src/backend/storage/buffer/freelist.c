@@ -114,9 +114,10 @@ ClockSweepTick(void)
 	/*
 	 * Atomically move hand ahead one buffer - if there's several processes
 	 * doing this, this can lead to buffers being returned slightly out of
-	 * apparent order. We need to read both the current position of hand and
-	 * the current buffer allocation limit together consistently. They may be
-	 * reset by concurrent resize.
+	 * apparent order. We read the shared activeNBuffers here (not the
+	 * per-process LocalActiveNBuffers) because all backends participating
+	 * in the CAS loop on nextVictimBuffer must use the same modulus to
+	 * avoid inconsistent wrap-around.
 	 */
 	victim =
 		pg_atomic_fetch_add_u32(&StrategyControl->nextVictimBuffer, 1);
@@ -239,7 +240,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint64 *buf_state, bool *from_r
 	pg_atomic_fetch_add_u32(&StrategyControl->numBufferAllocs, 1);
 
 	/* Use the "clock sweep" algorithm to find a free buffer */
-	trycounter = pg_atomic_read_u32(&StrategyControl->activeNBuffers);
+	trycounter = LocalActiveNBuffers;
 
 	for (;;)
 	{
@@ -293,7 +294,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint64 *buf_state, bool *from_r
 				if (pg_atomic_compare_exchange_u64(&buf->state, &old_buf_state,
 												   local_buf_state))
 				{
-					trycounter = pg_atomic_read_u32(&StrategyControl->activeNBuffers);
+					trycounter = LocalActiveNBuffers;
 					break;
 				}
 			}
@@ -448,6 +449,17 @@ StrategyReset(int activeNBuffers)
 	/* TODO: Do we need to seset background writer notifications? */
 	StrategyControl->bgwprocno = -1;
 	SpinLockRelease(&StrategyControl->buffer_strategy_lock);
+}
+
+/*
+ * StrategyGetActiveNBuffers -- return the current active buffer count.
+ *
+ * This is a simple accessor since StrategyControl is private to this file.
+ */
+int
+StrategyGetActiveNBuffers(void)
+{
+	return (int) pg_atomic_read_u32(&StrategyControl->activeNBuffers);
 }
 
 /*
@@ -629,9 +641,9 @@ GetAccessStrategyWithSize(BufferAccessStrategyType btype, int ring_size_kb)
 		return NULL;
 
 	/* Cap to 1/8th of shared_buffers */
-	ring_buffers = Min(NBuffers / 8, ring_buffers);
+	ring_buffers = Min(LocalCurrentNBuffers / 8, ring_buffers);
 
-	/* NBuffers should never be less than 16, so this shouldn't happen */
+	/* LocalCurrentNBuffers should never be less than 16, so this shouldn't happen */
 	Assert(ring_buffers > 0);
 
 	/* Allocate the object and initialize all elements to zeroes */
@@ -680,7 +692,7 @@ int
 GetAccessStrategyPinLimit(BufferAccessStrategy strategy)
 {
 	if (strategy == NULL)
-		return NBuffers;
+		return LocalCurrentNBuffers;
 
 	switch (strategy->btype)
 	{
@@ -755,9 +767,18 @@ GetBufferFromRing(BufferAccessStrategy strategy, uint64 *buf_state)
 	 * possible to notice when we touch the first of those objects and the
 	 * last of objects. See if this can fixed.
 	 */
+	/*
+	 * During a shrink, a ring buffer might hold a buffer ID from the old
+	 * (larger) range.  Using LocalActiveNBuffers (updated via barrier) is
+	 * safe here: if this backend hasn't acknowledged SHBUF_SHRINK yet,
+	 * LocalActiveNBuffers is still the old size and the stale entry passes;
+	 * the buffer descriptor is still valid since LocalCurrentNBuffers is
+	 * also still old.  Once the barrier is acknowledged, LocalActiveNBuffers
+	 * reflects the new size and stale entries are correctly rejected.
+	 */
 	bufnum = strategy->buffers[strategy->current];
 	if (bufnum == InvalidBuffer ||
-		bufnum > pg_atomic_read_u32(&StrategyControl->activeNBuffers))
+		bufnum > (uint32) LocalActiveNBuffers)
 		return NULL;
 
 	buf = GetBufferDescriptor(bufnum - 1);

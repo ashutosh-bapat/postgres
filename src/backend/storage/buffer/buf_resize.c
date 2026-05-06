@@ -58,7 +58,7 @@ MarkBufferResizingEnd(int newNBuffers)
 
 	/*
 	 * TODO: should we leave targetNBuffers as is? We are setting it to
-	 * NBuffers in BufferManagerShmemInit().
+	 * the shared_buffers GUC value in BufferManagerShmemInit().
 	 */
 	pg_atomic_write_u32(&ShmemCtrl->targetNBuffers, 0);
 	ShmemCtrl->coordinator = -1;
@@ -83,6 +83,9 @@ SharedBufferResizeBarrier(ProcSignalBarrierType barrier, const char *barrier_nam
 	{
 		case PROCSIGNAL_BARRIER_SHBUF_SHRINK:
 			INJECTION_POINT("pgrsb-shrink-barrier-sent", NULL);
+			break;
+		case PROCSIGNAL_BARRIER_SHBUF_SHMEM_RESIZE_SHRINK:
+			INJECTION_POINT("pgrsb-shmem-resize-shrink-barrier-sent", NULL);
 			break;
 		case PROCSIGNAL_BARRIER_SHBUF_RESIZE_MAP_AND_MEM:
 			INJECTION_POINT("pgrsb-resize-barrier-sent", NULL);
@@ -211,14 +214,19 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 	if (targetNBuffers < currentNBuffers)
 	{
 		/*
-		 * Phase 1: Shrinking - send SHBUF_SHRINK barrier Every backend sets
-		 * activeNBuffers = NewNBuffers to restrict buffer pool allocations to
-		 * the new size
+		 * Phase 1: Shrinking - send SHBUF_SHRINK barrier. Backends update
+		 * LocalActiveNBuffers to restrict buffer pool allocations to the
+		 * new size.
 		 */
 		elog(LOG, "Phase 1: Shrinking buffer pool, restricting allocations to %d buffers", targetNBuffers);
 
 		StrategyReset(targetNBuffers);
 		SharedBufferResizeBarrier(PROCSIGNAL_BARRIER_SHBUF_SHRINK, CppAsString(PROCSIGNAL_BARRIER_SHBUF_SHRINK));
+
+		/* Coordinator updates its own shadow */
+		elog(LOG, "coordinator %d: LocalActiveNBuffers %d -> %d (shrink)",
+			 MyProcPid, LocalActiveNBuffers, targetNBuffers);
+		LocalActiveNBuffers = targetNBuffers;
 
 		/* Evict buffers in the area being shrunk */
 		elog(LOG, "evicting buffers %u..%u", targetNBuffers + 1, currentNBuffers);
@@ -227,6 +235,12 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 			elog(WARNING, "failed to evict extra buffers during shrinking");
 			StrategyReset(currentNBuffers);
 			SharedBufferResizeBarrier(PROCSIGNAL_BARRIER_SHBUF_RESIZE_FAILED, CppAsString(PROCSIGNAL_BARRIER_SHBUF_RESIZE_FAILED));
+
+			/* Restore coordinator shadows */
+			elog(LOG, "coordinator %d: LocalActiveNBuffers %d -> %d (shrink failed, restoring)",
+				 MyProcPid, LocalActiveNBuffers, currentNBuffers);
+			LocalActiveNBuffers = currentNBuffers;
+
 			MarkBufferResizingEnd(currentNBuffers);
 			pg_atomic_clear_flag(&ShmemCtrl->resize_in_progress);
 			PG_RETURN_BOOL(false);
@@ -240,6 +254,19 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 
 		/* Update the current NBuffers. */
 		pg_atomic_write_u32(&ShmemCtrl->currentNBuffers, targetNBuffers);
+
+		/*
+		 * Emit SHMEM_RESIZE barrier so backends validate the resized
+		 * structures and update LocalCurrentNBuffers after the shared
+		 * currentNBuffers changes.
+		 */
+		SharedBufferResizeBarrier(PROCSIGNAL_BARRIER_SHBUF_SHMEM_RESIZE_SHRINK, CppAsString(PROCSIGNAL_BARRIER_SHBUF_SHMEM_RESIZE_SHRINK));
+
+		/* Coordinator updates its own shadow */
+		elog(LOG, "coordinator %d: LocalCurrentNBuffers %d -> %d (shrink shmem resize)",
+			 MyProcPid, LocalCurrentNBuffers, targetNBuffers);
+		LocalCurrentNBuffers = targetNBuffers;
+
 	}
 
 	/* Phase 2: SHBUF_RESIZE_MAP_AND_MEM - Both expanding and shrinking */
@@ -276,8 +303,16 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 		 * expanded range
 		 */
 		elog(LOG, "Phase 3: Expanding buffer pool, enabling allocations up to %d buffers", targetNBuffers);
+
+		/* Update shared values first, then coordinator's shadows */
 		StrategyReset(targetNBuffers);
 		pg_atomic_write_u32(&ShmemCtrl->currentNBuffers, targetNBuffers);
+
+		/* Coordinator updates its own shadows */
+		elog(LOG, "coordinator %d: LocalCurrentNBuffers %d -> %d, LocalActiveNBuffers %d -> %d (expand)",
+			 MyProcPid, LocalCurrentNBuffers, targetNBuffers, LocalActiveNBuffers, targetNBuffers);
+		LocalCurrentNBuffers = targetNBuffers;
+		LocalActiveNBuffers = targetNBuffers;
 
 		SharedBufferResizeBarrier(PROCSIGNAL_BARRIER_SHBUF_EXPAND, CppAsString(PROCSIGNAL_BARRIER_SHBUF_EXPAND));
 	}
@@ -288,6 +323,10 @@ pg_resize_shared_buffers(PG_FUNCTION_ARGS)
 	MarkBufferResizingEnd(targetNBuffers);
 
 	pg_atomic_clear_flag(&ShmemCtrl->resize_in_progress);
+
+	/* Final consistency check */
+	Assert(LocalCurrentNBuffers == targetNBuffers);
+	Assert(LocalActiveNBuffers == targetNBuffers);
 
 	elog(LOG, "successfully resized shared buffers to %d", targetNBuffers);
 
@@ -315,6 +354,36 @@ ProcessBarrierShmemShrink(void)
 
 	elog(LOG, "Phase 1: Processing SHBUF_SHRINK barrier - target buffer pool size = %d, coordinator is %d",
 		 targetNBuffers, ShmemCtrl->coordinator);
+
+	/* Update per-process shadow to reflect the restricted allocation range */
+	elog(DEBUG1, "backend %d acknowledged SHBUF_SHRINK: LocalActiveNBuffers %d -> %d",
+		 MyProcPid, LocalActiveNBuffers, targetNBuffers);
+	LocalActiveNBuffers = targetNBuffers;
+
+	return true;
+}
+
+bool
+ProcessBarrierShmemResizeShrink(void)
+{
+	int			targetNBuffers = pg_atomic_read_u32(&ShmemCtrl->targetNBuffers);
+
+	Assert(!pg_atomic_unlocked_test_flag(&ShmemCtrl->resize_in_progress));
+
+	/*
+	 * Delay adjusting the new active size of buffer pool till this process
+	 * becomes ready to resize buffers.
+	 */
+	if (delay_shmem_resize)
+	{
+		elog(LOG, "delaying SHMEM_RESIZE_SHRINK barrier acknowledgment for %d buffers, coordinator is %d",
+			 targetNBuffers, ShmemCtrl->coordinator);
+		return false;
+	}
+
+	elog(DEBUG1, "backend %d acknowledged SHMEM_RESIZE_SHRINK: LocalCurrentNBuffers %d -> %d",
+		 MyProcPid, LocalCurrentNBuffers, targetNBuffers);
+	LocalCurrentNBuffers = targetNBuffers;
 
 	return true;
 }
@@ -389,6 +458,12 @@ ProcessBarrierShmemExpand(void)
 
 	elog(LOG, "Phase 3: Processing SHBUF_EXPAND barrier - targetNBuffers = %d, ShmemCtrl->coordinator = %d", targetNBuffers, ShmemCtrl->coordinator);
 
+	/* Update the per-process shadow copies of the current and active buffer counts */
+	elog(DEBUG1, "backend %d acknowledged SHBUF_EXPAND: LocalCurrentNBuffers %d -> %d, LocalActiveNBuffers %d -> %d",
+		 MyProcPid, LocalCurrentNBuffers, targetNBuffers, LocalActiveNBuffers, targetNBuffers);
+	LocalCurrentNBuffers = targetNBuffers;
+	LocalActiveNBuffers = targetNBuffers;
+
 	return true;
 }
 
@@ -402,6 +477,14 @@ ProcessBarrierShmemResizeFailed(void)
 
 	elog(LOG, "received proc signal indicating failure to resize shared buffers from %d to %d, restoring to %d, coordinator is %d",
 		 currentNBuffers, targetNBuffers, currentNBuffers, ShmemCtrl->coordinator);
+
+	/*
+	 * Update per-process shadow to reflect that the resize failed and we are
+	 * restoring the active buffer pool size to the previous value.
+	 */
+	elog(DEBUG1, "backend %d acknowledged RESIZE_FAILED: LocalActiveNBuffers %d -> %d",
+		 MyProcPid, LocalActiveNBuffers, currentNBuffers);
+	LocalActiveNBuffers = currentNBuffers;
 
 	return true;
 }

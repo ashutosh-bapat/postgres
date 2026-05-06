@@ -58,6 +58,9 @@ typedef enum
 													 * XLogLogicalInfo */
 	PROCSIGNAL_BARRIER_SHBUF_SHRINK,	/* shrink buffer pool - restrict
 										 * allocations to new size */
+	PROCSIGNAL_BARRIER_SHBUF_SHMEM_RESIZE_SHRINK,	/* buffer structures resized -
+													 * validate and update
+													 * LocalCurrentNBuffers */
 	PROCSIGNAL_BARRIER_SHBUF_RESIZE_MAP_AND_MEM,	/* remap shared memory
 													 * segments and update
 													 * structure pointers */
