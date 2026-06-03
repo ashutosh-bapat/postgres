@@ -15,6 +15,7 @@
 #include "port/pg_numa.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
+#include "utils/injection_point.h"
 #include "utils/rel.h"
 #include "utils/tuplestore.h"
 
@@ -199,6 +200,13 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 		 * snapshot across all buffers, but we do grab the buffer header
 		 * locks, so the information of each buffer is self-consistent.
 		 */
+
+		/*
+		 * Injection point before the scan loop.  If the buffer pool is
+		 * resized while we are paused here, the later LockBufHdr() call
+		 * may access an invalid buffer descriptor.
+		 */
+		INJECTION_POINT("pg-buffercache-scan-start", NULL);
 		for (i = 0; i < currentNBuffers; i++)
 		{
 			BufferDesc *bufHdr;
@@ -208,7 +216,7 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 
 			/*
 			 * TODO: We should just scan the entire buffer descriptor array
-			 * instead of relying on curent buffer pool size. But that can
+			 * instead of relying on current buffer pool size. But that can
 			 * happen if only we setup the descriptor array large enough at
 			 * the server startup time.
 			 */
@@ -218,9 +226,17 @@ pg_buffercache_pages(PG_FUNCTION_ARGS)
 						 errmsg("number of shared buffers changed during scan of buffer cache")));
 
 			bufHdr = GetBufferDescriptor(i);
+
+			/*
+			 * Injection point halfway through the scan, to test
+			 * resize interaction while accessing buffer descriptors
+			 * that may become invalid after a shrink.
+			 */
+			if (i == currentNBuffers / 2)
+				INJECTION_POINT("pg-buffercache-after-getdesc", NULL);
+
 			/* Lock each buffer header before inspecting. */
 			buf_state = LockBufHdr(bufHdr);
-
 			fctx->record[i].bufferid = BufferDescriptorGetBuffer(bufHdr);
 			fctx->record[i].relfilenumber = BufTagGetRelNumber(&bufHdr->tag);
 			fctx->record[i].reltablespace = bufHdr->tag.spcOid;
@@ -755,13 +771,21 @@ pg_buffercache_evict(PG_FUNCTION_ARGS)
 
 	Buffer		buf = PG_GETARG_INT32(0);
 	bool		buffer_flushed;
+	int			currentNBuffers = pg_atomic_read_u32(&ShmemCtrl->currentNBuffers);
+
+	/*
+	 * Injection point after reading currentNBuffers but before the
+	 * bounds check.  Allows testing the behavior when a resize occurs
+	 * between reading the pool size and validating the buffer ID.
+	 */
+	INJECTION_POINT("pg-buffercache-evict-before-check", NULL);
 
 	if (get_call_result_type(fcinfo, NULL, &tupledesc) != TYPEFUNC_COMPOSITE)
 		elog(ERROR, "return type must be a row type");
 
 	pg_buffercache_superuser_check("pg_buffercache_evict");
 
-	if (buf < 1 || buf > NBuffers)
+	if (buf < 1 || buf > currentNBuffers)
 		elog(ERROR, "bad buffer ID: %d", buf);
 
 	values[0] = BoolGetDatum(EvictUnpinnedBuffer(buf, &buffer_flushed));
