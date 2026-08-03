@@ -7446,6 +7446,10 @@ CreateCheckPoint(int flags)
 	INJECTION_POINT("create-checkpoint-initial", NULL);
 	INJECTION_POINT_LOAD("create-checkpoint-run");
 
+	/* Load points TAP tests use to interleave with resize barriers. */
+	INJECTION_POINT_LOAD("checkpoint-before-redo-wal");
+	INJECTION_POINT_LOAD("checkpoint-after-redo-wal");
+
 	/*
 	 * Use a critical section to force system panic if we have trouble.
 	 */
@@ -7580,6 +7584,8 @@ CreateCheckPoint(int flags)
 	{
 		xl_checkpoint_redo redo_rec;
 
+		INJECTION_POINT_CACHED("checkpoint-before-redo-wal", NULL);
+
 		WALInsertLockAcquire();
 		redo_rec.wal_level = wal_level;
 		SpinLockAcquire(&XLogCtl->info_lck);
@@ -7599,6 +7605,8 @@ CreateCheckPoint(int flags)
 		 * checkpoint is complete.
 		 */
 		checkPoint.redo = RedoRecPtr;
+
+		INJECTION_POINT_CACHED("checkpoint-after-redo-wal", NULL);
 	}
 
 	/* Update the info_lck-protected copy of RedoRecPtr as well */

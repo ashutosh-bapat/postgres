@@ -3672,6 +3672,7 @@ BufferSync(int flags)
 	 * TODO: Test the case when buffer pool is shrunk after CkptBufferIds is
 	 * filled and num_to_scan is higher than the new NBuffers?
 	 */
+	INJECTION_POINT("buffer-sync-after-scan", NULL);
 
 	/*
 	 * Sort buffers that need to be written to reduce the likelihood of random
@@ -3791,6 +3792,7 @@ BufferSync(int flags)
 		 * after checkpointer has collected the buffer ids and one or more of
 		 * the buffer ids is out of range.
 		 */
+		INJECTION_POINT("buffer-sync-heap-built", NULL);
 
 		/*
 		 * The buffer pool might have been shrunk between the time the

@@ -24,6 +24,8 @@ tests += {
       't/002_client_join_buffer_resize.pl',
       't/003_resize_failures.pl',
       't/004_resize_with_syslogger.pl',
+      't/007_resize_concurrent_checkpoint.pl',
+      't/008_resize_async_checkpoint.pl',
       't/010_stress_resize_buffer.pl',
       't/011_stress_drop_relation_buffers.pl',
       't/012_stress_drop_database_buffers.pl',
