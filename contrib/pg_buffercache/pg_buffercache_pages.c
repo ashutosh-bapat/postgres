@@ -32,32 +32,17 @@
 
 #define NUM_BUFFERCACHE_OS_PAGES_ELEM	3
 
+/*
+ * Upper bound on OS pages a single BLCKSZ buffer can overlap.  With BLCKSZ
+ * up to 32 KB and os_page_size at least 4 KB that's at most 9; 16 is a safe
+ * cap so the per-iteration scratch arrays fit on the stack.
+ */
+#define MAX_PAGES_PER_BUFFER	16
+
 PG_MODULE_MAGIC_EXT(
 					.name = "pg_buffercache",
 					.version = PG_VERSION
 );
-
-/*
- * Record structure holding the to be exposed cache data for OS pages.  This
- * structure is used by pg_buffercache_os_pages(), where NUMA information may
- * or may not be included.
- */
-typedef struct
-{
-	uint32		bufferid;
-	int64		page_num;
-	int32		numa_node;
-} BufferCacheOsPagesRec;
-
-/*
- * Function context for data persisting over repeated calls.
- */
-typedef struct
-{
-	TupleDesc	tupdesc;
-	bool		include_numa;
-	BufferCacheOsPagesRec *record;
-} BufferCacheOsPagesContext;
 
 static TupleDesc build_buffercache_pages_tupledesc(int natts);
 
@@ -285,279 +270,107 @@ build_buffercache_pages_tupledesc(int natts)
 static Datum
 pg_buffercache_os_pages_internal(FunctionCallInfo fcinfo, bool include_numa)
 {
-	FuncCallContext *funcctx;
-	MemoryContext oldcontext;
-	BufferCacheOsPagesContext *fctx;	/* User function context. */
-	TupleDesc	tupledesc;
-	TupleDesc	expected_tupledesc;
-	HeapTuple	tuple;
-	Datum		result;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	Size		os_page_size;
+	void	   *os_page_ptrs[MAX_PAGES_PER_BUFFER];
+	int			os_page_status[MAX_PAGES_PER_BUFFER];
+	Datum		values[NUM_BUFFERCACHE_OS_PAGES_ELEM];
+	bool		nulls[NUM_BUFFERCACHE_OS_PAGES_ELEM];
+	char	   *startptr;
+	int			i;
+
+	InitMaterializedSRF(fcinfo, 0);
+
+	if (include_numa && pg_numa_init() == -1)
+		elog(ERROR, "libnuma initialization failed or NUMA is not supported on this platform");
+
+	os_page_size = pg_get_shmem_pagesize();
+
+	Assert((os_page_size % BLCKSZ == 0) || (BLCKSZ % os_page_size == 0));
+	Assert(Max(1, BLCKSZ / os_page_size) + 1 <= MAX_PAGES_PER_BUFFER);
+
+	if (include_numa && firstNumaTouch)
+		elog(DEBUG1, "NUMA: page-faulting the buffercache for proper NUMA readouts");
+
+	startptr = (char *) TYPEALIGN_DOWN(os_page_size,
+									   (char *) BufferGetBlock(1));
 
 	/*
-	 * TODO: This allocates memory using NBuffers which may change while this
-	 * function is executed. We need to change this function so that it
-	 * doesn't rely on NBuffers being static throughout the execution of this
-	 * function.
+	 * We don't hold the partition locks, so we don't get a consistent
+	 * snapshot across all buffers, but we do grab the buffer header locks,
+	 * so the information of each buffer is self-consistent.
 	 */
-
-	if (SRF_IS_FIRSTCALL())
+	for (i = 0; i < NBuffers; i++)
 	{
-		int			i,
-					idx;
-		Size		os_page_size;
-		int			pages_per_buffer;
-		int		   *os_page_status = NULL;
-		uint64		os_page_count = 0;
-		int			max_entries;
-		char	   *startptr,
-				   *endptr;
+		char	   *buffptr = (char *) BufferGetBlock(i + 1);
+		char	   *startptr_buff = (char *) TYPEALIGN_DOWN(os_page_size,
+															buffptr);
+		char	   *endptr_buff = buffptr + BLCKSZ;
+		BufferDesc *bufHdr;
+		uint32		bufferid;
+		int32		page_num;
+		int			num_pages_this_buffer = 0;
+		int			j;
+		char	   *ptr;
 
-		/* If NUMA information is requested, initialize NUMA support. */
-		if (include_numa && pg_numa_init() == -1)
-			elog(ERROR, "libnuma initialization failed or NUMA is not supported on this platform");
+		bufHdr = GetBufferDescriptor(i);
+		LockBufHdr(bufHdr);
+		bufferid = BufferDescriptorGetBuffer(bufHdr);
+		UnlockBufHdr(bufHdr);
 
-		/*
-		 * The database block size and OS memory page size are unlikely to be
-		 * the same. The block size is 1-32KB, the memory page size depends on
-		 * platform. On x86 it's usually 4KB, on ARM it's 4KB or 64KB, but
-		 * there are also features like THP etc. Moreover, we don't quite know
-		 * how the pages and buffers "align" in memory - the buffers may be
-		 * shifted in some way, using more memory pages than necessary.
-		 *
-		 * So we need to be careful about mapping buffers to memory pages. We
-		 * calculate the maximum number of pages a buffer might use, so that
-		 * we allocate enough space for the entries. And then we count the
-		 * actual number of entries as we scan the buffers.
-		 *
-		 * This information is needed before calling move_pages() for NUMA
-		 * node id inquiry.
-		 */
-		os_page_size = pg_get_shmem_pagesize();
+		page_num = (startptr_buff - startptr) / os_page_size;
 
-		/*
-		 * The pages and block size is expected to be 2^k, so one divides the
-		 * other (we don't know in which direction). This does not say
-		 * anything about relative alignment of pages/buffers.
-		 */
-		Assert((os_page_size % BLCKSZ == 0) || (BLCKSZ % os_page_size == 0));
+		for (ptr = startptr_buff; ptr < endptr_buff; ptr += os_page_size)
+		{
+			os_page_ptrs[num_pages_this_buffer++] = ptr;
+
+			/* Only need to touch memory once per backend process lifetime */
+			if (include_numa && firstNumaTouch)
+				pg_numa_touch_mem_if_required(ptr);
+		}
 
 		if (include_numa)
 		{
-			void	  **os_page_ptrs = NULL;
-
-			/*
-			 * How many addresses we are going to query?  Simply get the page
-			 * for the first buffer, and first page after the last buffer, and
-			 * count the pages from that.
-			 */
-			startptr = (char *) TYPEALIGN_DOWN(os_page_size,
-											   BufferGetBlock(1));
-			endptr = (char *) TYPEALIGN(os_page_size,
-										(char *) BufferGetBlock(NBuffers) + BLCKSZ);
-			os_page_count = (endptr - startptr) / os_page_size;
-
-			/* Used to determine the NUMA node for all OS pages at once */
-			os_page_ptrs = palloc0_array(void *, os_page_count);
-			os_page_status = palloc_array(int, os_page_count);
-
-			/*
-			 * Fill pointers for all the memory pages.  This loop stores and
-			 * touches (if needed) addresses into os_page_ptrs[] as input to
-			 * one big move_pages(2) inquiry system call, as done in
-			 * pg_numa_query_pages().
-			 */
-			idx = 0;
-			for (char *ptr = startptr; ptr < endptr; ptr += os_page_size)
-			{
-				os_page_ptrs[idx++] = ptr;
-
-				/* Only need to touch memory once per backend process lifetime */
-				if (firstNumaTouch)
-					pg_numa_touch_mem_if_required(ptr);
-			}
-
-			Assert(idx == os_page_count);
-
-			elog(DEBUG1, "NUMA: NBuffers=%d os_page_count=" UINT64_FORMAT " "
-				 "os_page_size=%zu", NBuffers, os_page_count, os_page_size);
-
-			/*
-			 * If we ever get 0xff back from kernel inquiry, then we probably
-			 * have bug in our buffers to OS page mapping code here.
-			 */
-			memset(os_page_status, 0xff, sizeof(int) * os_page_count);
-
-			/* Query NUMA status for all the pointers */
-			if (pg_numa_query_pages(0, os_page_count, os_page_ptrs, os_page_status) == -1)
+			memset(os_page_status, 0xff, sizeof(int) * num_pages_this_buffer);
+			if (pg_numa_query_pages(0, num_pages_this_buffer,
+									os_page_ptrs, os_page_status) == -1)
 				elog(ERROR, "failed NUMA pages inquiry: %m");
 		}
 
-		/* Initialize the multi-call context, load entries about buffers */
-
-		funcctx = SRF_FIRSTCALL_INIT();
-
-		/* Switch context when allocating stuff to be used in later calls */
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-		/* Create a user function context for cross-call persistence */
-		fctx = palloc_object(BufferCacheOsPagesContext);
-
-		if (get_call_result_type(fcinfo, NULL, &expected_tupledesc) != TYPEFUNC_COMPOSITE)
-			elog(ERROR, "return type must be a row type");
-
-		if (expected_tupledesc->natts != NUM_BUFFERCACHE_OS_PAGES_ELEM)
-			elog(ERROR, "incorrect number of output arguments");
-
-		/* Construct a tuple descriptor for the result rows. */
-		tupledesc = CreateTemplateTupleDesc(expected_tupledesc->natts);
-		TupleDescInitEntry(tupledesc, (AttrNumber) 1, "bufferid",
-						   INT4OID, -1, 0);
-		TupleDescInitEntry(tupledesc, (AttrNumber) 2, "os_page_num",
-						   INT8OID, -1, 0);
-		TupleDescInitEntry(tupledesc, (AttrNumber) 3, "numa_node",
-						   INT4OID, -1, 0);
-
-		TupleDescFinalize(tupledesc);
-		fctx->tupdesc = BlessTupleDesc(tupledesc);
-		fctx->include_numa = include_numa;
-
-		/*
-		 * Each buffer needs at least one entry, but it might be offset in
-		 * some way, and use one extra entry. So we allocate space for the
-		 * maximum number of entries we might need, and then count the exact
-		 * number as we're walking buffers. That way we can do it in one pass,
-		 * without reallocating memory.
-		 */
-		pages_per_buffer = Max(1, BLCKSZ / os_page_size) + 1;
-		max_entries = NBuffers * pages_per_buffer;
-
-		/* Allocate entries for BufferCacheOsPagesRec records. */
-		fctx->record = (BufferCacheOsPagesRec *)
-			MemoryContextAllocHuge(CurrentMemoryContext,
-								   sizeof(BufferCacheOsPagesRec) * max_entries);
-
-		/* Return to original context when allocating transient memory */
-		MemoryContextSwitchTo(oldcontext);
-
-		if (include_numa && firstNumaTouch)
-			elog(DEBUG1, "NUMA: page-faulting the buffercache for proper NUMA readouts");
-
-		/*
-		 * Scan through all the buffers, saving the relevant fields in the
-		 * fctx->record structure.
-		 *
-		 * We don't hold the partition locks, so we don't get a consistent
-		 * snapshot across all buffers, but we do grab the buffer header
-		 * locks, so the information of each buffer is self-consistent.
-		 */
-		startptr = (char *) TYPEALIGN_DOWN(os_page_size, (char *) BufferGetBlock(1));
-		idx = 0;
-		for (i = 0; i < NBuffers; i++)
-		{
-			char	   *buffptr = (char *) BufferGetBlock(i + 1);
-			BufferDesc *bufHdr;
-			uint32		bufferid;
-			int32		page_num;
-			char	   *startptr_buff,
-					   *endptr_buff;
-
-			bufHdr = GetBufferDescriptor(i);
-
-			/* Lock each buffer header before inspecting. */
-			LockBufHdr(bufHdr);
-			bufferid = BufferDescriptorGetBuffer(bufHdr);
-			UnlockBufHdr(bufHdr);
-
-			/* start of the first page of this buffer */
-			startptr_buff = (char *) TYPEALIGN_DOWN(os_page_size, buffptr);
-
-			/* end of the buffer (no need to align to memory page) */
-			endptr_buff = buffptr + BLCKSZ;
-
-			Assert(startptr_buff < endptr_buff);
-
-			/* calculate ID of the first page for this buffer */
-			page_num = (startptr_buff - startptr) / os_page_size;
-
-			/* Add an entry for each OS page overlapping with this buffer. */
-			for (char *ptr = startptr_buff; ptr < endptr_buff; ptr += os_page_size)
-			{
-				fctx->record[idx].bufferid = bufferid;
-				fctx->record[idx].page_num = page_num;
-				fctx->record[idx].numa_node = include_numa ? os_page_status[page_num] : -1;
-
-				/* advance to the next entry/page */
-				++idx;
-				++page_num;
-			}
-
-			/*
-			 * Check for interrupts here, at the end of the loop, so that the
-			 * buffer index i remains valid till the next iteration.
-			 */
-			CHECK_FOR_INTERRUPTS();
-		}
-
-		Assert(idx <= max_entries);
-
-		if (include_numa)
-			Assert(idx >= os_page_count);
-
-		/* Set max calls and remember the user function context. */
-		funcctx->max_calls = idx;
-		funcctx->user_fctx = fctx;
-
-		/* Remember this backend touched the pages (only relevant for NUMA) */
-		if (include_numa)
-			firstNumaTouch = false;
-	}
-
-	funcctx = SRF_PERCALL_SETUP();
-
-	/* Get the saved state */
-	fctx = funcctx->user_fctx;
-
-	if (funcctx->call_cntr < funcctx->max_calls)
-	{
-		uint32		i = funcctx->call_cntr;
-		Datum		values[NUM_BUFFERCACHE_OS_PAGES_ELEM];
-		bool		nulls[NUM_BUFFERCACHE_OS_PAGES_ELEM];
-
-		values[0] = Int32GetDatum(fctx->record[i].bufferid);
+		values[0] = Int32GetDatum(bufferid);
 		nulls[0] = false;
-
-		values[1] = Int64GetDatum(fctx->record[i].page_num);
 		nulls[1] = false;
 
-		if (fctx->include_numa)
+		for (j = 0; j < num_pages_this_buffer; j++)
 		{
-			/* status is valid node number */
-			if (fctx->record[i].numa_node >= 0)
+			values[1] = Int64GetDatum(page_num++);
+
+			if (include_numa && os_page_status[j] >= 0)
 			{
-				values[2] = Int32GetDatum(fctx->record[i].numa_node);
+				values[2] = Int32GetDatum(os_page_status[j]);
 				nulls[2] = false;
 			}
 			else
 			{
-				/* some kind of error (e.g. pages moved to swap) */
 				values[2] = (Datum) 0;
 				nulls[2] = true;
 			}
-		}
-		else
-		{
-			values[2] = (Datum) 0;
-			nulls[2] = true;
+
+			tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc,
+								 values, nulls);
 		}
 
-		/* Build and return the tuple. */
-		tuple = heap_form_tuple(fctx->tupdesc, values, nulls);
-		result = HeapTupleGetDatum(tuple);
-
-		SRF_RETURN_NEXT(funcctx, result);
+		/*
+		 * Check for interrupts here, at the end of the loop, so that the
+		 * buffer index i remains valid till the next iteration.
+		 */
+		CHECK_FOR_INTERRUPTS();
 	}
-	else
-		SRF_RETURN_DONE(funcctx);
+
+	if (include_numa)
+		firstNumaTouch = false;
+
+	return (Datum) 0;
 }
 
 /*
