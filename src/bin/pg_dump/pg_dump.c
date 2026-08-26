@@ -20263,15 +20263,50 @@ getDependencies(Archive *fout)
 						 "AND NOT (refclassid = 'pg_opfamily'::regclass AND amprocfamily = refobjid)\n");
 
 	/*
-	 * Translate dependencies of pg_propgraph_element entries into
-	 * dependencies of their parent pg_class entry.
+	 * Translate dependencies of components of a property graph into
+	 * dependencies of their parent (property graph) pg_class entry. These
+	 * components are stored in pg_propgraph_element, pg_propgraph_label,
+	 * pg_propgraph_property and pg_propgraph_element_label,
+	 * pg_propgraph_label_property. Out of these pg_propgraph_label and
+	 * pg_propgraph_element_label entries do not have dependencies outside the
+	 * property graph, so we don't need to translate those.
 	 */
 	if (fout->remoteVersion >= 190000)
+	{
+		/*
+		 * Eliminate dependencies of edges on vertexes since we will dump a
+		 * single CREATE PROPERTY GRAPH statement containing all the elements
+		 * together.
+		 */
 		appendPQExpBufferStr(query, "UNION ALL\n"
 							 "SELECT 'pg_class'::regclass AS classid, pgepgid AS objid, refclassid, refobjid, deptype "
 							 "FROM pg_depend d, pg_propgraph_element pge "
 							 "WHERE deptype NOT IN ('p', 'e', 'i') AND "
-							 "classid = 'pg_propgraph_element'::regclass AND objid = pge.oid\n");
+							 "classid = 'pg_propgraph_element'::regclass AND objid = pge.oid "
+							 "AND NOT (refclassid = 'pg_class'::regclass AND pgepgid = refobjid) "
+							 "AND refclassid <> 'pg_propgraph_element'::regclass\n");
+
+		appendPQExpBufferStr(query, "UNION ALL\n"
+							 "SELECT 'pg_class'::regclass AS classid, pgppgid AS objid, refclassid, refobjid, deptype "
+							 "FROM pg_depend d, pg_propgraph_property pgp "
+							 "WHERE deptype NOT IN ('p', 'e', 'i') AND "
+							 "classid = 'pg_propgraph_property'::regclass AND objid = pgp.oid "
+							 "AND NOT (refclassid = 'pg_class'::regclass AND pgppgid = refobjid)\n");
+
+		/*
+		 * Eliminate dependencies of pg_propgraph_label_properties on
+		 * pg_propgraph_element_label and pg_propgraph_property since they are
+		 * internal to the property graph which will be dumped as a single
+		 * DDL.
+		 */
+		appendPQExpBufferStr(query, "UNION ALL\n"
+							 "SELECT 'pg_class'::regclass AS classid, pgp.pgppgid AS objid, refclassid, refobjid, deptype "
+							 "FROM pg_depend d, pg_propgraph_label_property pglp, pg_propgraph_property pgp "
+							 "WHERE deptype NOT IN ('p', 'e', 'i') AND "
+							 "classid = 'pg_propgraph_label_property'::regclass AND objid = pglp.oid AND pglp.plppropid = pgp.oid "
+							 "AND NOT (refclassid IN ('pg_propgraph_element_label'::regclass, 'pg_propgraph_property'::regclass))\n");
+	}
+
 
 	/* Sort the output for efficiency below */
 	appendPQExpBufferStr(query, "ORDER BY 1,2");

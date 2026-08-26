@@ -21,8 +21,22 @@ CREATE TABLE t3 (x int, y text, z text);
 CREATE TABLE e1 (a int, i int, t text, PRIMARY KEY (a, i) INCLUDE (t));
 CREATE TABLE e2 (a int, x int, t text);
 
+-- The table types used to test graph properties with user-defined
+-- datatypes.  Unlike other user defined types these types depend upon tables
+-- which have same dump priority as the property graph.  002_pg_upgrade will use
+-- this property graph to test dependency ordering in pg_dump.
+CREATE TABLE t_udt1 (a int, b int);
+CREATE TABLE t_udt2 (a int, b int);
+
 CREATE PROPERTY GRAPH g2
-    VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL, t3 KEY (x) LABEL t3l1 LABEL t3l2)
+    VERTEX TABLES (
+        t1 KEY (a),
+        t2 DEFAULT LABEL,
+        t3 KEY (x)
+                   -- property with user-defined type
+                   LABEL t3l1 PROPERTIES ((row(x, 1)::t_udt1) AS p1)
+                   -- property with user-defined type inside expression
+                   LABEL t3l2 PROPERTIES ((row(x, 1)::t_udt2).a AS p2))
     EDGE TABLES (
         e1
             SOURCE KEY (a) REFERENCES t1 (a)
@@ -37,8 +51,10 @@ CREATE PROPERTY GRAPH g2
 DROP TABLE t1;  -- fail
 ALTER TABLE t1 DROP COLUMN b;  -- non-key column; fail
 ALTER TABLE t1 DROP COLUMN a;  -- key column; fail
+DROP TABLE t_udt1;  -- fail
+DROP TABLE t_udt2;  -- fail
 
--- like g2 but assembled with ALTER
+-- property graph assembled using ALTER
 CREATE PROPERTY GRAPH g3;
 ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t1 KEY (a), t2 DEFAULT LABEL);
 ALTER PROPERTY GRAPH g3
