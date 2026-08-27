@@ -76,6 +76,7 @@
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
 #include "commands/policy.h"
+#include "commands/propgraphcmds.h"
 #include "commands/publicationcmds.h"
 #include "commands/seclabel.h"
 #include "commands/sequence.h"
@@ -88,6 +89,7 @@
 #include "rewrite/rewriteRemove.h"
 #include "storage/lmgr.h"
 #include "utils/fmgroids.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
@@ -159,7 +161,7 @@ static void findDependentObjects(const ObjectAddress *object,
 static void performDeletionInternal(ObjectAddresses *targetObjects,
 									DropBehavior behavior, int flags,
 									const ObjectAddress *origObject,
-									Relation depRel);
+									Relation *depRel);
 static void reportDependentObjects(const ObjectAddresses *targetObjects,
 								   DropBehavior behavior,
 								   int flags,
@@ -186,6 +188,22 @@ static bool stack_address_present_add_flags(const ObjectAddress *object,
 											ObjectAddressStack *stack);
 static void DeleteInitPrivs(const ObjectAddress *object);
 
+/* Property graph related deletion closure routines. */
+static void collectPropGraphCleanupCandidates(const ObjectAddresses *targetObjects,
+											  Relation depRel,
+											  List **labeloids,
+											  List **propoids);
+static bool isOrphanedPropGraphObject(const ObjectAddress *object,
+									  Oid associationClassId,
+									  const ObjectAddresses *targetObjects,
+									  Relation depRel);
+static void addOrphanedPropGraphObject(const ObjectAddress *object,
+									   ObjectAddresses *targetObjects,
+									   int flags, Relation *depRel);
+static void addOrphanedPropGraphObjects(ObjectAddresses *targetObjects,
+										const List *labeloids,
+										const List *propoids,
+										int flags, Relation *depRel);
 
 /*
  * Go through the objects given running the final actions on them, and execute
@@ -237,6 +255,204 @@ deleteObjectsInList(ObjectAddresses *targetObjects, Relation *depRel,
 			continue;
 
 		deleteOneObject(thisobj, depRel, flags);
+	}
+}
+
+/*
+ * Collect pg_propgraph_label and pg_propgraph_property entries that may be
+ * orphaned when deleting property graph component objects in the
+ * `targetObjects`. Exclude objects already scheduled for deletion, and return
+ * the remaining candidates in `labeloids` and `propoids` lists. `depRel` is
+ * already opened pg_depend relation.
+ *
+ * pg_propgraph_label entries are referenced by pg_propgraph_element_label
+ * entries, and pg_propgraph_property entries are referenced by
+ * pg_propgraph_label_property entries. Each of these association objects has an
+ * AUTO dependency on the component object, so we can find them in pg_depend. We
+ * use pg_depend instead of corresponding catalog tables so that it is easier to
+ * convert this code to use the dependency traversal code in the future.
+ */
+static void
+collectPropGraphCleanupCandidates(const ObjectAddresses *targetObjects,
+								  Relation depRel, List **labeloids,
+								  List **propoids)
+{
+	for (int i = 0; i < targetObjects->numrefs; i++)
+	{
+		const ObjectAddress *object = &targetObjects->refs[i];
+		ObjectAddress referenced;
+		Oid			refobjid = InvalidOid;
+		Oid			refclassid;
+		List	  **oids;
+		ScanKeyData key[2];
+		SysScanDesc scan;
+		HeapTuple	tup;
+
+		if (object->classId == PropgraphElementLabelRelationId)
+		{
+			refclassid = PropgraphLabelRelationId;
+			oids = labeloids;
+		}
+		else if (object->classId == PropgraphLabelPropertyRelationId)
+		{
+			refclassid = PropgraphPropertyRelationId;
+			oids = propoids;
+		}
+		else
+			continue;
+
+		ScanKeyInit(&key[0],
+					Anum_pg_depend_classid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(object->classId));
+		ScanKeyInit(&key[1],
+					Anum_pg_depend_objid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(object->objectId));
+
+		scan = systable_beginscan(depRel, DependDependerIndexId, true,
+								  NULL, 2, key);
+		while (HeapTupleIsValid(tup = systable_getnext(scan)))
+		{
+			Form_pg_depend depform = (Form_pg_depend) GETSTRUCT(tup);
+
+			if (depform->refclassid == refclassid &&
+				depform->deptype == DEPENDENCY_AUTO)
+			{
+				if (OidIsValid(refobjid))
+					elog(ERROR, "multiple references found for %s in catalog \"%s\"",
+						 getObjectDescription(object, false),
+						 get_rel_name(refclassid));
+
+				refobjid = depform->refobjid;
+			}
+		}
+		systable_endscan(scan);
+
+		/*
+		 * Each pg_propgraph_label_property entry should have one and only one
+		 * pg_propgraph_property entry. Similarly for
+		 * pg_propgraph_element_label entry and pg_propgraph_label entry.
+		 */
+		Assert(OidIsValid(refobjid));
+		ObjectAddressSet(referenced, refclassid, refobjid);
+		if (!object_address_present(&referenced, targetObjects))
+			*oids = list_append_unique_oid(*oids, refobjid);
+	}
+}
+
+/*
+ * Return true if all property graph components referencing the given object are
+ * already scheduled for deletion.
+ *
+ *	object: property graph label or property to check
+ *	associationClassId: catalog containing references to the object
+ *	targetObjects: list of objects that are scheduled to be deleted
+ *	depRel: already opened pg_depend relation
+ */
+static bool
+isOrphanedPropGraphObject(const ObjectAddress *object, Oid associationClassId,
+						  const ObjectAddresses *targetObjects, Relation depRel)
+{
+	ScanKeyData key[2];
+	SysScanDesc scan;
+	HeapTuple	tup;
+
+	ScanKeyInit(&key[0],
+				Anum_pg_depend_refclassid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(object->classId));
+	ScanKeyInit(&key[1],
+				Anum_pg_depend_refobjid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(object->objectId));
+
+	scan = systable_beginscan(depRel, DependReferenceIndexId, true,
+							  NULL, 2, key);
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		Form_pg_depend depform = (Form_pg_depend) GETSTRUCT(tup);
+		ObjectAddress depender;
+
+		if (depform->classid != associationClassId ||
+			depform->deptype != DEPENDENCY_AUTO)
+			continue;
+
+		ObjectAddressSubSet(depender, depform->classid, depform->objid,
+							depform->objsubid);
+		if (!object_address_present(&depender, targetObjects))
+		{
+			systable_endscan(scan);
+			return false;
+		}
+	}
+	systable_endscan(scan);
+
+	return true;
+}
+
+/*
+ * Add an orphan and its dependents to the list of objects being deleted.
+ *
+ * The entries in pg_propgraph_label and pg_propgraph_property are respectively
+ * associated with pg_propgraph_element_label and pg_propgraph_label_property
+ * entries through AUTO dependencies.  Merging that flag into an entry previously
+ * reached through a NORMAL dependency would incorrectly allow a RESTRICT
+ * deletion, so preserve the original flags while retaining newly added objects.
+ * 
+ * TODO: This calls findDependentObjects but does not pass non-NULL stack which
+ * is misleading.
+ */
+static void
+addOrphanedPropGraphObject(const ObjectAddress *object,
+						   ObjectAddresses *targetObjects,
+						   int flags, Relation *depRel)
+{
+	int			old_numrefs = targetObjects->numrefs;
+	int		   *old_flags;
+
+	old_flags = palloc_array(int, old_numrefs);
+	for (int i = 0; i < old_numrefs; i++)
+		old_flags[i] = targetObjects->extras[i].flags;
+
+	AcquireDeletionLock(object, 0);
+	findDependentObjects(object, DEPFLAG_AUTO, flags, NULL,
+						 targetObjects, NULL, depRel);
+
+	for (int i = 0; i < old_numrefs; i++)
+		targetObjects->extras[i].flags = old_flags[i];
+	pfree(old_flags);
+}
+
+/*
+ * Add orphaned property graph objects and everything depending on them to the
+ * deletion list.
+ */
+static void
+addOrphanedPropGraphObjects(ObjectAddresses *targetObjects,
+							const List *labeloids, const List *propoids,
+							int flags, Relation *depRel)
+{
+	foreach_oid(labeloid, labeloids)
+	{
+		ObjectAddress object;
+
+		ObjectAddressSet(object, PropgraphLabelRelationId, labeloid);
+		if (isOrphanedPropGraphObject(&object,
+									  PropgraphElementLabelRelationId,
+									  targetObjects, *depRel))
+			addOrphanedPropGraphObject(&object, targetObjects, flags, depRel);
+	}
+
+	foreach_oid(propoid, propoids)
+	{
+		ObjectAddress object;
+
+		ObjectAddressSet(object, PropgraphPropertyRelationId, propoid);
+		if (isOrphanedPropGraphObject(&object,
+									  PropgraphLabelPropertyRelationId,
+									  targetObjects, *depRel))
+			addOrphanedPropGraphObject(&object, targetObjects, flags, depRel);
 	}
 }
 
@@ -312,7 +528,7 @@ performDeletion(const ObjectAddress *object,
 						 NULL,	/* no pendingObjects */
 						 &depRel);
 
-	performDeletionInternal(targetObjects, behavior, flags, object, depRel);
+	performDeletionInternal(targetObjects, behavior, flags, object, &depRel);
 
 	/* And clean up */
 	free_object_addresses(targetObjects);
@@ -378,7 +594,7 @@ performMultipleDeletions(const ObjectAddresses *objects,
 
 	performDeletionInternal(targetObjects, behavior, flags,
 							(objects->numrefs == 1 ? objects->refs : NULL),
-							depRel);
+							&depRel);
 
 	/* And clean up */
 	free_object_addresses(targetObjects);
@@ -387,7 +603,11 @@ performMultipleDeletions(const ObjectAddresses *objects,
 }
 
 /*
- * Complete deletion after the dependency closure has been built.
+ * Complete deletion after the initial dependency closure has been built.
+ *
+ * Additionally this function adds property graph component objects that will be
+ * orphaned by the scheduled deletions and continue expanding the dependency
+ * closure.
  *
  *	targetObjects: list of objects that are scheduled to be deleted
  *	behavior: same as performDeletion()
@@ -399,8 +619,30 @@ performMultipleDeletions(const ObjectAddresses *objects,
 static void
 performDeletionInternal(ObjectAddresses *targetObjects,
 						DropBehavior behavior, int flags,
-						const ObjectAddress *origObject, Relation depRel)
+						const ObjectAddress *origObject, Relation *depRel)
 {
+	int			old_numrefs;
+
+	/*
+	 * Add property graph component objects that will be orphaned by the
+	 * scheduled deletions.  Adding an orphan and its dependents may orphan
+	 * further property graph objects, so continue until the deletion closure
+	 * stops growing.
+	 */
+	do
+	{
+		List	   *labeloids = NIL;
+		List	   *propoids = NIL;
+
+		old_numrefs = targetObjects->numrefs;
+		collectPropGraphCleanupCandidates(targetObjects, *depRel,
+										  &labeloids, &propoids);
+		addOrphanedPropGraphObjects(targetObjects, labeloids, propoids, flags,
+									depRel);
+
+		list_free(labeloids);
+		list_free(propoids);
+	} while (targetObjects->numrefs > old_numrefs);
 
 	/*
 	 * Check if deletion is allowed, and report about cascaded deletes.
@@ -408,7 +650,7 @@ performDeletionInternal(ObjectAddresses *targetObjects,
 	reportDependentObjects(targetObjects, behavior, flags, origObject);
 
 	/* do the deed */
-	deleteObjectsInList(targetObjects, &depRel, flags);
+	deleteObjectsInList(targetObjects, depRel, flags);
 }
 
 /*
@@ -1475,6 +1717,20 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemovePublicationById(object->objectId);
 			break;
 
+		case PropgraphElementRelationId:
+		case PropgraphElementLabelRelationId:
+		case PropgraphLabelRelationId:
+		case PropgraphLabelPropertyRelationId:
+		case PropgraphPropertyRelationId:
+			{
+				Oid			graphoid = GetPropGraphForComponent(object);
+
+				if (OidIsValid(graphoid))
+					CacheInvalidateRelcacheByRelid(graphoid);
+				DropObjectById(object);
+				break;
+			}
+
 		case CastRelationId:
 		case CollationRelationId:
 		case ConversionRelationId:
@@ -1484,11 +1740,6 @@ doDeletion(const ObjectAddress *object, int flags)
 		case AccessMethodRelationId:
 		case AccessMethodOperatorRelationId:
 		case AccessMethodProcedureRelationId:
-		case PropgraphElementRelationId:
-		case PropgraphElementLabelRelationId:
-		case PropgraphLabelRelationId:
-		case PropgraphLabelPropertyRelationId:
-		case PropgraphPropertyRelationId:
 		case NamespaceRelationId:
 		case TSParserRelationId:
 		case TSDictionaryRelationId:
@@ -1543,6 +1794,27 @@ AcquireDeletionLock(const ObjectAddress *object, int flags)
 			LockRelationOid(object->objectId, ShareUpdateExclusiveLock);
 		else
 			LockRelationOid(object->objectId, AccessExclusiveLock);
+	}
+	else if (object->classId == PropgraphElementRelationId ||
+			 object->classId == PropgraphElementLabelRelationId ||
+			 object->classId == PropgraphLabelRelationId ||
+			 object->classId == PropgraphLabelPropertyRelationId ||
+			 object->classId == PropgraphPropertyRelationId)
+	{
+		Oid			graphoid;
+
+		/* Match ALTER PROPERTY GRAPH's graph-before-component lock order. */
+		graphoid = GetPropGraphForComponent(object);
+		if (OidIsValid(graphoid))
+			LockRelationOid(graphoid, ShareRowExclusiveLock);
+
+		/*
+		 * We do not really need lock property graph components individually.
+		 * They are all protected by the lock on the property graph itself.
+		 * But maintain the same locking discipline as for other objects.
+		 */
+		LockDatabaseObject(object->classId, object->objectId, 0,
+						   AccessExclusiveLock);
 	}
 	else if (IsSharedRelation(object->classId))
 		LockSharedObject(object->classId, object->objectId, 0,

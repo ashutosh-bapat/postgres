@@ -875,6 +875,34 @@ EXECUTE loopstmt;
  e331_new
 (2 rows)
 
+-- A cascaded drop must invalidate a cached plan.  If we drop an element table,
+-- the plan is invalidated because it depends upon the table, not because a
+-- dependent property graph object getting dropped.  Instead use an object like
+-- collation which when dropped does not cause the plan to be invalidated.
+CREATE COLLATION cache_coll FROM "C";
+CREATE TABLE cache_v (id text PRIMARY KEY);
+INSERT INTO cache_v VALUES ('one');
+CREATE PROPERTY GRAPH cache_g
+    VERTEX TABLES (cache_v LABEL cache_l
+                   PROPERTIES (id COLLATE cache_coll AS p));
+PREPARE cachestmt AS
+    SELECT p
+    FROM GRAPH_TABLE (cache_g MATCH (v IS cache_l) COLUMNS (v.p AS p));
+EXECUTE cachestmt;
+  p  
+-----
+ one
+(1 row)
+
+DROP COLLATION cache_coll CASCADE;
+NOTICE:  drop cascades to property p of property graph cache_g
+EXECUTE cachestmt;  -- error
+ERROR:  property "p" does not exist
+DEALLOCATE cachestmt;
+-- Don't retain this property graph for dump/restore testing later since there
+-- is nothing special to test in an empty property graph.
+DROP PROPERTY GRAPH cache_g;
+DROP TABLE cache_v;
 -- inheritance and partitioning
 CREATE TABLE pv (id int, val int);
 CREATE TABLE cv1 () INHERITS (pv);
@@ -990,17 +1018,17 @@ SELECT g.* FROM x1,
 -- If these DDLs succeed, the pg_get_viewdef call below will throw cache lookup
 -- error.
 ALTER PROPERTY GRAPH myshop ALTER VERTEX TABLE orders DROP LABEL orders; -- error
-ERROR:  cannot drop label orders of property graph myshop because other objects depend on it
+ERROR:  cannot drop label orders of vertex orders of property graph myshop because other objects depend on it
 DETAIL:  view customers_us depends on label orders of property graph myshop
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ALTER PROPERTY GRAPH myshop ALTER VERTEX TABLE customers
     ALTER LABEL customers DROP PROPERTIES (address);  -- error
-ERROR:  cannot drop property address of property graph myshop because other objects depend on it
+ERROR:  cannot drop property address of label customers of vertex customers of property graph myshop because other objects depend on it
 DETAIL:  view customers_us depends on property address of property graph myshop
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ALTER PROPERTY GRAPH myshop ALTER VERTEX TABLE products
     ALTER LABEL products DROP PROPERTIES (price);  -- error
-ERROR:  cannot drop property price of property graph myshop because other objects depend on it
+ERROR:  cannot drop property price of label products of vertex products of property graph myshop because other objects depend on it
 DETAIL:  view customers_us depends on property price of property graph myshop
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 -- ruleutils reverse parsing

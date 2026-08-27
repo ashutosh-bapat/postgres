@@ -483,6 +483,27 @@ ALTER PROPERTY GRAPH g1 ALTER EDGE TABLE e3_3 ALTER LABEL l2 DROP PROPERTIES (el
 EXECUTE loopstmt; -- error
 ALTER PROPERTY GRAPH g1 ALTER EDGE TABLE e3_3 ALTER LABEL l2 ADD PROPERTIES ((ename || '_new')::varchar(10) AS elname);
 EXECUTE loopstmt;
+-- A cascaded drop must invalidate a cached plan.  If we drop an element table,
+-- the plan is invalidated because it depends upon the table, not because a
+-- dependent property graph object getting dropped.  Instead use an object like
+-- collation which when dropped does not cause the plan to be invalidated.
+CREATE COLLATION cache_coll FROM "C";
+CREATE TABLE cache_v (id text PRIMARY KEY);
+INSERT INTO cache_v VALUES ('one');
+CREATE PROPERTY GRAPH cache_g
+    VERTEX TABLES (cache_v LABEL cache_l
+                   PROPERTIES (id COLLATE cache_coll AS p));
+PREPARE cachestmt AS
+    SELECT p
+    FROM GRAPH_TABLE (cache_g MATCH (v IS cache_l) COLUMNS (v.p AS p));
+EXECUTE cachestmt;
+DROP COLLATION cache_coll CASCADE;
+EXECUTE cachestmt;  -- error
+DEALLOCATE cachestmt;
+-- Don't retain this property graph for dump/restore testing later since there
+-- is nothing special to test in an empty property graph.
+DROP PROPERTY GRAPH cache_g;
+DROP TABLE cache_v;
 
 -- inheritance and partitioning
 CREATE TABLE pv (id int, val int);

@@ -96,7 +96,6 @@ static Oid	get_element_relid(Oid peid);
 static List *get_graph_label_ids(Oid graphid);
 static List *get_label_element_label_ids(Oid labelid);
 static List *get_element_label_property_names(Oid ellabeloid);
-static List *get_graph_property_ids(Oid graphid);
 
 
 /*
@@ -316,6 +315,92 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 	check_all_labels_properties(pgaddress.objectId);
 
 	return pgaddress;
+}
+
+/*
+ * Returns the OID of the property graph containing the given property graph component object.
+ */
+Oid
+GetPropGraphForComponent(const ObjectAddress *object)
+{
+	HeapTuple	tuple;
+	Relation	relation;
+	ScanKeyData key;
+	SysScanDesc scan;
+
+	switch (object->classId)
+	{
+		case PropgraphElementRelationId:
+			return GetSysCacheOid1(PROPGRAPHELOID,
+								   Anum_pg_propgraph_element_pgepgid,
+								   ObjectIdGetDatum(object->objectId));
+
+		case PropgraphLabelRelationId:
+			return GetSysCacheOid1(PROPGRAPHLABELOID,
+								   Anum_pg_propgraph_label_pglpgid,
+								   ObjectIdGetDatum(object->objectId));
+
+		case PropgraphPropertyRelationId:
+			return GetSysCacheOid1(PROPGRAPHPROPOID,
+								   Anum_pg_propgraph_property_pgppgid,
+								   ObjectIdGetDatum(object->objectId));
+
+		case PropgraphElementLabelRelationId:
+			{
+				Oid			labeloid = InvalidOid;
+
+				relation = table_open(PropgraphElementLabelRelationId,
+									  AccessShareLock);
+				ScanKeyInit(&key, Anum_pg_propgraph_element_label_oid,
+							BTEqualStrategyNumber, F_OIDEQ,
+							ObjectIdGetDatum(object->objectId));
+				scan = systable_beginscan(relation,
+										  PropgraphElementLabelObjectIndexId,
+										  true, NULL, 1, &key);
+				tuple = systable_getnext(scan);
+				if (HeapTupleIsValid(tuple))
+					labeloid = ((Form_pg_propgraph_element_label) GETSTRUCT(tuple))->pgellabelid;
+				systable_endscan(scan);
+				table_close(relation, AccessShareLock);
+
+				if (OidIsValid(labeloid))
+					return GetSysCacheOid1(PROPGRAPHLABELOID,
+										   Anum_pg_propgraph_label_pglpgid,
+										   ObjectIdGetDatum(labeloid));
+				return InvalidOid;
+			}
+
+		case PropgraphLabelPropertyRelationId:
+			{
+				Oid			propoid = InvalidOid;
+
+				relation = table_open(PropgraphLabelPropertyRelationId,
+									  AccessShareLock);
+				ScanKeyInit(&key, Anum_pg_propgraph_label_property_oid,
+							BTEqualStrategyNumber, F_OIDEQ,
+							ObjectIdGetDatum(object->objectId));
+				scan = systable_beginscan(relation,
+										  PropgraphLabelPropertyObjectIndexId,
+										  true, NULL, 1, &key);
+				tuple = systable_getnext(scan);
+				if (HeapTupleIsValid(tuple))
+					propoid = ((Form_pg_propgraph_label_property) GETSTRUCT(tuple))->plppropid;
+				systable_endscan(scan);
+				table_close(relation, AccessShareLock);
+
+				if (OidIsValid(propoid))
+					return GetSysCacheOid1(PROPGRAPHPROPOID,
+										   Anum_pg_propgraph_property_pgppgid,
+										   ObjectIdGetDatum(propoid));
+				return InvalidOid;
+			}
+
+		default:
+			elog(ERROR, "%s is not a property graph component",
+				 getObjectDescription(object, false));
+	}
+
+	pg_unreachable();
 }
 
 /*
@@ -1494,21 +1579,6 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		performDeletion(&obj, stmt->drop_behavior, 0);
 	}
 
-	/* Remove any orphaned pg_propgraph_label entries */
-	if (stmt->drop_vertex_tables || stmt->drop_edge_tables)
-	{
-		foreach_oid(labeloid, get_graph_label_ids(pgrelid))
-		{
-			if (!get_label_element_label_ids(labeloid))
-			{
-				ObjectAddress obj;
-
-				ObjectAddressSet(obj, PropgraphLabelRelationId, labeloid);
-				performDeletion(&obj, stmt->drop_behavior, 0);
-			}
-		}
-	}
-
 	foreach(lc, stmt->add_labels)
 	{
 		PropGraphLabelAndProperties *lp = lfirst_node(PropGraphLabelAndProperties, lc);
@@ -1610,13 +1680,6 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		ObjectAddressSet(obj, PropgraphElementLabelRelationId, ellabeloid);
 		performDeletion(&obj, stmt->drop_behavior, 0);
-
-		/* Remove any orphaned pg_propgraph_label entries */
-		if (!get_label_element_label_ids(labeloid))
-		{
-			ObjectAddressSet(obj, PropgraphLabelRelationId, labeloid);
-			performDeletion(&obj, stmt->drop_behavior, 0);
-		}
 	}
 
 	if (stmt->add_properties)
@@ -1712,35 +1775,6 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		}
 
 		check_element_label_properties(ellabeloid);
-	}
-
-	/* Remove any orphaned pg_propgraph_property entries */
-	if (stmt->drop_properties || stmt->drop_vertex_tables || stmt->drop_edge_tables || stmt->drop_label)
-	{
-		foreach_oid(propoid, get_graph_property_ids(pgrelid))
-		{
-			Relation	rel;
-			SysScanDesc scan;
-			ScanKeyData key[1];
-
-			rel = table_open(PropgraphLabelPropertyRelationId, RowShareLock);
-			ScanKeyInit(&key[0],
-						Anum_pg_propgraph_label_property_plppropid,
-						BTEqualStrategyNumber, F_OIDEQ,
-						ObjectIdGetDatum(propoid));
-			/* XXX no suitable index */
-			scan = systable_beginscan(rel, InvalidOid, true, NULL, 1, key);
-			if (!systable_getnext(scan))
-			{
-				ObjectAddress obj;
-
-				ObjectAddressSet(obj, PropgraphPropertyRelationId, propoid);
-				performDeletion(&obj, stmt->drop_behavior, 0);
-			}
-
-			systable_endscan(scan);
-			table_close(rel, RowShareLock);
-		}
 	}
 
 	/*
@@ -1924,34 +1958,6 @@ get_element_label_property_names(Oid ellabeloid)
 		result = lappend(result, makeString(get_propgraph_property_name(plpform->plppropid)));
 	}
 
-	systable_endscan(scan);
-	table_close(rel, AccessShareLock);
-
-	return result;
-}
-
-/*
- * Get a list of all property OIDs of a graph.
- */
-static List *
-get_graph_property_ids(Oid graphid)
-{
-	Relation	rel;
-	SysScanDesc scan;
-	ScanKeyData key[1];
-	HeapTuple	tuple;
-	List	   *result = NIL;
-
-	rel = table_open(PropgraphPropertyRelationId, AccessShareLock);
-	ScanKeyInit(&key[0],
-				Anum_pg_propgraph_property_pgppgid,
-				BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(graphid));
-	scan = systable_beginscan(rel, PropgraphPropertyNameIndexId, true, NULL, 1, key);
-	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-	{
-		result = lappend_oid(result, ((Form_pg_propgraph_property) GETSTRUCT(tuple))->oid);
-	}
 	systable_endscan(scan);
 	table_close(rel, AccessShareLock);
 

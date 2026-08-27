@@ -1,0 +1,99 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_add_label s2_drop s1_commit s2_check
+step s1_begin: BEGIN;
+step s1_add_label: 
+	ALTER PROPERTY GRAPH pgg ALTER VERTEX TABLE pgt_keep
+		ADD LABEL pgl PROPERTIES (a AS p);
+
+step s2_drop: DROP TABLE pgt_drop CASCADE; <waiting ...>
+step s1_commit: COMMIT;
+s2: NOTICE:  drop cascades to vertex pgt_drop of property graph pgg
+step s2_drop: <... completed>
+step s2_check: 
+	SELECT
+		(SELECT count(*)
+		 FROM information_schema.pg_labels
+		 WHERE property_graph_name = 'pgg' AND label_name = 'pgl') AS labels,
+		(SELECT count(*)
+		 FROM information_schema.pg_property_data_types
+		 WHERE property_graph_name = 'pgg' AND property_name = 'p') AS properties;
+
+labels|properties
+------+----------
+     1|         1
+(1 row)
+
+
+starting permutation: s1_begin s1_add_label s2_drop s1_rollback s2_check
+step s1_begin: BEGIN;
+step s1_add_label: 
+	ALTER PROPERTY GRAPH pgg ALTER VERTEX TABLE pgt_keep
+		ADD LABEL pgl PROPERTIES (a AS p);
+
+step s2_drop: DROP TABLE pgt_drop CASCADE; <waiting ...>
+step s1_rollback: ROLLBACK;
+s2: NOTICE:  drop cascades to vertex pgt_drop of property graph pgg
+step s2_drop: <... completed>
+step s2_check: 
+	SELECT
+		(SELECT count(*)
+		 FROM information_schema.pg_labels
+		 WHERE property_graph_name = 'pgg' AND label_name = 'pgl') AS labels,
+		(SELECT count(*)
+		 FROM information_schema.pg_property_data_types
+		 WHERE property_graph_name = 'pgg' AND property_name = 'p') AS properties;
+
+labels|properties
+------+----------
+     0|         0
+(1 row)
+
+
+starting permutation: s1_begin s2_drop s1_add_label s1_commit s2_check
+step s1_begin: BEGIN;
+s2: NOTICE:  drop cascades to vertex pgt_drop of property graph pgg
+step s2_drop: DROP TABLE pgt_drop CASCADE;
+step s1_add_label: 
+	ALTER PROPERTY GRAPH pgg ALTER VERTEX TABLE pgt_keep
+		ADD LABEL pgl PROPERTIES (a AS p);
+
+step s1_commit: COMMIT;
+step s2_check: 
+	SELECT
+		(SELECT count(*)
+		 FROM information_schema.pg_labels
+		 WHERE property_graph_name = 'pgg' AND label_name = 'pgl') AS labels,
+		(SELECT count(*)
+		 FROM information_schema.pg_property_data_types
+		 WHERE property_graph_name = 'pgg' AND property_name = 'p') AS properties;
+
+labels|properties
+------+----------
+     1|         1
+(1 row)
+
+
+starting permutation: s1_begin s2_drop s1_add_label s1_rollback s2_check
+step s1_begin: BEGIN;
+s2: NOTICE:  drop cascades to vertex pgt_drop of property graph pgg
+step s2_drop: DROP TABLE pgt_drop CASCADE;
+step s1_add_label: 
+	ALTER PROPERTY GRAPH pgg ALTER VERTEX TABLE pgt_keep
+		ADD LABEL pgl PROPERTIES (a AS p);
+
+step s1_rollback: ROLLBACK;
+step s2_check: 
+	SELECT
+		(SELECT count(*)
+		 FROM information_schema.pg_labels
+		 WHERE property_graph_name = 'pgg' AND label_name = 'pgl') AS labels,
+		(SELECT count(*)
+		 FROM information_schema.pg_property_data_types
+		 WHERE property_graph_name = 'pgg' AND property_name = 'p') AS properties;
+
+labels|properties
+------+----------
+     0|         0
+(1 row)
+
