@@ -156,6 +156,10 @@ static void findDependentObjects(const ObjectAddress *object,
 								 ObjectAddresses *targetObjects,
 								 const ObjectAddresses *pendingObjects,
 								 Relation *depRel);
+static void performDeletionInternal(ObjectAddresses *targetObjects,
+									DropBehavior behavior, int flags,
+									const ObjectAddress *origObject,
+									Relation depRel);
 static void reportDependentObjects(const ObjectAddresses *targetObjects,
 								   DropBehavior behavior,
 								   int flags,
@@ -308,16 +312,7 @@ performDeletion(const ObjectAddress *object,
 						 NULL,	/* no pendingObjects */
 						 &depRel);
 
-	/*
-	 * Check if deletion is allowed, and report about cascaded deletes.
-	 */
-	reportDependentObjects(targetObjects,
-						   behavior,
-						   flags,
-						   object);
-
-	/* do the deed */
-	deleteObjectsInList(targetObjects, &depRel, flags);
+	performDeletionInternal(targetObjects, behavior, flags, object, depRel);
 
 	/* And clean up */
 	free_object_addresses(targetObjects);
@@ -381,24 +376,39 @@ performMultipleDeletions(const ObjectAddresses *objects,
 							 &depRel);
 	}
 
-	/*
-	 * Check if deletion is allowed, and report about cascaded deletes.
-	 *
-	 * If there's exactly one object being deleted, report it the same way as
-	 * in performDeletion(), else we have to be vaguer.
-	 */
-	reportDependentObjects(targetObjects,
-						   behavior,
-						   flags,
-						   (objects->numrefs == 1 ? objects->refs : NULL));
-
-	/* do the deed */
-	deleteObjectsInList(targetObjects, &depRel, flags);
+	performDeletionInternal(targetObjects, behavior, flags,
+							(objects->numrefs == 1 ? objects->refs : NULL),
+							depRel);
 
 	/* And clean up */
 	free_object_addresses(targetObjects);
 
 	table_close(depRel, RowExclusiveLock);
+}
+
+/*
+ * Complete deletion after the dependency closure has been built.
+ *
+ *	targetObjects: list of objects that are scheduled to be deleted
+ *	behavior: same as performDeletion()
+ *	flags: same as performDeletion()
+ *	origObject: original deletion target, or NULL if there is more than one
+ *	depRel: already opened pg_depend relation, which may be reopened by
+ *		deleteObjectsInList() if needed.
+ */
+static void
+performDeletionInternal(ObjectAddresses *targetObjects,
+						DropBehavior behavior, int flags,
+						const ObjectAddress *origObject, Relation depRel)
+{
+
+	/*
+	 * Check if deletion is allowed, and report about cascaded deletes.
+	 */
+	reportDependentObjects(targetObjects, behavior, flags, origObject);
+
+	/* do the deed */
+	deleteObjectsInList(targetObjects, &depRel, flags);
 }
 
 /*
