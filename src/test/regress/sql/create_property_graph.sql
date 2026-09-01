@@ -88,6 +88,7 @@ ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ALTER LABEL t2 DROP PROPERTIES (yy
 -- information schema queries outputs below.
 ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t3 DROP LABEL t3l2;
 
+-- edge and vertex table key inference from primary and foreign key constraints.
 CREATE TABLE t11 (a int PRIMARY KEY);
 CREATE TABLE t12 (b int PRIMARY KEY);
 CREATE TABLE t13 (
