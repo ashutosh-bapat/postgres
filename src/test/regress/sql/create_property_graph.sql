@@ -477,4 +477,16 @@ DROP PROPERTY GRAPH IF EXISTS g1;
 
 DROP ROLE regress_graph_user1, regress_graph_user2;
 
+-- A materialized view can read from a property graph and then be added as an
+-- element of the same graph.
+--
+-- XXX: pg_dump cannot break the resulting dependency loop the way it does for
+-- ordinary views, so it emits CREATE PROPERTY GRAPH before the materialized
+-- view it references and the dump cannot be restored.
+CREATE TABLE tmvcyc (id int PRIMARY KEY, val int);
+CREATE PROPERTY GRAPH gmvcyc VERTEX TABLES (tmvcyc);
+CREATE MATERIALIZED VIEW mvcyc AS
+    SELECT id FROM GRAPH_TABLE (gmvcyc MATCH (x IS tmvcyc) COLUMNS (x.id));
+ALTER PROPERTY GRAPH gmvcyc ADD VERTEX TABLES (mvcyc KEY (id));
+
 -- leave remaining objects behind for pg_upgrade/pg_dump tests
