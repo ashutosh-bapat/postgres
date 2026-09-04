@@ -74,7 +74,11 @@ ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 DROP LABEL t3l2;
 ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 DROP LABEL t3l1;  -- error: last label
 -- Restore the dropped label for further tests
 ALTER PROPERTY GRAPH g3 ALTER VERTEX TABLE t3 ADD LABEL t3l2 PROPERTIES ALL COLUMNS;
-ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2);  -- fail
+-- XXX: SQL/PGQ section 11.22, general rule 2 requires the edge tables which
+-- reference a vertex table to be dropped along with it.  The edge table only
+-- has a NORMAL dependency on the vertex table, so the drop is restricted
+-- instead and CASCADE is required.
+ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2);  -- XXX: should have succeeded
 ALTER PROPERTY GRAPH g3 DROP VERTEX TABLES (t2) CASCADE;
 ALTER PROPERTY GRAPH g3 DROP EDGE TABLES (e2);
 
