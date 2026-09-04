@@ -113,14 +113,17 @@ ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ALTER LABEL t2 ADD PROPERTIES (k *
 ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ALTER LABEL t2 DROP PROPERTIES (k);
 ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ALTER LABEL t2 DROP PROPERTIES (yy);  -- error
 ERROR:  property graph "g4" element "t2" label "t2" has no property "yy"
+--
+-- Dropping property graph components implicitly or explicitly with CASCADE.
+--
+-- The output of the information schema queries below are used to verify the
+-- correctness of the behaviour.
 -- Dropping a label should drop only orphaned properties.  zz is orphaned because
 -- it is only associated with the dropped label t3l2, while x is not orphaned
--- because it remains associated with t3l1.  We will verify this in the
--- information schema queries outputs below.
+-- because it remains associated with t3l1.
 ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t3 DROP LABEL t3l2;
--- Cascaded drop should clean up the orphaned labels and properties which should
--- be absent from the information schema query outputs below. The objects
--- dependent on the orphaned labels or properties should also be dropped.
+-- Cascaded drop should clean up the orphaned labels and properties and objects
+-- dependent on them.
 CREATE TABLE t_tmp (p_tmp int primary key);
 ALTER PROPERTY GRAPH g4 ADD VERTEX TABLES (t_tmp);
 ALTER PROPERTY GRAPH g3 ADD VERTEX TABLES (t_tmp);
@@ -140,6 +143,49 @@ RESET client_min_messages;
 --------+------+------------------+---------------------+------
 (0 rows)
 
+-- Dropping a property should (even in CASCADE mode) should not leave the
+-- property graph in an inconsistent state.
+CREATE FUNCTION shared_f() RETURNS int LANGUAGE SQL RETURN 1;
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ADD LABEL shared_l
+    PROPERTIES (shared_f() AS shared_p);
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ADD LABEL shared_l
+    PROPERTIES (i AS shared_p);
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ALTER LABEL shared_l
+    DROP PROPERTIES (shared_p);  -- error
+ERROR:  mismatching number of properties in definition of label "shared_l"
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 ALTER LABEL shared_l
+    DROP PROPERTIES (shared_p) CASCADE;  -- error
+ERROR:  mismatching number of properties in definition of label "shared_l"
+DROP FUNCTION shared_f(); -- error
+ERROR:  cannot drop function shared_f() because other objects depend on it
+DETAIL:  property shared_p of label shared_l of vertex t1 of property graph g4 depends on function shared_f()
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+DROP FUNCTION shared_f() CASCADE; -- error
+NOTICE:  drop cascades to property shared_p of label shared_l of vertex t1 of property graph g4
+ERROR:  mismatching number of properties in definition of label "shared_l"
+-- drop the label since it doesn't contain anything interesting for the
+-- following tests.
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t1 DROP LABEL shared_l;
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 DROP LABEL shared_l;
+-- A view using a property through a specific label should prevent that
+-- label-property association from being dropped, even if the property remains
+-- elsewhere in the graph.
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 ADD LABEL view_l
+    PROPERTIES (i AS x);
+CREATE VIEW g4_view AS
+        SELECT * FROM GRAPH_TABLE (g4 MATCH (v IS view_l) COLUMNS (v.x));
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2
+    ALTER LABEL view_l DROP PROPERTIES (x);  -- error
+ERROR:  cannot drop property x of label view_l of vertex t2 of property graph g4 because other objects depend on it
+DETAIL:  view g4_view depends on property graph g4
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2
+    ALTER LABEL view_l DROP PROPERTIES (x) CASCADE;
+NOTICE:  drop cascades to view g4_view
+\d g4_view
+-- drop the label, it does not have any interesting characteristics for the
+-- following tests.
+ALTER PROPERTY GRAPH g4 ALTER VERTEX TABLE t2 DROP LABEL view_l;
 -- edge and vertex table key inference from primary and foreign key constraints.
 CREATE TABLE t11 (a int PRIMARY KEY);
 CREATE TABLE t12 (b int PRIMARY KEY);

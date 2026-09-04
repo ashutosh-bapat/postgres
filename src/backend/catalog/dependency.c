@@ -157,7 +157,7 @@ static void findDependentObjects(const ObjectAddress *object,
 								 ObjectAddressStack *stack,
 								 ObjectAddresses *targetObjects,
 								 const ObjectAddresses *pendingObjects,
-								 Relation *depRel);
+								 Relation *depRel, bool objectIsParentGraph);
 static void performDeletionInternal(ObjectAddresses *targetObjects,
 									DropBehavior behavior, int flags,
 									const ObjectAddress *origObject,
@@ -417,7 +417,7 @@ addOrphanedPropGraphObject(const ObjectAddress *object,
 
 	AcquireDeletionLock(object, 0);
 	findDependentObjects(object, DEPFLAG_AUTO, flags, NULL,
-						 targetObjects, NULL, depRel);
+						 targetObjects, NULL, depRel, false);
 
 	for (int i = 0; i < old_numrefs; i++)
 		targetObjects->extras[i].flags = old_flags[i];
@@ -526,7 +526,7 @@ performDeletion(const ObjectAddress *object,
 						 NULL,	/* empty stack */
 						 targetObjects,
 						 NULL,	/* no pendingObjects */
-						 &depRel);
+						 &depRel, false);
 
 	performDeletionInternal(targetObjects, behavior, flags, object, &depRel);
 
@@ -589,7 +589,7 @@ performMultipleDeletions(const ObjectAddresses *objects,
 							 NULL,	/* empty stack */
 							 targetObjects,
 							 objects,
-							 &depRel);
+							 &depRel, false);
 	}
 
 	performDeletionInternal(targetObjects, behavior, flags,
@@ -622,6 +622,7 @@ performDeletionInternal(ObjectAddresses *targetObjects,
 						const ObjectAddress *origObject, Relation *depRel)
 {
 	int			old_numrefs;
+	List	   *graphoids = NIL;
 
 	/*
 	 * Add property graph component objects that will be orphaned by the
@@ -645,12 +646,49 @@ performDeletionInternal(ObjectAddresses *targetObjects,
 	} while (targetObjects->numrefs > old_numrefs);
 
 	/*
+	 * Note the affected property graphs while their component objects are
+	 * still around to identify the containing graph.
+	 */
+	for (int i = 0; i < targetObjects->numrefs; i++)
+	{
+		const ObjectAddress *object = &targetObjects->refs[i];
+		Oid			graphoid;
+
+		if (object->classId != PropgraphElementRelationId &&
+			object->classId != PropgraphElementLabelRelationId &&
+			object->classId != PropgraphLabelRelationId &&
+			object->classId != PropgraphLabelPropertyRelationId &&
+			object->classId != PropgraphPropertyRelationId)
+			continue;
+
+		graphoid = GetPropGraphForComponent(object);
+		if (OidIsValid(graphoid))
+			graphoids = list_append_unique_oid(graphoids, graphoid);
+	}
+
+	/*
 	 * Check if deletion is allowed, and report about cascaded deletes.
 	 */
 	reportDependentObjects(targetObjects, behavior, flags, origObject);
 
 	/* do the deed */
 	deleteObjectsInList(targetObjects, depRel, flags);
+
+	/*
+	 * Make sure that the property graphs affected by this deletion will
+	 * remain consistent after performing the deletions.
+	 *
+	 * Deletions may drop properties, labels or entire elements. This cannot
+	 * lead to inconsistencies among the remaining properties of the same
+	 * element which were already consistent before the drop. However, it is
+	 * possible that a property gets dropped only from one of the labels among
+	 * many labels that share the same name. Hence perform only label
+	 * consistency checks and not the element consistency checks.
+	 */
+	foreach_oid(graphoid, graphoids)
+		CheckPropGraphLabelConsistency(graphoid);
+
+	list_free(graphoids);
 }
 
 /*
@@ -672,6 +710,16 @@ performDeletionInternal(ObjectAddresses *targetObjects,
  * When dropping a whole object (subId = 0), we find dependencies for
  * its sub-objects too.
  *
+ * According to the SQL/PGQ standard, dropping a property graph component object
+ * should be restricted if there are other database objects dependent on the
+ * property graph containing that component. In CASCADE mode such objects should
+ * be dropped as well. In a way, dependencies of the property graph are
+ * considered to be dependencies of the component objects whether or not they
+ * are explicitly declared as such. Hence we call this function for the
+ * component object as well as the containing  property graph.  However we don't
+ * want the property graph itself to be added to the list of dependent object.
+ * We use the objectIsParentGraph flag for that purpose as described below.
+ *
  *	object: the object to add to targetObjects and find dependencies on
  *	objflags: flags to be ORed into the object's targetObjects entry
  *	flags: PERFORM_DELETION_xxx flags for the deletion operation as a whole
@@ -681,6 +729,9 @@ performDeletionInternal(ObjectAddresses *targetObjects,
  *	pendingObjects: list of other objects slated for destruction, but
  *			not necessarily in targetObjects yet (can be NULL if none)
  *	*depRel: already opened pg_depend relation
+ *	objectIsParentGraph: true if we are recursing to find the dependencies of the
+ * 			property graph while searching for dependencies of a property graph component
+ *			object. False otherwise.
  *
  * Note: objflags describes the reason for visiting this particular object
  * at this time, and is not passed down when recursing.  The flags argument
@@ -693,7 +744,7 @@ findDependentObjects(const ObjectAddress *object,
 					 ObjectAddressStack *stack,
 					 ObjectAddresses *targetObjects,
 					 const ObjectAddresses *pendingObjects,
-					 Relation *depRel)
+					 Relation *depRel, bool objectIsParentGraph)
 {
 	ScanKeyData key[3];
 	int			nkeys;
@@ -957,7 +1008,7 @@ findDependentObjects(const ObjectAddress *object,
 									 stack,
 									 targetObjects,
 									 pendingObjects,
-									 depRel);
+									 depRel, false);
 
 				/*
 				 * The current target object should have been added to
@@ -1093,6 +1144,16 @@ findDependentObjects(const ObjectAddress *object,
 		otherObject.objectSubId = foundDep->objsubid;
 
 		/*
+		 * If we are collecting dependencies on the parent property graph
+		 * while escalating through its components, skip entries correpsonding
+		 * to the dependency of components on the property graph. The
+		 * dependencies between the components of the same property graph are
+		 * explicitly recorded.
+		 */
+		if (objectIsParentGraph && foundDep->deptype != DEPENDENCY_NORMAL)
+			continue;
+
+		/*
 		 * If what we found is a sub-object of the current object, just ignore
 		 * it.  (Normally, such a dependency is implicit, but we must make
 		 * explicit ones in some cases involving partitioning.)
@@ -1213,10 +1274,36 @@ findDependentObjects(const ObjectAddress *object,
 							 &mystack,
 							 targetObjects,
 							 pendingObjects,
-							 depRel);
+							 depRel, false);
 	}
 
 	pfree(dependentObjects);
+
+	/*
+	 * Dropping a graph component invalidates objects that depend on its
+	 * parent graph. Find the dependent objects of the parent graph without
+	 * adding it to the list of dependent objects.
+	 */
+	if (object->classId == PropgraphElementRelationId ||
+		object->classId == PropgraphElementLabelRelationId ||
+		object->classId == PropgraphLabelRelationId ||
+		object->classId == PropgraphLabelPropertyRelationId ||
+		object->classId == PropgraphPropertyRelationId)
+	{
+		ObjectAddress graphObject;
+		Oid			graphoid = GetPropGraphForComponent(object);
+
+		Assert(!objectIsParentGraph);
+
+		if (OidIsValid(graphoid))
+		{
+			ObjectAddressSet(graphObject, RelationRelationId, graphoid);
+			AcquireDeletionLock(&graphObject, 0);
+			findDependentObjects(&graphObject, 0, flags,
+								 stack, targetObjects, pendingObjects, depRel,
+								 true);
+		}
+	}
 
 	/*
 	 * Finally, we can add the target object to targetObjects.  Be careful to
@@ -1233,7 +1320,8 @@ findDependentObjects(const ObjectAddress *object,
 		extra.dependee = *stack->object;
 	else
 		memset(&extra.dependee, 0, sizeof(extra.dependee));
-	add_exact_object_address_extra(object, &extra, targetObjects);
+	if (!objectIsParentGraph)
+		add_exact_object_address_extra(object, &extra, targetObjects);
 }
 
 /*

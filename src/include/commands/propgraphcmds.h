@@ -20,5 +20,6 @@
 extern ObjectAddress CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt);
 extern ObjectAddress AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt);
 extern Oid	GetPropGraphForComponent(const ObjectAddress *object);
+extern void CheckPropGraphLabelConsistency(Oid pgrelid);
 
 #endif							/* PROPGRAPHCMDS_H */

@@ -89,7 +89,6 @@ static void insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, c
 static void insert_property_record(Oid graphid, Oid ellabeloid, Oid pgerelid, const char *propname, const Expr *expr);
 static void check_element_properties(Oid peoid);
 static void check_element_label_properties(Oid ellabeloid);
-static void check_all_labels_properties(Oid pgrelid);
 static Oid	get_vertex_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_edge_oid(ParseState *pstate, Oid pgrelid, const char *alias, int location);
 static Oid	get_element_relid(Oid peid);
@@ -312,7 +311,7 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 
 	foreach_oid(peoid, element_oids)
 		check_element_properties(peoid);
-	check_all_labels_properties(pgaddress.objectId);
+	CheckPropGraphLabelConsistency(pgaddress.objectId);
 
 	return pgaddress;
 }
@@ -1398,8 +1397,8 @@ check_element_label_properties(Oid ellabeloid)
 /*
  * As above, but check all labels of a graph.
  */
-static void
-check_all_labels_properties(Oid pgrelid)
+void
+CheckPropGraphLabelConsistency(Oid pgrelid)
 {
 	foreach_oid(labeloid, get_graph_label_ids(pgrelid))
 	{
@@ -1485,7 +1484,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
-		check_all_labels_properties(pgrelid);
+		CheckPropGraphLabelConsistency(pgrelid);
 	}
 
 	foreach(lc, stmt->add_edge_tables)
@@ -1554,7 +1553,7 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 
 		CommandCounterIncrement();
 		check_element_properties(peoid);
-		check_all_labels_properties(pgrelid);
+		CheckPropGraphLabelConsistency(pgrelid);
 	}
 
 	foreach(lc, stmt->drop_vertex_tables)
