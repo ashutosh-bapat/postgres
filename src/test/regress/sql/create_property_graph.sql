@@ -185,6 +185,7 @@ CREATE PROPERTY GRAPH gwr
 SELECT pg_get_propgraphdef('gwr'::regclass);
 
 -- error cases
+ALTER PROPERTY GRAPH t1 ADD VERTEX TABLES (t2);  -- not a property graph
 CREATE UNLOGGED PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (t1 KEY (a), t2 KEY (i), t1 KEY (a));

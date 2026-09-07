@@ -1437,6 +1437,12 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 		return InvalidObjectAddress;
 	}
 
+	if (get_rel_relkind(pgrelid) != RELKIND_PROPGRAPH)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a property graph",
+						stmt->pgname->relname)));
+
 	ObjectAddressSet(pgaddress, RelationRelationId, pgrelid);
 
 	foreach(lc, stmt->add_vertex_tables)

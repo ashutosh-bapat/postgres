@@ -228,6 +228,8 @@ SELECT pg_get_propgraphdef('gwr'::regclass);
 (1 row)
 
 -- error cases
+ALTER PROPERTY GRAPH t1 ADD VERTEX TABLES (t2);  -- not a property graph
+ERROR:  "t1" is not a property graph
 CREATE UNLOGGED PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  property graphs cannot be unlogged because they do not have storage
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
