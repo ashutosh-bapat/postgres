@@ -178,6 +178,12 @@ CREATE PROPERTY GRAPH g5
 
 SELECT pg_get_propgraphdef('g5'::regclass);
 
+-- whole row Var as a property in a property graph
+CREATE TABLE wr (id int PRIMARY KEY, x text);
+CREATE PROPERTY GRAPH gwr
+    VERTEX TABLES (wr PROPERTIES (wr AS whole));
+SELECT pg_get_propgraphdef('gwr'::regclass);
+
 -- error cases
 CREATE UNLOGGED PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 CREATE PROPERTY GRAPH gx VERTEX TABLES (xx, yy);

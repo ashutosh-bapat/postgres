@@ -1858,18 +1858,15 @@ make_propgraphdef_labels(StringInfo buf, Oid elid, const char *elalias, Oid elre
 }
 
 /*
- * Helper function for make_propgraphdef_properties(): Sort (propname, expr)
- * pairs by name.
+ * Helper function for make_propgraphdef_properties(): Sort properties by name.
  */
 static int
 propdata_by_name_cmp(const ListCell *a, const ListCell *b)
 {
-	List	   *la = lfirst_node(List, a);
-	List	   *lb = lfirst_node(List, b);
-	char	   *pna = strVal(linitial(la));
-	char	   *pnb = strVal(linitial(lb));
+	TargetEntry *ta = lfirst_node(TargetEntry, a);
+	TargetEntry *tb = lfirst_node(TargetEntry, b);
 
-	return strcmp(pna, pnb);
+	return strcmp(ta->resname, tb->resname);
 }
 
 /*
@@ -1884,7 +1881,7 @@ make_propgraphdef_properties(StringInfo buf, Oid ellabelid, Oid elrelid)
 	ScanKeyData scankey[1];
 	SysScanDesc scan;
 	HeapTuple	tup;
-	List	   *outlist = NIL;
+	List	   *tlist = NIL;
 
 	plprel = table_open(PropgraphLabelPropertyRelationId, AccessShareLock);
 
@@ -1916,44 +1913,46 @@ make_propgraphdef_properties(StringInfo buf, Oid ellabelid, Oid elrelid)
 
 		propname = get_propgraph_property_name(plpform->plppropid);
 
-		outlist = lappend(outlist, list_make2(makeString(propname), expr));
+		tlist = lappend(tlist,
+						makeTargetEntry((Expr *) expr, list_length(tlist) + 1,
+										propname, false));
 	}
 
 	systable_endscan(scan);
 	table_close(plprel, AccessShareLock);
 
-	list_sort(outlist, propdata_by_name_cmp);
+	list_sort(tlist, propdata_by_name_cmp);
 
-	if (outlist)
+	/*
+	 * A property list for a given label needs to be expanded in a similar
+	 * fashion as a targetlist. For example not expanding a whole row Var as a
+	 * list of columns or adding AS name only when needed etc.
+	 */
+	if (tlist)
 	{
-		List	   *context;
-		ListCell   *lc;
-		bool		first = true;
+		deparse_context context;
+		StringInfoData tlbuf;
 
-		context = deparse_context_for(get_relation_name(elrelid), elrelid);
+		initStringInfo(&tlbuf);
+		context.buf = &tlbuf;
+		context.namespaces = deparse_context_for(get_relation_name(elrelid),
+												 elrelid);
+		context.resultDesc = NULL;
+		context.targetList = tlist;
+		context.windowClause = NIL;
+		context.varprefix = false;
+		context.prettyFlags = 0;
+		context.wrapColumn = WRAP_COLUMN_DEFAULT;
+		context.indentLevel = 0;
+		context.colNamesVisible = true;
+		context.inGroupBy = false;
+		context.varInOrderBy = false;
+		context.appendparents = NULL;
 
-		appendStringInfoString(buf, " PROPERTIES (");
+		get_target_list(tlist, &context);
 
-		foreach(lc, outlist)
-		{
-			List	   *data = lfirst_node(List, lc);
-			char	   *propname = strVal(linitial(data));
-			Node	   *expr = lsecond(data);
-
-			if (first)
-				first = false;
-			else
-				appendStringInfoString(buf, ", ");
-
-			if (IsA(expr, Var) && strcmp(propname, get_attname(elrelid, castNode(Var, expr)->varattno, false)) == 0)
-				appendStringInfoString(buf, quote_identifier(propname));
-			else
-				appendStringInfo(buf, "%s AS %s",
-								 deparse_expression_pretty(expr, context, false, false, 0, 0),
-								 quote_identifier(propname));
-		}
-
-		appendStringInfoChar(buf, ')');
+		/* get_target_list() prefixes the list with a space */
+		appendStringInfo(buf, " PROPERTIES (%s)", tlbuf.data + 1);
 	}
 	else
 		appendStringInfoString(buf, " NO PROPERTIES");

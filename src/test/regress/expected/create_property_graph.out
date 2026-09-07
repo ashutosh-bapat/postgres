@@ -214,6 +214,19 @@ SELECT pg_get_propgraphdef('g5'::regclass);
      )
 (1 row)
 
+-- whole row Var as a property in a property graph
+CREATE TABLE wr (id int PRIMARY KEY, x text);
+CREATE PROPERTY GRAPH gwr
+    VERTEX TABLES (wr PROPERTIES (wr AS whole));
+SELECT pg_get_propgraphdef('gwr'::regclass);
+                  pg_get_propgraphdef                  
+-------------------------------------------------------
+ CREATE PROPERTY GRAPH create_property_graph_tests.gwr+
+     VERTEX TABLES (                                  +
+         wr KEY (id) PROPERTIES (wr.*::wr AS whole)   +
+     )
+(1 row)
+
 -- error cases
 CREATE UNLOGGED PROPERTY GRAPH gx VERTEX TABLES (xx, yy);
 ERROR:  property graphs cannot be unlogged because they do not have storage
@@ -465,7 +478,8 @@ SELECT * FROM information_schema.property_graphs ORDER BY property_graph_name;
  regression             | create_property_graph_tests | gc1
  regression             | create_property_graph_tests | glc
  regression             | create_property_graph_tests | gt
-(8 rows)
+ regression             | create_property_graph_tests | gwr
+(9 rows)
 
 SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name, element_table_alias;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | element_table_kind | table_catalog |        table_schema         | table_name | element_table_definition 
@@ -494,7 +508,8 @@ SELECT * FROM information_schema.pg_element_tables ORDER BY property_graph_name,
  regression             | create_property_graph_tests | gt                  | e                   | EDGE               | regression    | create_property_graph_tests | e          | 
  regression             | create_property_graph_tests | gt                  | v1                  | VERTEX             | regression    | create_property_graph_tests | v1         | 
  regression             | create_property_graph_tests | gt                  | v2                  | VERTEX             | regression    | create_property_graph_tests | v2         | 
-(24 rows)
+ regression             | create_property_graph_tests | gwr                 | wr                  | VERTEX             | regression    | create_property_graph_tests | wr         | 
+(25 rows)
 
 SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_graph_name, element_table_alias, ordinal_position;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | column_name | ordinal_position 
@@ -530,7 +545,8 @@ SELECT * FROM information_schema.pg_element_table_key_columns ORDER BY property_
  regression             | create_property_graph_tests | gt                  | e                   | k2          |                2
  regression             | create_property_graph_tests | gt                  | v1                  | a           |                1
  regression             | create_property_graph_tests | gt                  | v2                  | m           |                1
-(31 rows)
+ regression             | create_property_graph_tests | gwr                 | wr                  | id          |                1
+(32 rows)
 
 SELECT * FROM information_schema.pg_edge_table_components ORDER BY property_graph_name, edge_table_alias, edge_end DESC, ordinal_position;
  property_graph_catalog |    property_graph_schema    | property_graph_name | edge_table_alias | vertex_table_alias |  edge_end   | edge_table_column_name | vertex_table_column_name | ordinal_position 
@@ -584,7 +600,8 @@ SELECT * FROM information_schema.pg_element_table_labels ORDER BY property_graph
  regression             | create_property_graph_tests | gt                  | e                   | e
  regression             | create_property_graph_tests | gt                  | v1                  | v1
  regression             | create_property_graph_tests | gt                  | v2                  | v2
-(26 rows)
+ regression             | create_property_graph_tests | gwr                 | wr                  | wr
+(27 rows)
 
 SELECT * FROM information_schema.pg_element_table_properties ORDER BY property_graph_name, element_table_alias, property_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | element_table_alias | property_name |         property_expression          
@@ -645,7 +662,8 @@ SELECT * FROM information_schema.pg_element_table_properties ORDER BY property_g
  regression             | create_property_graph_tests | gt                  | v1                  | b             | b
  regression             | create_property_graph_tests | gt                  | v2                  | m             | m
  regression             | create_property_graph_tests | gt                  | v2                  | n             | n
-(56 rows)
+ regression             | create_property_graph_tests | gwr                 | wr                  | whole         | wr.*
+(57 rows)
 
 SELECT * FROM information_schema.pg_label_properties ORDER BY property_graph_name, label_name, property_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | label_name | property_name 
@@ -709,7 +727,8 @@ SELECT * FROM information_schema.pg_label_properties ORDER BY property_graph_nam
  regression             | create_property_graph_tests | gt                  | v1         | b
  regression             | create_property_graph_tests | gt                  | v2         | m
  regression             | create_property_graph_tests | gt                  | v2         | n
-(59 rows)
+ regression             | create_property_graph_tests | gwr                 | wr         | whole
+(60 rows)
 
 SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | label_name 
@@ -740,7 +759,8 @@ SELECT * FROM information_schema.pg_labels ORDER BY property_graph_name, label_n
  regression             | create_property_graph_tests | gt                  | e
  regression             | create_property_graph_tests | gt                  | v1
  regression             | create_property_graph_tests | gt                  | v2
-(26 rows)
+ regression             | create_property_graph_tests | gwr                 | wr
+(27 rows)
 
 SELECT * FROM information_schema.pg_property_data_types ORDER BY property_graph_name, property_name;
  property_graph_catalog |    property_graph_schema    | property_graph_name | property_name |     data_type     | character_maximum_length | character_octet_length | character_set_catalog | character_set_schema | character_set_name | collation_catalog | collation_schema | collation_name | numeric_precision | numeric_precision_radix | numeric_scale | datetime_precision | interval_type | interval_precision | user_defined_type_catalog |  user_defined_type_schema   | user_defined_type_name | scope_catalog | scope_schema | scope_name | maximum_cardinality | dtd_identifier 
@@ -787,7 +807,8 @@ SELECT * FROM information_schema.pg_property_data_types ORDER BY property_graph_
  regression             | create_property_graph_tests | gt                  | k2            | text              |                          |                        |                       |                      |                    | regression        |                  |                |                   |                         |               |                    |               |                    | regression                | pg_catalog                  | text                   |               |              |            |                     | k2
  regression             | create_property_graph_tests | gt                  | m             | text              |                          |                        |                       |                      |                    | regression        |                  |                |                   |                         |               |                    |               |                    | regression                | pg_catalog                  | text                   |               |              |            |                     | m
  regression             | create_property_graph_tests | gt                  | n             | text              |                          |                        |                       |                      |                    | regression        |                  |                |                   |                         |               |                    |               |                    | regression                | pg_catalog                  | text                   |               |              |            |                     | n
-(42 rows)
+ regression             | create_property_graph_tests | gwr                 | whole         | USER-DEFINED      |                          |                        |                       |                      |                    | regression        |                  |                |                   |                         |               |                    |               |                    | regression                | create_property_graph_tests | wr                     |               |              |            |                     | whole
+(43 rows)
 
 SELECT * FROM information_schema.pg_property_graph_privileges WHERE grantee LIKE 'regress%' ORDER BY property_graph_name, grantor, grantee, privilege_type;
        grantor       |       grantee       | property_graph_catalog |    property_graph_schema    | property_graph_name | privilege_type | is_grantable 
