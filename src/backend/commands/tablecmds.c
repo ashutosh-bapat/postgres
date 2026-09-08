@@ -48,6 +48,11 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_propgraph_element.h"
+#include "catalog/pg_propgraph_element_label.h"
+#include "catalog/pg_propgraph_label.h"
+#include "catalog/pg_propgraph_label_property.h"
+#include "catalog/pg_propgraph_property.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_statistic_ext.h"
@@ -15726,6 +15731,30 @@ RememberAllDependentForRebuilding(AlteredTableInfo *tab, AlterTableType subtype,
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("cannot alter type of a column used by a publication WHERE clause"),
+							 errdetail("%s depends on column \"%s\".",
+									   getObjectDescription(&foundObject, false),
+									   colName)));
+				break;
+
+			case PropgraphElementRelationId:
+			case PropgraphElementLabelRelationId:
+			case PropgraphLabelRelationId:
+			case PropgraphLabelPropertyRelationId:
+			case PropgraphPropertyRelationId:
+
+				/*
+				 * Changing type of a column used by a property may change the
+				 * type of the property, which may not keep it consistent with
+				 * the element properties. We will need to reconstruct the
+				 * property graph which might fail because of this
+				 * inconsistency. We may be able to rebuild the keys similar to
+				 * how FK/PK constraints are rebuilt, but for now we will just
+				 * disallow this operation. FIXME someday.
+				 */
+				if (subtype == AT_AlterColumnType)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("cannot alter type of a column used by a property graph"),
 							 errdetail("%s depends on column \"%s\".",
 									   getObjectDescription(&foundObject, false),
 									   colName)));

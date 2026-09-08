@@ -51,6 +51,10 @@ CREATE PROPERTY GRAPH g2
 DROP TABLE t1;  -- fail
 ALTER TABLE t1 DROP COLUMN b;  -- non-key column; fail
 ALTER TABLE t1 DROP COLUMN a;  -- key column; fail
+ALTER TABLE t1 ALTER COLUMN b TYPE varchar;  -- property column; fail
+ALTER TABLE t1 ALTER COLUMN a TYPE bigint;  -- vertex key column; fail
+ALTER TABLE e1 ALTER COLUMN a TYPE bigint;  -- edge source key column; fail
+ALTER TABLE t3 ALTER COLUMN y TYPE varchar;  -- edge destination key column; fail
 DROP TABLE t_udt1;  -- fail
 DROP TABLE t_udt2;  -- fail
 

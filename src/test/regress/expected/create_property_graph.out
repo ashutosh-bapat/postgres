@@ -55,6 +55,18 @@ DETAIL:  vertex t1 of property graph g2 depends on column a of table t1
 edge e1 of property graph g2 depends on column a of table t1
 edge e2 of property graph g2 depends on column a of table t1
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ALTER TABLE t1 ALTER COLUMN b TYPE varchar;  -- property column; fail
+ERROR:  cannot alter type of a column used by a property graph
+DETAIL:  property b of label t1 of vertex t1 of property graph g2 depends on column "b".
+ALTER TABLE t1 ALTER COLUMN a TYPE bigint;  -- vertex key column; fail
+ERROR:  cannot alter type of a column used by a property graph
+DETAIL:  vertex t1 of property graph g2 depends on column "a".
+ALTER TABLE e1 ALTER COLUMN a TYPE bigint;  -- edge source key column; fail
+ERROR:  cannot alter type of a column used by a property graph
+DETAIL:  edge e1 of property graph g2 depends on column "a".
+ALTER TABLE t3 ALTER COLUMN y TYPE varchar;  -- edge destination key column; fail
+ERROR:  cannot alter type of a column used by a property graph
+DETAIL:  edge e2 of property graph g2 depends on column "y".
 DROP TABLE t_udt1;  -- fail
 ERROR:  cannot drop table t_udt1 because other objects depend on it
 DETAIL:  property p1 of property graph g2 depends on type t_udt1
