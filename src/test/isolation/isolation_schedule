@@ -132,3 +132,4 @@ test: tablespace-dependency-locking
 test: pub-concurrent-drop
 test: drop-owned-grant
 test: alter-propgraph-drop-cascade
+test: propgraph-ddl-vs-query

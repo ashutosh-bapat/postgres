@@ -1,0 +1,138 @@
+Parsed test spec with 2 sessions
+
+starting permutation: s1_begin s1_query s2_add_element s1_commit
+step s1_begin: BEGIN;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s2_add_element: 
+	ALTER PROPERTY GRAPH pgq
+		ADD VERTEX TABLES (pgq_v2 LABEL pgql PROPERTIES (a AS p));
+ <waiting ...>
+step s1_commit: COMMIT;
+step s2_add_element: <... completed>
+
+starting permutation: s2_begin s2_add_element s1_query s2_commit
+step s2_begin: BEGIN;
+step s2_add_element: 
+	ALTER PROPERTY GRAPH pgq
+		ADD VERTEX TABLES (pgq_v2 LABEL pgql PROPERTIES (a AS p));
+
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+ <waiting ...>
+step s2_commit: COMMIT;
+step s1_query: <... completed>
+p
+-
+1
+2
+(2 rows)
+
+
+starting permutation: s1_begin s1_query s2_add_element s1_query s1_commit
+step s1_begin: BEGIN;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s2_add_element: 
+	ALTER PROPERTY GRAPH pgq
+		ADD VERTEX TABLES (pgq_v2 LABEL pgql PROPERTIES (a AS p));
+ <waiting ...>
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_add_element: <... completed>
+
+starting permutation: s1_begin_rr s1_query s2_add_element s1_query s1_commit
+step s1_begin_rr: BEGIN ISOLATION LEVEL REPEATABLE READ;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s2_add_element: 
+	ALTER PROPERTY GRAPH pgq
+		ADD VERTEX TABLES (pgq_v2 LABEL pgql PROPERTIES (a AS p));
+ <waiting ...>
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_add_element: <... completed>
+
+starting permutation: s1_begin s1_query s2_drop_elemtable s1_commit
+step s1_begin: BEGIN;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s2_drop_elemtable: DROP TABLE pgq_v1 CASCADE; <waiting ...>
+step s1_commit: COMMIT;
+s2: NOTICE:  drop cascades to vertex pgq_v1 of property graph pgq
+step s2_drop_elemtable: <... completed>
+
+starting permutation: s2_begin s2_drop_elemtable s1_query s2_commit
+step s2_begin: BEGIN;
+s2: NOTICE:  drop cascades to vertex pgq_v1 of property graph pgq
+step s2_drop_elemtable: DROP TABLE pgq_v1 CASCADE;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+ <waiting ...>
+step s2_commit: COMMIT;
+step s1_query: <... completed>
+ERROR:  label "pgql" does not exist in property graph "pgq"
+
+starting permutation: s1_begin s1_query s2_drop_column s1_commit
+step s1_begin: BEGIN;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+
+p
+-
+1
+(1 row)
+
+step s2_drop_column: ALTER TABLE pgq_v1 DROP COLUMN a CASCADE; <waiting ...>
+step s1_commit: COMMIT;
+s2: NOTICE:  drop cascades to vertex pgq_v1 of property graph pgq
+step s2_drop_column: <... completed>
+
+starting permutation: s2_begin s2_drop_column s1_query s2_commit
+step s2_begin: BEGIN;
+s2: NOTICE:  drop cascades to vertex pgq_v1 of property graph pgq
+step s2_drop_column: ALTER TABLE pgq_v1 DROP COLUMN a CASCADE;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (x IS pgql) COLUMNS (x.p)) ORDER BY p;
+ <waiting ...>
+step s2_commit: COMMIT;
+step s1_query: <... completed>
+ERROR:  label "pgql" does not exist in property graph "pgq"

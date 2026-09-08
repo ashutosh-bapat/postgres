@@ -1420,12 +1420,16 @@ AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
 	ObjectAddress pgaddress;
 
 	/*
-	 * ShareRowExclusiveLock is required because this command runs some
-	 * graph-wide consistency checks that wouldn't work if more than one ALTER
-	 * PROPERTY GRAPH could operate on the same graph at once.
+	 * Block all the accesses to the property graph while we are altering it.
+	 * This avoids any concurrent changes that could lead to an inconsistent
+	 * property graph. A query using the property graph reads the property graph
+	 * components in parts. If we allow a concurrent change, the query may read
+	 * some parts before the change and some parts after the change, which can
+	 * lead to an inconsistent view of the property graph. An exclusive lock on
+	 * the property graph prevents that as well.
 	 */
 	pgrelid = RangeVarGetRelidExtended(stmt->pgname,
-									   ShareRowExclusiveLock,
+									   AccessExclusiveLock,
 									   stmt->missing_ok ? RVR_MISSING_OK : 0,
 									   RangeVarCallbackOwnsRelation,
 									   NULL);

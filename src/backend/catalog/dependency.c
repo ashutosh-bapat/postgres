@@ -1894,7 +1894,7 @@ AcquireDeletionLock(const ObjectAddress *object, int flags)
 		/* Match ALTER PROPERTY GRAPH's graph-before-component lock order. */
 		graphoid = GetPropGraphForComponent(object);
 		if (OidIsValid(graphoid))
-			LockRelationOid(graphoid, ShareRowExclusiveLock);
+			LockRelationOid(graphoid, AccessExclusiveLock);
 
 		/*
 		 * We do not really need lock property graph components individually.
