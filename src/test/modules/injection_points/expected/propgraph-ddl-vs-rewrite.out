@@ -1,0 +1,73 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1_begin s1_query s2_redefine_prop s3_wakeup s1_noop s3_detach s1_commit
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step s1_begin: BEGIN;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (a IS pgql) COLUMNS (a.name)) ORDER BY name;
+ <waiting ...>
+step s2_redefine_prop: 
+	ALTER PROPERTY GRAPH pgq ALTER VERTEX TABLE pgq_vt ALTER LABEL pgql
+		DROP PROPERTIES (name);
+	ALTER PROPERTY GRAPH pgq ALTER VERTEX TABLE pgq_vt ALTER LABEL pgql
+		ADD PROPERTIES (upper(name) AS name);
+ <waiting ...>
+step s3_wakeup: SELECT injection_points_wakeup('graph-table-resolve-elements');
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+step s1_query: <... completed>
+name
+----
+a1  
+(1 row)
+
+step s1_noop: 
+step s3_detach: SELECT injection_points_detach('graph-table-resolve-elements');
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+step s1_commit: COMMIT;
+step s2_redefine_prop: <... completed>
+
+starting permutation: s1_begin s1_query s2_drop_prop_func s3_wakeup s1_noop s3_detach s1_commit
+injection_points_attach
+-----------------------
+                       
+(1 row)
+
+step s1_begin: BEGIN;
+step s1_query: 
+	SELECT * FROM GRAPH_TABLE (pgq MATCH (a IS pgql) COLUMNS (a.name)) ORDER BY name;
+ <waiting ...>
+step s2_drop_prop_func: DROP FUNCTION pgq_f(text) CASCADE; <waiting ...>
+step s3_wakeup: SELECT injection_points_wakeup('graph-table-resolve-elements');
+injection_points_wakeup
+-----------------------
+                       
+(1 row)
+
+step s1_query: <... completed>
+name
+----
+a1  
+(1 row)
+
+step s1_noop: 
+step s3_detach: SELECT injection_points_detach('graph-table-resolve-elements');
+injection_points_detach
+-----------------------
+                       
+(1 row)
+
+step s1_commit: COMMIT;
+s2: NOTICE:  drop cascades to property name of label pgql of vertex pgq_vt of property graph pgq
+step s2_drop_prop_func: <... completed>

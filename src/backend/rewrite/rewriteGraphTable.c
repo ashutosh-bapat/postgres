@@ -41,6 +41,7 @@
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/injection_point.h"
 #include "utils/lsyscache.h"
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
@@ -424,6 +425,13 @@ generate_query_for_graph_path(RangeTblEntry *rte, List *graph_path)
 	List	   *fromlist = NIL;
 	List	   *qual_exprs = NIL;
 	List	   *vars;
+
+	/*
+	 * This injection point can be used to inject a custom behaviour when we are
+	 * about to access the metadata of tables backing the property graph
+	 * elements.
+	 */
+	INJECTION_POINT("graph-table-resolve-elements", NULL);
 
 	path_query->commandType = CMD_SELECT;
 

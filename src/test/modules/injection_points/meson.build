@@ -45,6 +45,7 @@ tests += {
     'specs': [
       'basic',
       'inplace',
+      'propgraph-ddl-vs-rewrite',
       'reindex_concurrently_deferred',
       'repack',
       'repack_decode',

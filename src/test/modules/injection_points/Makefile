@@ -16,6 +16,7 @@ REGRESS_OPTS = --dlpath=$(top_builddir)/src/test/regress
 
 ISOLATION = basic \
 	    inplace \
+	    propgraph-ddl-vs-rewrite \
 	    reindex_concurrently_deferred \
 	    repack \
 	    repack_decode \
