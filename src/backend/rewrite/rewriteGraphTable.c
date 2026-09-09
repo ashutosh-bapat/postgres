@@ -337,6 +337,16 @@ generate_queries_for_path_pattern(RangeTblEntry *rte, List *path_pattern)
 	}
 
 	/*
+	 * TODO: Before accessing the metadata of tables underlying path elements
+	 * lock the tables so that the metadata is guaranteed to be consistent. If
+	 * possible avoid locking the elements that won't be part of any of the
+	 * queries because the corresponding path is not valid. See how we eliminate
+	 * incomplete paths in generate_query_for_graph_path(). It's not exactly
+	 * clear how can the metadata go inconsistent when we have registered
+	 * dependencies on the underlying tables. But probably we should do that as a
+	 * precaution anyway.
+	 */
+	/*
 	 * Collect list of elements for each path factor. Do this after all the
 	 * edge links are setup correctly.
 	 */
