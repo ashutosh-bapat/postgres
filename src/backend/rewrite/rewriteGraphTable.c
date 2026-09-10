@@ -521,12 +521,11 @@ generate_query_for_graph_path(RangeTblEntry *rte, List *graph_path)
 		/*
 		 * Create RangeTblEntry for this element table.
 		 *
-		 * SQL/PGQ standard (Ref. Section 11.19, Access rule 2 and General
-		 * rule 4) does not specify whose access privileges to use when
-		 * accessing the element tables: property graph owner's or current
-		 * user's. It is safer to use current user's privileges to avoid
-		 * unprivileged data access through a property graph. This is inline
-		 * with the views being security_invoker by default.
+		 * SQL/PGQ standard, Section 7.1, Access Rule 1 does not specify whose
+		 * access privileges to use when accessing the element tables: property
+		 * graph owner's or current user's. It is safer to use current user's
+		 * privileges to avoid unprivileged data access through a property graph.
+		 * This is equivalent to a view with security_invoker set.
 		 */
 		rel = table_open(pe->reloid, AccessShareLock);
 		pni = addRangeTableEntryForRelation(make_parsestate(NULL), rel, AccessShareLock,

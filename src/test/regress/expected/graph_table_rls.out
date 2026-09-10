@@ -771,6 +771,37 @@ ERROR:  query would be affected by row-level security policy for table "document
 HINT:  To disable the policy for the table's owner, use ALTER TABLE NO FORCE ROW LEVEL SECURITY.
 -- Clean up
 DEALLOCATE graph_rls_query;
+--
+-- RLS policies for GRAPH_TABLE in a view
+--
+-- Element tables accessed through a property graph reference follow security
+-- invoker semantics even if the property graph reference is part of a view.
+-- Hence RLS policies of the invoker are applied.
+SET SESSION AUTHORIZATION regress_graph_rls_alice;
+CREATE TABLE vrls (id int PRIMARY KEY, val text);
+INSERT INTO vrls VALUES (1, 'a-row'), (2, 'b-row');
+CREATE PROPERTY GRAPH vrls_graph
+    VERTEX TABLES (vrls KEY (id) LABEL vrls_l PROPERTIES (id, val));
+CREATE VIEW vrls_graph_view AS
+    SELECT * FROM GRAPH_TABLE (vrls_graph
+                               MATCH (v IS vrls_l)
+                               COLUMNS (v.id, v.val));
+GRANT SELECT ON vrls TO public;
+GRANT SELECT ON PROPERTY GRAPH vrls_graph TO public;
+GRANT SELECT ON vrls_graph_view TO public;
+SET row_security TO ON;
+ALTER TABLE vrls ENABLE ROW LEVEL SECURITY;
+CREATE POLICY vrls_bob ON vrls TO regress_graph_rls_bob
+    USING (val = 'b-row');
+SET SESSION AUTHORIZATION regress_graph_rls_bob;
+SELECT * FROM vrls_graph_view;
+ id |  val  
+----+-------
+  2 | b-row
+(1 row)
+
+SET SESSION AUTHORIZATION regress_graph_rls_alice;
+DROP POLICY vrls_bob ON vrls;
 -- leave as many objects behind for pg_upgrade/pg_dump tests as possible. The
 -- pg_dump test only dumps the regression database, not the global objects like
 -- users and roles. Reassign ownership of all objects to superuser and drop
