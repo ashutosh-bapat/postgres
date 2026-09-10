@@ -38,6 +38,7 @@
 #include "rewrite/rewriteGraphTable.h"
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
+#include "storage/lmgr.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
@@ -1176,6 +1177,12 @@ replace_property_refs(Oid propgraphid, Node *node, const List *mappings)
 {
 	struct replace_property_refs_context context;
 
+	/*
+	 * Make sure that the property graph is locked by the caller to avoid
+	 * concurrent changes to the property graph metadata.
+	 */
+	Assert(CheckRelationOidLockedByMe(propgraphid, AccessShareLock, true));
+
 	context.mappings = mappings;
 	context.propgraphid = propgraphid;
 
@@ -1285,6 +1292,10 @@ build_edge_vertex_link_quals(HeapTuple edgetup, int edgerti, int refrti, Oid ref
  * A label projects the same set of properties through every element it is
  * associated with. Find any of the elements and return true if that element is
  * associated with the given property. False otherwise.
+ *
+ * The function assumes that the property graph whose labels and properties are
+ * being looked up is already locked by the caller to prevent concurrent
+ * modifications.
  */
 static bool
 is_property_associated_with_label(Oid labeloid, Oid propoid)
@@ -1295,7 +1306,7 @@ is_property_associated_with_label(Oid labeloid, Oid propoid)
 	HeapTuple	tup;
 	bool		associated = false;
 
-	rel = table_open(PropgraphElementLabelRelationId, RowShareLock);
+	rel = table_open(PropgraphElementLabelRelationId, AccessShareLock);
 	ScanKeyInit(&key[0],
 				Anum_pg_propgraph_element_label_pgellabelid,
 				BTEqualStrategyNumber,
@@ -1311,7 +1322,7 @@ is_property_associated_with_label(Oid labeloid, Oid propoid)
 										   ObjectIdGetDatum(ele_label->oid), ObjectIdGetDatum(propoid));
 	}
 	systable_endscan(scan);
-	table_close(rel, RowShareLock);
+	table_close(rel, AccessShareLock);
 
 	return associated;
 }
@@ -1320,6 +1331,10 @@ is_property_associated_with_label(Oid labeloid, Oid propoid)
  * If given element has the given property associated with it, through any of
  * the associated labels, return value expression of the property. Otherwise
  * NULL.
+ *
+ * The function assumes that the property graph whose labels and properties are
+ * being looked up is already locked by the caller to prevent concurrent
+ * modifications.
  */
 static Node *
 get_element_property_expr(Oid elemoid, Oid propoid, int rtindex)
@@ -1330,7 +1345,7 @@ get_element_property_expr(Oid elemoid, Oid propoid, int rtindex)
 	HeapTuple	labeltup;
 	Node	   *n = NULL;
 
-	rel = table_open(PropgraphElementLabelRelationId, RowShareLock);
+	rel = table_open(PropgraphElementLabelRelationId, AccessShareLock);
 	ScanKeyInit(&key[0],
 				Anum_pg_propgraph_element_label_pgelelid,
 				BTEqualStrategyNumber,
@@ -1355,7 +1370,7 @@ get_element_property_expr(Oid elemoid, Oid propoid, int rtindex)
 		break;
 	}
 	systable_endscan(scan);
-	table_close(rel, RowShareLock);
+	table_close(rel, AccessShareLock);
 
 	return n;
 }

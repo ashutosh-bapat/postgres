@@ -923,6 +923,9 @@ insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, const PropGra
 	Relation	rel;
 	ListCell   *lc;
 
+	/* Lock the element table before accessing its attributes. */
+	rel = table_open(pgerelid, AccessShareLock);
+
 	if (properties->all)
 	{
 		Relation	attRelation;
@@ -930,7 +933,7 @@ insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, const PropGra
 		ScanKeyData key[1];
 		HeapTuple	attributeTuple;
 
-		attRelation = table_open(AttributeRelationId, RowShareLock);
+		attRelation = table_open(AttributeRelationId, AccessShareLock);
 		ScanKeyInit(&key[0],
 					Anum_pg_attribute_attrelid,
 					BTEqualStrategyNumber, F_OIDEQ,
@@ -959,7 +962,7 @@ insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, const PropGra
 			proplist = lappend(proplist, rt);
 		}
 		systable_endscan(scan);
-		table_close(attRelation, RowShareLock);
+		table_close(attRelation, AccessShareLock);
 	}
 	else
 	{
@@ -976,8 +979,6 @@ insert_property_records(Oid graphid, Oid ellabeloid, Oid pgerelid, const PropGra
 						parser_errposition(NULL, rt->location));
 		}
 	}
-
-	rel = table_open(pgerelid, AccessShareLock);
 
 	pstate = make_parsestate(NULL);
 	nsitem = addRangeTableEntryForRelation(pstate,
