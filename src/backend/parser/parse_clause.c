@@ -1016,8 +1016,7 @@ transformRangeGraphTable(ParseState *pstate, RangeGraphTable *rgt)
 	}
 
 	/* resolve any still-unresolved output columns as being type text */
-	if (pstate->p_resolve_unknowns)
-		resolveTargetListUnknowns(pstate, columns);
+	resolveTargetListUnknowns(pstate, columns);
 
 	/*
 	 * Assign collations to column expressions now since

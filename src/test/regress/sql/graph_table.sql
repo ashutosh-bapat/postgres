@@ -139,6 +139,12 @@ SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers) COLUMNS (c.name));
 -- unknown type resolution
 SELECT *, pg_typeof(unknown_col) AS unknown_col_type, pg_typeof(null_col) AS null_col_type FROM GRAPH_TABLE (myshop MATCH (c IS customers) COLUMNS (c.name, 'unknown-literal' AS unknown_col, NULL AS null_col));
 SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[IS customer_orders]->(o IS orders) COLUMNS (c.name));
+-- INSERT + label disjunction leading to union 
+CREATE TEMPORARY TABLE unknown_table (c text);
+INSERT INTO unknown_table SELECT unknown_col FROM GRAPH_TABLE (myshop MATCH (c IS customers)->()->(p is products) COLUMNS ('unknown-literal' AS unknown_col));
+INSERT INTO unknown_table SELECT unknown_col FROM GRAPH_TABLE (myshop MATCH (c IS customers)->()->(p is products) COLUMNS (c.customer_id, 'unknown-literal' AS unknown_col)) ORDER BY customer_id;
+SELECT count(*), c FROM unknown_table GROUP BY c;
+DROP TABLE unknown_table;
 -- graph element specification without label or variable
 SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US')-[]->(o IS orders) COLUMNS (c.name AS customer_name));
 SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers)-[co IS customer_orders]->(o IS orders WHERE o.ordered_when = date '2024-01-02') COLUMNS (c.name, c.address));
