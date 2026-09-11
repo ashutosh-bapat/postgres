@@ -160,6 +160,12 @@ SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers)-[IS customer_orders | c
 -- vertex to vertex connection abbreviation
 SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers)->(o IS orders) COLUMNS (c.name, o.ordered_when)) ORDER BY 1;
 
+-- Whole row reference of GRAPH_TABLE
+SELECT (s.g).* FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+SELECT (s.g).name FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+SELECT s.g FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+SELECT * FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+
 -- lateral test
 -- Use table with a column name same as a property in the property graph so as
 -- to test resolution preferences. Property references are preferred over

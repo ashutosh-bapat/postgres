@@ -2226,6 +2226,10 @@ addRangeTableEntryForGraphTable(ParseState *pstate,
 		colcollations = lappend_oid(colcollations, exprCollation(colexpr));
 	}
 
+	rte->coltypes = coltypes;
+	rte->coltypmods = coltypmods;
+	rte->colcollations = colcollations;
+
 	/*
 	 * Set flags and access permissions.
 	 */

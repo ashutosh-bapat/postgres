@@ -259,6 +259,31 @@ SELECT * FROM GRAPH_TABLE (myshop MATCH (c IS customers)->(o IS orders) COLUMNS 
  customer2 | 01-02-2024
 (2 rows)
 
+-- Whole row reference of GRAPH_TABLE
+SELECT (s.g).* FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+   name    | customer_id 
+-----------+-------------
+ customer1 |           1
+(1 row)
+
+SELECT (s.g).name FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+   name    
+-----------
+ customer1
+(1 row)
+
+SELECT s.g FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+       g       
+---------------
+ (customer1,1)
+(1 row)
+
+SELECT * FROM (SELECT gt AS g FROM GRAPH_TABLE (myshop MATCH (c IS customers WHERE c.address = 'US') COLUMNS (c.name, c.customer_id)) gt) s;
+       g       
+---------------
+ (customer1,1)
+(1 row)
+
 -- lateral test
 -- Use table with a column name same as a property in the property graph so as
 -- to test resolution preferences. Property references are preferred over

@@ -1290,7 +1290,7 @@ typedef struct RangeTblEntry
 	bool		self_reference pg_node_attr(query_jumble_ignore);
 
 	/*
-	 * Fields valid for CTE, VALUES, ENR, and TableFunc RTEs (else NIL):
+	 * Fields valid for CTE, VALUES, ENR, GRAPH_TABLE and TableFunc RTEs (else NIL):
 	 *
 	 * We need these for CTE RTEs so that the types of self-referential
 	 * columns are well-defined.  For VALUES RTEs, storing these explicitly
@@ -1300,7 +1300,8 @@ typedef struct RangeTblEntry
 	 * for TupleDesc-based ENRs, so we might as well always store the type
 	 * info here).  For TableFuncs, these fields are redundant with data in
 	 * the TableFunc node, but keeping them here allows some code sharing with
-	 * the other cases.
+	 * the other cases. For GRAPH_TABLE RTEs, we need these to reconstruct the
+	 * whole-row reference of the GRAPH_TABLE RTE.
 	 *
 	 * For ENRs only, we have to consider the possibility of dropped columns.
 	 * A dropped column is included in these lists, but it will have zeroes in
