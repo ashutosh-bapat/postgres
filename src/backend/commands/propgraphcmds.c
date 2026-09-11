@@ -128,6 +128,14 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 		vinfo = palloc0_object(struct element_info);
 		vinfo->kind = PGEKIND_VERTEX;
 
+		/*
+		 * TODO: the standard allows an element table to be added a property
+		 * graph even if the owner of the property graph has SELECT privileges
+		 * on it. But we seem to require ownership of the element table here.
+		 * 
+		 * Also how do we make sure that the privileges required here continue
+		 * to be valid over time? How do the views do that?
+		 */
 		vinfo->relid = RangeVarGetRelidExtended(vertex->vtable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
 
 		rel = table_open(vinfo->relid, NoLock);
@@ -171,6 +179,11 @@ CreatePropGraph(ParseState *pstate, const CreatePropGraphStmt *stmt)
 		einfo = palloc0_object(struct element_info);
 		einfo->kind = PGEKIND_EDGE;
 
+		/*
+		 * TODO: the standard allows an element table to be added a property
+		 * graph even if the owner of the property graph has SELECT privileges
+		 * on it. But we seem to require ownership of the element table here.
+		 */
 		einfo->relid = RangeVarGetRelidExtended(edge->etable, AccessShareLock, 0, RangeVarCallbackOwnsRelation, NULL);
 
 		rel = table_open(einfo->relid, NoLock);
@@ -1412,6 +1425,9 @@ CheckPropGraphLabelConsistency(Oid pgrelid)
 
 /*
  * ALTER PROPERTY GRAPH
+ *
+ * TODO: Should we check permissions on the columns of the element tables being
+ * used in property expressions?
  */
 ObjectAddress
 AlterPropGraph(ParseState *pstate, const AlterPropGraphStmt *stmt)
